@@ -1,6 +1,6 @@
 {
   "name": "@chindeo/ohos-rtc-call",
-  "version": "0.1.4-rc2",
+  "version": "0.1.5-rc1",
   "description": "Reusable OpenHarmony WebRTC and SIP call utilities.",
   "main": "Index.ets",
   "author": "Chindeo",
@@ -22,5 +22,7 @@
   "dynamicDependencies": {
     "@ohos/webrtc": "*"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@ohos/hypium": "1.0.19"
+  }
 }
