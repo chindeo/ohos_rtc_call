@@ -18,8 +18,9 @@
     "audio",
     "call"
   ],
-  "dependencies": {
-    "@ohos/webrtc": "file:../ohos_webrtc"
+  "dependencies": {},
+  "dynamicDependencies": {
+    "@ohos/webrtc": "*"
   },
   "devDependencies": {}
 }
