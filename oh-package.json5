@@ -1,0 +1,25 @@
+{
+  "name": "@chindeo/ohos-rtc-call",
+  "version": "0.1.4-rc2",
+  "description": "Reusable OpenHarmony WebRTC and SIP call utilities.",
+  "main": "Index.ets",
+  "author": "Chindeo",
+  "license": "Apache-2.0",
+  "homepage": "https://ohpm.openharmony.cn/#/cn/home",
+  "compatibleSdkVersion": "12",
+  "compatibleSdkType": "OpenHarmony",
+  "obfuscated": false,
+  "keywords": [
+    "OpenHarmony",
+    "HarmonyOS",
+    "WebRTC",
+    "SIP",
+    "RTC",
+    "audio",
+    "call"
+  ],
+  "dependencies": {
+    "@ohos/webrtc": "file:../ohos_webrtc"
+  },
+  "devDependencies": {}
+}

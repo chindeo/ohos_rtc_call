@@ -1,0 +1,6 @@
+oh_modules/
+build/
+.hvigor/
+*.har
+*.hap
+*.app

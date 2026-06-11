@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Reusable WebRTC call utilities"
+    },
+    {
+      "name": "internet",
+      "value": "Network access is required for RTC signaling."
+    },
+    {
+      "name": "microphone",
+      "value": "Microphone access is required for audio calls."
+    },
+    {
+      "name": "camera",
+      "value": "Camera access is required for video calls."
+    },
+    {
+      "name": "audio_settings",
+      "value": "Audio settings access is required for call routing."
+    }
+  ]
+}

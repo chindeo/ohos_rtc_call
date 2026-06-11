@@ -1,0 +1,29 @@
+{
+  "module": {
+    "name": "ohos_rtc_call",
+    "type": "har",
+    "description": "$string:module_desc",
+    "deviceTypes": [
+      "default",
+      "tablet"
+    ],
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET",
+        "reason": "$string:internet"
+      },
+      {
+        "name": "ohos.permission.MICROPHONE",
+        "reason": "$string:microphone"
+      },
+      {
+        "name": "ohos.permission.CAMERA",
+        "reason": "$string:camera"
+      },
+      {
+        "name": "ohos.permission.MODIFY_AUDIO_SETTINGS",
+        "reason": "$string:audio_settings"
+      }
+    ]
+  }
+}
