@@ -24,14 +24,16 @@ const VALID_RECVONLY_SDP = 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufra
 
 class MemoryPeerConnectionAdapter implements RtcWebRtcPeerConnectionAdapter {
   ensuredRoles: string[] = []
+  ensuredSessionIds: string[] = []
   remoteDescriptions: RtcWebRtcSessionDescription[] = []
   localDescription?: RtcWebRtcSessionDescription
   candidates: RtcWebRtcIceCandidate[] = []
   sentSignals: RtcSignalMessage[] = []
   current: boolean = true
 
-  async ensurePeerConnection(role: RtcWebRtcPeerRole, _context: RtcWebRtcSignalContext): Promise<void> {
+  async ensurePeerConnection(role: RtcWebRtcPeerRole, context: RtcWebRtcSignalContext): Promise<void> {
     this.ensuredRoles.push(role)
+    this.ensuredSessionIds.push(context.sessionId)
   }
 
   hasPeerConnection(_role: RtcWebRtcPeerRole, _context: RtcWebRtcSignalContext): boolean {
@@ -218,6 +220,54 @@ export default function rtcWebRtcSignalStateMachineTest() {
 
       expect(result.role).assertEqual(RTC_WEBRTC_PEER_ROLE_PUBLISH)
       expect(adapter.ensuredRoles[0]).assertEqual(RTC_WEBRTC_PEER_ROLE_PUBLISH)
+    })
+
+    it('accepts multiple explicitly registered sessions without clearing subscribe state', 0, async () => {
+      const adapter = new MemoryPeerConnectionAdapter()
+      const machine = new RtcWebRtcSignalStateMachine({
+        adapter,
+        requireIceParamsForRemoteSdp: false,
+        requireIceParamsForLocalAnswer: false
+      })
+      machine.registerSession('call-a')
+      machine.registerSession('call-b')
+
+      const first = await machine.handleSdp(
+        sdpData('call-a', 'subscribe|rtc-a', 'offer', VALID_OFFER_SDP),
+        { autoCreateAnswer: false }
+      )
+      const second = await machine.handleSdp(
+        sdpData('call-b', 'subscribe|rtc-b', 'offer', VALID_OFFER_SDP),
+        { autoCreateAnswer: false }
+      )
+
+      expect(first.handled).assertEqual(true)
+      expect(second.handled).assertEqual(true)
+      expect(machine.getState().subscribes.length).assertEqual(2)
+    })
+
+    it('keeps publish signaling state isolated by session', 0, async () => {
+      const adapter = new MemoryPeerConnectionAdapter()
+      const machine = new RtcWebRtcSignalStateMachine({
+        adapter,
+        requireIceParamsForRemoteSdp: false,
+        requireIceParamsForLocalAnswer: false
+      })
+      machine.registerSession('call-a')
+      machine.registerSession('call-b')
+
+      await machine.handleSdp(
+        sdpData('call-a', 'publish|rtc-a', 'offer', VALID_RECVONLY_SDP),
+        { role: RTC_WEBRTC_PEER_ROLE_PUBLISH }
+      )
+      await machine.handleSdp(
+        sdpData('call-b', 'publish|rtc-b', 'offer', VALID_RECVONLY_SDP),
+        { role: RTC_WEBRTC_PEER_ROLE_PUBLISH }
+      )
+
+      expect(machine.getState().publishes.length).assertEqual(2)
+      expect(adapter.ensuredSessionIds[0]).assertEqual('call-a')
+      expect(adapter.ensuredSessionIds[1]).assertEqual('call-b')
     })
   })
 }

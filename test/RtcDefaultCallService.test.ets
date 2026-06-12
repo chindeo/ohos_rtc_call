@@ -201,7 +201,7 @@ export default function rtcDefaultCallServiceTest() {
       expect(service.getCallListItems().find(item => item.uid === 'uid-2')?.phase).assertEqual(RtcCallViewPhase.ENDED)
     })
 
-    it('terminates the active call by uid without clearing another pending call', 0, async () => {
+    it('terminates the active call by uid and switches to another pending call', 0, async () => {
       const service = createService()
       await service.receiveIncomingCall({
         callId: 'bed-1',
@@ -218,10 +218,40 @@ export default function rtcDefaultCallServiceTest() {
 
       await service.terminateCallById('uid-1', 'hangup first')
 
-      expect(service.getViewState().phase).assertEqual(RtcCallViewPhase.HIDDEN)
+      expect(service.getViewState().phase).assertEqual(RtcCallViewPhase.INCOMING)
+      expect(service.getSession().uid).assertEqual('uid-2')
+      expect(service.getSession().active).assertEqual(true)
       expect(service.getCallListItems().find(item => item.uid === 'uid-1')?.phase).assertEqual(RtcCallViewPhase.ENDED)
       expect(service.getCallListItems().find(item => item.uid === 'uid-2')?.phase).assertEqual(RtcCallViewPhase.INCOMING)
       expect(service.getIncomingCalls().pendingCount).assertEqual(1)
+    })
+
+    it('terminates all calls through an explicit all-hangup path', 0, async () => {
+      let terminatedCount = 0
+      const service = createService({
+        async onTerminateAllCalls(sessions, _reason) {
+          terminatedCount = sessions.length
+        }
+      })
+      await service.receiveIncomingCall({
+        callId: 'bed-1',
+        uid: 'uid-1',
+        target: { number: '8001' }
+      })
+      await service.acceptCall()
+      service.markConnected()
+      await service.receiveIncomingCall({
+        callId: 'bed-2',
+        uid: 'uid-2',
+        target: { number: '8002' }
+      })
+
+      await service.terminateAllCalls('handset down')
+
+      expect(terminatedCount).assertEqual(2)
+      expect(service.getIncomingCalls().calls.length).assertEqual(0)
+      expect(service.getSession().active).assertEqual(false)
+      expect(service.getViewState().phase).assertEqual(RtcCallViewPhase.HIDDEN)
     })
 
     it('holds and resumes an active call by uid', 0, async () => {
@@ -251,6 +281,26 @@ export default function rtcDefaultCallServiceTest() {
       expect(service.getSession().isHold).assertEqual('false')
       expect(service.getCallSessions().sessions[0].isHold).assertEqual(false)
       expect(resumeCount).assertEqual(1)
+    })
+
+    it('applies remote hold state without invoking local hold handlers', 0, async () => {
+      let holdCount = 0
+      const service = createService({
+        async onHoldCall(_session, _command) {
+          holdCount += 1
+        }
+      })
+      await service.receiveIncomingCall({
+        callId: 'bed-1',
+        uid: 'uid-1',
+        target: { number: '8001' }
+      })
+      await service.acceptCall()
+
+      expect(service.applyHoldStateById('uid-1', true)).assertEqual(true)
+      expect(service.getSession().isHold).assertEqual('true')
+      expect(service.getViewState().phase).assertEqual(RtcCallViewPhase.HELD)
+      expect(holdCount).assertEqual(0)
     })
 
     it('dispatches hold and resume control commands', 0, async () => {

@@ -16,6 +16,7 @@ export enum RtcCallUiLayout {
 export enum RtcCallUiAction {
   ACCEPT = 'accept',
   HANGUP = 'hangup',
+  HANGUP_ALL = 'hangup_all',
   HOLD = 'hold',
   RESUME = 'resume',
   MUTE = 'mute',
@@ -149,6 +150,12 @@ export class RtcCallUiPresenter {
         visible: state.canHangup || state.visible,
         enabled: state.canHangup || state.visible,
         label: '挂断'
+      },
+      {
+        action: RtcCallUiAction.HANGUP_ALL,
+        visible: options.role === RtcCallDeviceRole.HOST && (options.participantCount || 0) > 1,
+        enabled: options.role === RtcCallDeviceRole.HOST && (options.participantCount || 0) > 1,
+        label: '挂断全部'
       },
       {
         action: RtcCallUiAction.HOLD,

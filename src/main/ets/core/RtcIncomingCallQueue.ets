@@ -1,7 +1,7 @@
 import { RtcCallMode } from '../model/RtcCallConfig'
 import { RtcCallTarget } from './RtcCallService'
 
-export type RtcIncomingCallQueuePhase = 'incoming' | 'accepted' | 'ended'
+export type RtcIncomingCallQueuePhase = 'incoming' | 'outgoing' | 'accepted' | 'ended'
 
 export interface RtcIncomingCallQueueOptions {
   maxSize?: number
@@ -17,6 +17,7 @@ export interface RtcIncomingCallQueueItemOptions {
   autoAnswer?: boolean
   isHold?: boolean
   status?: string
+  phase?: RtcIncomingCallQueuePhase
   sortWeight?: number
   receivedAt?: number
 }
@@ -64,6 +65,7 @@ export class RtcIncomingCallQueue {
     const now = options.receivedAt || Date.now()
     const key = RtcIncomingCallQueue.resolveKey(options)
     let record = this.calls.find((item: RtcIncomingCallRecord) => item.key === key)
+    const isNewRecord = !record
     if (!record) {
       record = new RtcIncomingCallRecord()
       record.key = key
@@ -82,7 +84,9 @@ export class RtcIncomingCallQueue {
     record.isHold = options.isHold === true
     record.status = options.status || record.status
     record.sortWeight = options.sortWeight !== undefined ? options.sortWeight : record.sortWeight
-    record.phase = 'incoming'
+    if (isNewRecord || record.phase === 'ended') {
+      record.phase = options.phase || 'incoming'
+    }
     record.visible = true
     record.endReason = ''
     record.updatedAt = now
@@ -154,11 +158,13 @@ export class RtcIncomingCallQueue {
   }
 
   remove(callId: string): void {
-    const removingActive = this.calls.some((item: RtcIncomingCallRecord) =>
-      item.callId === this.activeCallId && RtcIncomingCallQueue.matches(item, callId))
-    const removingSelected = this.calls.some((item: RtcIncomingCallRecord) =>
-      item.callId === this.selectedCallId && RtcIncomingCallQueue.matches(item, callId))
-    this.calls = this.calls.filter((item: RtcIncomingCallRecord) => !RtcIncomingCallQueue.matches(item, callId))
+    const record = this.find(callId)
+    if (!record) {
+      return
+    }
+    const removingActive = record.callId === this.activeCallId
+    const removingSelected = record.callId === this.selectedCallId
+    this.calls = this.calls.filter((item: RtcIncomingCallRecord) => item.callId !== record.callId)
     if (removingActive) {
       this.activeCallId = ''
     }
@@ -217,7 +223,17 @@ export class RtcIncomingCallQueue {
   }
 
   private find(callId: string): RtcIncomingCallRecord | undefined {
-    return this.calls.find((item: RtcIncomingCallRecord) => RtcIncomingCallQueue.matches(item, callId))
+    const key = (callId || '').trim()
+    if (!key) {
+      return undefined
+    }
+    const exact = this.calls.find((item: RtcIncomingCallRecord) =>
+      item.callId === key || item.key === key || item.uid === key || item.sessionKey === key)
+    if (exact) {
+      return exact
+    }
+    const peerMatches = this.calls.filter((item: RtcIncomingCallRecord) => item.peerNumber === key)
+    return peerMatches.length === 1 ? peerMatches[0] : undefined
   }
 
   private trim(): void {

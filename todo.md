@@ -2,7 +2,16 @@
 
 ## 目标
 
-将床旁和主机重复且容易产生行为差异的 RTC 公共逻辑逐步下沉到 `@chindeo/ohos-rtc-call`，页面侧只保留业务数据、导航、UI 展示和项目专属接口。
+将床旁和主机重复且容易产生行为差异的 RTC 公共逻辑下沉到 `@chindeo/ohos-rtc-call`。公共模块统一持有信令、媒体资源、通话会话、多路状态和通用通话 UI；业务页面只保留业务配置、页面生命周期、导航、项目专属接口、业务日志 / 提示，以及本机和远端视频 Surface Builder。
+
+其中主机业务工程 `v1.0_nurse_SHIMeta` 的 `RtcCallHost.ets` 最终只作为业务配置和页面容器，不再自管 WebSocket、SDP / Candidate、PeerConnection、音视频 track、多路会话状态或多人通话 UI。
+
+## 完成状态口径
+
+- “公共能力已实现”：公共模块中已有可复用类、状态机或基础控制器，并有对应单元测试。
+- “业务接入已完成”：业务工程已删除同类自管逻辑，运行时只使用公共模块入口。
+- 只有公共能力、业务接入和真机验收全部完成后，对应阶段才能标记为“已完成”。
+- 临时业务工程中的验证性修改不作为公共模块下沉完成依据。
 
 ## 阶段 0：文档和版本边界
 
@@ -70,7 +79,7 @@
 
 ## 阶段 1：WebRTC 信令状态机
 
-状态：已完成
+状态：进行中（公共能力已实现，业务主机未完成接入）
 
 任务：
 
@@ -85,6 +94,8 @@
 - [x] 补充 WebRTC 信令状态机核心单元测试。
 - [x] 保持 `RtcWebRtcSignalSession` 只负责 WebSocket 连接、注册、消息拆包和原始信令收发。
 - [x] 通过接口注入 PeerConnection 操作，避免状态机直接绑定床旁或主机页面。
+- [ ] 主机通过公共总入口接入 `RtcWebRtcSignalSession` 和 `RtcWebRtcSignalStateMachine`。
+- [ ] 删除 `RtcCallHost.ets` 自管的 WebSocket、`handleSdp`、`handleCandidate` 和 Candidate 缓存。
 
 验收：
 
@@ -92,14 +103,15 @@
 - stale session 信令不会污染当前通话。
 - offer / answer 发送字段由公共模块统一生成。
 - ICE 日志输出入口一致。
+- `RtcCallHost.ets` 不再直接创建 WebSocket 或解析 SDP / Candidate。
 
 风险：
 
-- 当前公共库没有业务项目里的 `handleSdp` / `handleCandidate` 原实现，落地时需要参考床旁和主机现有代码，避免改变已验证行为。
+- 公共状态机已具备基础处理能力，但业务主机仍保留完整原实现；接入时需要逐项对照已验证行为，避免遗漏路由字段和兼容逻辑。
 
 ## 阶段 2：WebRTC 媒体资源管理
 
-状态：已完成
+状态：进行中（公共资源能力已实现，业务主机未完成接入）
 
 任务：
 
@@ -113,12 +125,18 @@
 - [x] 下沉 AEC dump 开关和清理策略。
 - [x] 下沉 PCM 采集统计日志回调。
 - [x] 补充媒体资源管理轻量单元测试。
+- [ ] 新增 `RtcWebRtcMediaController`，统一 publish / subscribe PeerConnection 与 track 的会话绑定。
+- [ ] 统一 `ontrack` 身份解析和媒体接通判定。
+- [ ] 主机改由公共媒体控制器创建和释放 PeerConnection、track 与媒体资源。
+- [ ] 删除 `RtcCallHost.ets` 自管的 `PeerConnectionFactory`、publish PC、subscribe PC 和音视频 track。
 
 验收：
 
 - 页面不再手写 ADM / PCF / track 的重复生命周期代码。
 - 挂断、异常退出、页面销毁时资源释放路径一致。
 - AEC dump 和 PCM 统计可按诊断配置开关控制。
+- 普通视频设备的视频通话必须收到匹配的视频 track 后才算接通。
+- 音频通话或手表设备收到匹配的音频 track 后即可算接通。
 
 风险：
 
@@ -126,7 +144,7 @@
 
 ## 阶段 3：通话会话控制
 
-状态：已完成
+状态：进行中（公共基础控制已实现，业务主机未完成接入）
 
 任务：
 
@@ -139,12 +157,18 @@
 - [x] 统一通话中状态同步到 `RtcCallSession`。
 - [x] 统一 `RtcCallControlCommand` 解析和分发。
 - [x] 补充通话会话控制单元测试。
+- [ ] 新增主机唯一业务入口 `RtcHostCallController`。
+- [ ] 新增 `RtcHostMultiCallController`，统一 active、side list、pending、accepted 和 hold 状态。
+- [ ] 所有接听、保持、恢复、单路挂断、全部挂断和选择操作都按 `uid / sessionKey` 路由。
+- [ ] 缺少 `uid / sessionKey` 且无法唯一映射时阻断操作。
+- [ ] 主机页面和硬件事件全部改走 `RtcHostCallController`。
 
 验收：
 
 - 页面通过公共控制器完成发起、接听、挂断和保持恢复。
 - `RtcCallSession` 状态变化一致，可被 `RtcCallSessionGuard` 正确识别。
 - 屏幕按钮和硬件事件都走同一套控制命令。
+- 普通挂断只结束目标会话，话筒放下和挂断全部才结束全部会话。
 
 验证：
 
@@ -160,7 +184,7 @@
 
 ## 阶段 4：音频策略
 
-状态：已完成
+状态：进行中（公共能力已实现，业务主机仍有部分音频状态和资源逻辑待迁移）
 
 任务：
 
@@ -178,6 +202,8 @@
   - 手柄接听默认非免提，通话音量 40%。
 - [x] 新增 `RtcCallAudioPolicyController`，业务侧可注入音频 driver 或使用默认系统音频 / 设备能力实现。
 - [x] 补充音频策略单元测试。
+- [ ] 主机通过 `RtcHostCallController` 间接使用公共音频资源和路由策略。
+- [ ] 删除 `RtcCallHost.ets` 自管的通话音量恢复、扬声器路由和媒体资源状态。
 
 验收：
 
@@ -191,7 +217,7 @@
 
 ## 阶段 5：Dnake 硬件事件通话适配
 
-状态：已完成
+状态：进行中（公共能力已实现，业务主机未完成统一入口接入）
 
 任务：
 
@@ -204,6 +230,8 @@
 - [x] 页面只传入回调，例如 `onAnswer`、`onHangup`、`onCallKey`。
 - [x] 支持业务侧注入硬件事件 parser，兼容厂家 payload 差异。
 - [x] 补充硬件事件控制单元测试。
+- [ ] 主机硬件事件通过 `RtcHostCallController` 转换为按 `sessionKey` 路由的统一操作。
+- [ ] 话筒放下统一调用 `hangupAll`，屏幕普通挂断只调用目标会话的 `hangup`。
 
 验收：
 
@@ -269,7 +297,7 @@
 
 ## 整体验证和发布准备
 
-状态：已完成
+状态：进行中（公共包预检完成，业务全链路接入和真机验收未完成）
 
 任务：
 
@@ -295,12 +323,12 @@
 - [x] 生成 `0.1.4-rc3` HAR 并通过 `ohpm prepublish` 预检。
 - [x] 床旁临时项目接入启动降级：接口异常但配置缓存可用时进入主页，详情允许缓存 / 空对象降级。
 - [x] 床旁临时项目主页增加“网络异常，请检查网络”提示，请求成功后清除提示并刷新缓存。
-- [x] 主机临时项目补多路通话列表、活动会话切换、单路挂断不清空其它会话。
-- [x] 主机临时项目增加保持 / 恢复按钮，复用现有保持状态和本地麦克风上行控制。
+- [x] 主机临时项目补多路通话列表、活动会话切换、单路挂断不清空其它会话，仅作为临时验证，不计入公共化完成项。
+- [x] 主机临时项目增加保持 / 恢复按钮，复用现有保持状态和本地麦克风上行控制，仅作为临时验证，不计入公共化完成项。
 - [x] 床旁临时项目构建通过。
 - [x] 主机临时项目构建通过。
-- [x] 安装床旁 HAP 到 182 并确认进程存活。
-- [x] 安装主机 HAP 到 196 并确认进程存活。
+- [x] 安装床旁 HAP 到床旁测试设备并确认进程存活。
+- [x] 安装主机 HAP 到主机测试设备并确认进程存活。
 - [ ] 真机验证床旁启动降级和通话。
 - [ ] 真机验证主机多床旁来电、保持 / 恢复和单路挂断。
 - [ ] 设备验收通过后再生成最终 `0.1.4-rc3` 预发布包。
@@ -317,6 +345,112 @@
 - 首次安装且从未成功缓存床旁配置时，仍无法保证通话注册所需账号信息完整。
 - OHOS 主机保持发送协议当前按现有广播结构适配，需真机联调确认服务端是否接受。
 
+## 阶段 9：主机 WebRTC 全链路和多人 UI 公共化接入
+
+状态：进行中（公共链路和多人 UI 已接入，音频来电崩溃已修复；会话状态闭环、操作路由和双路真机验收待完成）
+
+目标：
+
+- 公共模块提供主机通话唯一总入口，业务工程不再直接编排多个底层 controller。
+- `v1.0_nurse_SHIMeta` 的 `RtcCallHost.ets` 只保留业务配置、页面生命周期、业务日志 / 提示和视频 Surface Builder。
+- 主机 WebRTC 链路、多会话状态和多人通话 UI 的唯一真值全部位于公共模块。
+
+### 单路兼容与多人边界
+
+- 单路通话必须保持改造前已经验证通过的按钮和信令流程，不能为了多人抽象改变单路接听、挂断的触发条件和调用路径。
+- 单路来电在 publish offer 处理完成、本地 answer SDP 已发送后显示并启用接听按钮；点击接听继续发送当前会话的 `applyType=2`。
+- 单路挂断继续发送当前唯一会话的 `applyType=3`。单路场景允许沿用原实现的 `isAll=true` 语义，因为此时不存在其它会话。
+- 单路界面沿用原单人通话的布局、配色、按钮尺寸、间距和交互反馈，不套用多人列表样式。
+- 只有存在第二路可见会话时才启用多人调度能力，包括右侧列表、展示焦点切换、按 uid 的操作隔离和挂断全部按钮。
+- 从多人退回单路后，剩余会话恢复单路显示和操作方式，但不得重建或改变该会话原有的来电、接听、通话或保持状态。
+- 多人逻辑参考安卓 `call-lib`：业务 `uid` 是首选操作标识，号码只用于唯一映射和兼容；每路 subscribe、远端 track、状态和 UI 必须绑定同一个会话。
+- 多人模式的接听、保持、恢复和单路挂断必须携带目标 `uid/sessionKey`；缺少 uid 且无法唯一映射时阻断操作，不能退化成当前 active 或挂断全部。
+- 普通挂断只结束指定 uid 对应的信令、subscribe peer、媒体状态和 UI；独立“挂断全部”按钮及话筒放下才结束全部会话。
+- 点击右侧已接听设备只交换主显示区和侧边列表位置，不改变通话状态；待接听和保持中的设备不因切换动作自动接听或恢复。
+- 主显示会话结束后优先选择另一条已接听会话；没有已接听会话时显示一条待接听会话。
+
+公共模块任务：
+
+- [x] 新增 `RtcHostCallController`，作为业务工程唯一调用入口。
+- [x] 新增 `RtcWebRtcCallController`，统一 WebSocket 注册、信令分发、SDP、Candidate 和 publish / subscribe 信令编排。
+- [x] 新增 `RtcWebRtcMediaController`，统一 PeerConnectionFactory、publish PC、subscribe PC、本地 / 远端 track 和 renderer 生命周期。
+- [x] 新增 `RtcHostMultiCallController`，统一 active、side list、pending、accepted、hold 和媒体接通状态。
+- [x] 将 `RtcWebRtcSignalStateMachine`、`RtcPeerSessionRegistry`、`RtcIncomingCallQueue` 和 `RtcDefaultCallService` 收敛到总入口内部。
+- [x] 新增 `RtcHostCallUiModel`，统一 `localCard`、`activeCall`、`sideCalls`、`actions`、`showHangupAll`、`volume` 和 `videoState`。
+- [x] 新增公共 ArkUI 组件 `RtcHostMultiCallLayout`。
+- [x] `RtcHostMultiCallLayout` 负责左侧主通话区、右侧本机信息 / 视频区、远端列表、状态颜色和通话操作。
+- [x] 本机和远端视频 Surface 通过 `@BuilderParam` 注入，公共 UI 不直接绑定业务 renderer 生命周期。
+- [x] 在 `Index.ets` 导出总入口、媒体控制器、多会话控制器、UI model 和公共组件。
+
+统一会话模型：
+
+- [ ] 每一路会话统一绑定 `sessionKey`、`uid`、`peerNumber`、`callId` 和 `subscribeRtcUid`。
+- [ ] `invite`、publish answer ready、subscribe、UI 条目和控制操作必须先解析为同一个规范 `sessionKey`，不能由独立 Map 使用未经归一化的字符串临时关联。
+- [ ] 展示焦点和媒体活动状态分离；点击右侧条目只切换左右显示位置，不改变该会话的来电、接听、通话或保持状态。
+- [ ] 每一路 subscribe PeerConnection、远端音频 track、远端视频 track、phase、hold 和 mediaConnected 都归属于同一会话。
+- [x] 传给 OpenHarmony WebRTC native 的 Candidate 只包含有效字段；`sdpMLineIndex` 非数字时不得写入对象。
+- [ ] publish connected 只表示本机上行已建立，不作为对端已接听依据。
+- [ ] `ontrack` 必须通过 track id / stream id 唯一匹配目标会话后才更新接通状态。
+- [ ] 普通视频设备的视频通话等待视频 track；音频通话或手表设备只等待音频 track。
+- [ ] 无法唯一匹配会话时不更新状态，并输出可定位日志。
+
+业务工程替换任务：
+
+- [x] `RtcCallHost.ets` 改为创建和持有 `RtcHostCallController`。
+- [x] 页面生命周期只调用公共 controller 的 `start` 和 `dispose`，业务配置通过构造参数注入。
+- [x] 页面监听公共 `RtcHostCallUiModel` 并渲染 `RtcHostMultiCallLayout`。
+- [x] 页面按钮和硬件事件只调用 `accept`、`hangup`、`hangupAll`、`hold`、`resume` 和 `select`。
+- [x] 删除业务自管 WebSocket、SDP / Candidate、Candidate 缓存和信令路由。
+- [x] 删除业务自管 publish PC、subscribe PC、PeerConnectionFactory 和音视频 track。
+- [x] 删除业务自管 `sessionPeers`、`sessionStates`、`subscribeStates` 和 `activeSessionId`。
+- [ ] 业务依赖版本改为 `0.1.4-rc3`；本地验证可临时使用相对 `file:` HAR，不提交本机绝对路径。
+
+公共模块单元测试：
+
+- [x] 双路来电状态相互隔离。
+- [ ] 单路接听和挂断保持改造前调用路径，不经过多人 uid 歧义门控。
+- [ ] 第二路加入后才切换为多人调度，退回单路后恢复单路展示和操作。
+- [ ] 接听一路只建立对应一路 subscribe。
+- [x] 普通挂断只结束目标会话。
+- [x] active 会话挂断后切换到下一路可见会话。
+- [x] 缺少 uid 且多路无法唯一映射时阻断操作。
+- [x] 普通视频、音频通话和手表设备使用各自正确的媒体接通判定。
+- [ ] publish answer ready 使用 callId、uid 或规范 sessionKey 回调时都能启用同一路接听按钮。
+- [ ] 点击右侧条目只改变展示选中项，不修改两路原有 phase、hold 和 mediaConnected。
+- [ ] 左侧和右侧普通挂断都只关闭对应信令会话、subscribe peer 和 UI 条目。
+
+公共多人 UI 修正：
+
+- [ ] 接听、挂断、保持、恢复、静音、免提和挂断全部使用公共模块图片资源，不使用字体字符模拟图标。
+- [ ] 页面使用统一中性背景；待接听、通话中、保持中只通过受控状态色和选中边框区分，避免大面积多色背景拼接。
+- [ ] 当前选中床旁在左侧显示，右侧列表移除该条目；切换后原左侧未结束会话回到右侧。
+- [ ] 右侧条目挂断按钮阻止卡片切换事件，避免一次点击同时触发选择和挂断。
+
+构建和真机验证：
+
+- [x] 构建 `0.1.4-rc3.har`，不发布。
+- [x] `v1.0_nurse_SHIMeta` 使用本地 rc3 HAR 构建通过。
+- [x] 安装主机 HAP 到测试设备。
+- [ ] 验证单路来电、接听、保持、恢复和单路挂断。
+- [x] 验证音频来电处理 Candidate 时不发生 `Number::CheckCast` native 崩溃。
+- [ ] 验证双路来电独立接听、活动通话切换、右侧列表和状态颜色。
+- [ ] 验证普通挂断不影响其它通话，挂断全部和话筒放下结束全部通话。
+- [ ] 验证视频设备、音频通话和手表设备的接通判定。
+- [ ] 测试结束后清理测试进程，避免残留。
+
+阶段完成判据：
+
+- `RtcCallHost.ets` 不再直接引用 WebSocket 和 `@ohos/webrtc`。
+- `RtcCallHost.ets` 不再保存 PeerConnection、track、Candidate 或多会话真值状态。
+- 业务工程只依赖 `RtcHostCallController` 和 `RtcHostMultiCallLayout` 完成通话控制与渲染。
+- 公共模块单元测试、rc3 HAR 构建、业务构建和真机验收全部通过。
+
+风险：
+
+- 业务主机当前包含大量已验证的兼容逻辑，迁移时需要逐项核对信令字段、track 身份解析和资源释放顺序。
+- 迁移期间不能让旧实现和公共 controller 同时处理同一条信令，否则会产生双 PeerConnection 和双状态源。
+- 阶段可以拆分检查点实施，但公共 UI 或多会话控制单独接入不能将本阶段标记为完成。
+
 ## 不建议下沉
 
 - 床旁主页菜单、患者信息、MQTT 业务刷新。
@@ -324,3 +458,4 @@
 - 具体 API service 的业务接口。
 - `SettingHostAbility` 本身。
 - 启动页完整业务流程，例如获取床位配置、获取患者详情、跳转哪个主页。
+- 项目专属日志上报、业务 Toast 文案和业务导航。

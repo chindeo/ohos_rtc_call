@@ -182,6 +182,7 @@ export interface RtcWebRtcSignalMachineState {
   activeUuid: string
   activeRtcUid: string
   publish: RtcWebRtcPeerSessionState
+  publishes: RtcWebRtcPeerSessionState[]
   subscribes: RtcWebRtcPeerSessionState[]
 }
 
@@ -227,9 +228,10 @@ export class RtcWebRtcSignalStateMachine {
   private requireIceParamsForLocalAnswer: boolean
   private activeUuid: string = ''
   private activeRtcUid: string = ''
-  private publishState: RtcWebRtcPeerSessionState = createPeerState(RTC_WEBRTC_PEER_ROLE_PUBLISH)
+  private publishStates: Map<string, RtcWebRtcPeerSessionState> = new Map()
   private subscribeStates: Map<string, RtcWebRtcPeerSessionState> = new Map()
   private endedSessionIds: string[] = []
+  private registeredSessionIds: string[] = []
 
   constructor(options: RtcWebRtcSignalStateMachineOptions) {
     this.adapter = options.adapter
@@ -243,14 +245,21 @@ export class RtcWebRtcSignalStateMachine {
   }
 
   getState(): RtcWebRtcSignalMachineState {
+    const publishes: RtcWebRtcPeerSessionState[] = []
     const subscribes: RtcWebRtcPeerSessionState[] = []
+    this.publishStates.forEach((state: RtcWebRtcPeerSessionState) => {
+      publishes.push(this.copyPeerState(state))
+    })
     this.subscribeStates.forEach((state: RtcWebRtcPeerSessionState) => {
       subscribes.push(this.copyPeerState(state))
     })
+    const activePublish = this.getPublishState(this.activeUuid) || publishes[0] ||
+      createPeerState(RTC_WEBRTC_PEER_ROLE_PUBLISH)
     return {
       activeUuid: this.activeUuid,
       activeRtcUid: this.activeRtcUid,
-      publish: this.copyPeerState(this.publishState),
+      publish: this.copyPeerState(activePublish),
+      publishes,
       subscribes
     }
   }
@@ -258,16 +267,58 @@ export class RtcWebRtcSignalStateMachine {
   startSession(uuid: string, rtcUid: string = ''): void {
     this.activeUuid = RtcWebRtcSignalStateMachine.normalizeSignalSessionId(uuid)
     this.activeRtcUid = (rtcUid || '').trim()
-    this.publishState = createPeerState(RTC_WEBRTC_PEER_ROLE_PUBLISH, this.activeUuid, this.activeRtcUid)
+    this.publishStates.clear()
+    if (this.activeUuid) {
+      this.publishStates.set(
+        this.activeUuid,
+        createPeerState(RTC_WEBRTC_PEER_ROLE_PUBLISH, this.activeUuid, this.activeRtcUid)
+      )
+    }
     this.subscribeStates.clear()
+    this.registeredSessionIds = this.activeUuid ? [this.activeUuid] : []
     this.forgetEndedSession(this.activeUuid)
+  }
+
+  registerSession(uuid: string): void {
+    const id = RtcWebRtcSignalStateMachine.normalizeSignalSessionId(uuid)
+    if (!id) {
+      return
+    }
+    if (this.registeredSessionIds.indexOf(id) < 0) {
+      this.registeredSessionIds.push(id)
+    }
+    if (!this.activeUuid) {
+      this.activeUuid = id
+    }
+    this.forgetEndedSession(id)
+  }
+
+  unregisterSession(uuid: string): void {
+    const id = RtcWebRtcSignalStateMachine.normalizeSignalSessionId(uuid)
+    if (!id) {
+      return
+    }
+    this.registeredSessionIds = this.registeredSessionIds.filter((item: string) => item !== id)
+    this.rememberEndedSession(id)
+    const removals: string[] = []
+    this.subscribeStates.forEach((state: RtcWebRtcPeerSessionState, key: string) => {
+      if (state.sessionId === id) {
+        removals.push(key)
+      }
+    })
+    removals.forEach((key: string) => this.subscribeStates.delete(key))
+    this.publishStates.delete(id)
+    if (this.activeUuid === id) {
+      this.activeUuid = this.registeredSessionIds.length > 0 ? this.registeredSessionIds[0] : ''
+    }
   }
 
   resetSession(): void {
     this.activeUuid = ''
     this.activeRtcUid = ''
-    this.publishState = createPeerState(RTC_WEBRTC_PEER_ROLE_PUBLISH)
+    this.publishStates.clear()
     this.subscribeStates.clear()
+    this.registeredSessionIds = []
   }
 
   rememberEndedSession(sessionId: string): void {
@@ -682,7 +733,7 @@ export class RtcWebRtcSignalStateMachine {
     if (role === RTC_WEBRTC_PEER_ROLE_SUBSCRIBE) {
       return this.subscribeStates.get(RtcWebRtcSignalStateMachine.getSubscribeKey(sessionId, rtcUid))
     }
-    return this.publishState.sessionId ? this.publishState : undefined
+    return this.getPublishState(sessionId)
   }
 
   private getOrCreatePeerState(
@@ -699,13 +750,15 @@ export class RtcWebRtcSignalStateMachine {
       }
       return state
     }
-    if (!this.publishState.sessionId && sessionId) {
-      this.publishState.sessionId = sessionId
+    const id = RtcWebRtcSignalStateMachine.normalizeSignalSessionId(sessionId)
+    let state = this.publishStates.get(id)
+    if (!state) {
+      state = createPeerState(RTC_WEBRTC_PEER_ROLE_PUBLISH, id, rtcUid)
+      this.publishStates.set(id, state)
+    } else if (!state.rtcUid && rtcUid) {
+      state.rtcUid = rtcUid
     }
-    if (!this.publishState.rtcUid && rtcUid) {
-      this.publishState.rtcUid = rtcUid
-    }
-    return this.publishState
+    return state
   }
 
   private beginSignalSession(
@@ -834,10 +887,13 @@ export class RtcWebRtcSignalStateMachine {
     if (this.endedSessionIds.indexOf(sessionId) >= 0) {
       return true
     }
+    if (this.registeredSessionIds.indexOf(sessionId) >= 0) {
+      return false
+    }
     if (!this.activeUuid || this.activeUuid === sessionId) {
       return false
     }
-    if (this.publishState.sessionId === sessionId) {
+    if (this.publishStates.has(sessionId)) {
       return false
     }
     let found = false
@@ -857,6 +913,14 @@ export class RtcWebRtcSignalStateMachine {
       this.activeRtcUid = rtcUid
     }
     this.forgetEndedSession(sessionId)
+  }
+
+  private getPublishState(sessionId: string): RtcWebRtcPeerSessionState | undefined {
+    const id = RtcWebRtcSignalStateMachine.normalizeSignalSessionId(sessionId)
+    if (!id) {
+      return undefined
+    }
+    return this.publishStates.get(id)
   }
 
   private forgetEndedSession(sessionId: string): void {

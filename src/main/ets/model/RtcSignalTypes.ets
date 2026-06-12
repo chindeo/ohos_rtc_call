@@ -48,6 +48,15 @@ export interface RtcApplySignalData {
   commonRequest: RtcCommonRequest
 }
 
+export interface RtcBroadcastSignalData {
+  data: string
+}
+
+export interface RtcHoldSwitchNotice {
+  type: string
+  info: string
+}
+
 export interface RtcSdpSignalData {
   sdp: string
   sdpType: string

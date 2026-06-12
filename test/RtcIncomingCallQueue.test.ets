@@ -66,6 +66,18 @@ export default function rtcIncomingCallQueueTest() {
       expect(snapshot.calls.find(item => item.callId === 'bed-2')?.phase).assertEqual('incoming')
     })
 
+    it('does not reset an accepted call to incoming on repeated upsert', 0, () => {
+      const queue = new RtcIncomingCallQueue()
+
+      queue.upsert({ callId: 'bed-1', uid: 'uid-1', target: { number: '8001' }, receivedAt: 1 })
+      queue.accept('uid-1')
+      queue.upsert({ callId: 'bed-1', uid: 'uid-1', target: { number: '8001', displayName: '1床更新' }, receivedAt: 2 })
+
+      const item = queue.getSnapshot().calls.find(record => record.uid === 'uid-1')
+      expect(item?.phase).assertEqual('accepted')
+      expect(item?.target.displayName).assertEqual('1床更新')
+    })
+
     it('selects a call without accepting it', 0, () => {
       const queue = new RtcIncomingCallQueue()
 
@@ -103,6 +115,16 @@ export default function rtcIncomingCallQueueTest() {
 
       expect(queue.getSnapshot().calls.length).assertEqual(1)
       expect(queue.getSnapshot().calls[0].uid).assertEqual('uid-b')
+    })
+
+    it('does not resolve a peer-number operation when multiple sessions share that peer', 0, () => {
+      const queue = new RtcIncomingCallQueue()
+
+      queue.upsert({ uid: 'uid-a', target: { number: '8001' }, receivedAt: 1 })
+      queue.upsert({ uid: 'uid-b', target: { number: '8001' }, receivedAt: 2 })
+
+      expect(queue.accept('8001') === undefined).assertEqual(true)
+      expect(queue.getSnapshot().pendingCount).assertEqual(2)
     })
   })
 }
