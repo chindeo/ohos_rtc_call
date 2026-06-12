@@ -30,6 +30,7 @@ export enum RtcHostPhase {
 
 export interface RtcPeerIdentity {
   number: string
+  uid?: string
   displayName?: string
   clientType?: string
   identity?: string
@@ -70,6 +71,7 @@ export class RtcCallConfigResponse {
 
 export class RtcCallSession {
   requestId: string = ''
+  uid: string = ''
   mode: RtcCallMode = RtcCallMode.AUDIO
   state: RtcCallState = RtcCallState.IDLE
   hostPhase: RtcHostPhase = RtcHostPhase.IDLE
@@ -86,6 +88,7 @@ export class RtcCallSession {
   ip: string = ''
   identity: string = ''
   isAutoAnswer: string = ''
+  isHold: string = ''
   triggerScript: string = ''
   readyCheckScript: string = ''
   timeoutMs: number = 15000

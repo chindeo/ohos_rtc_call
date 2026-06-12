@@ -20,6 +20,7 @@ export enum RtcCallViewPhase {
 
 export interface RtcCallViewPeer {
   number: string
+  uid?: string
   displayName?: string
   deviceIp?: string
   clientType?: string
@@ -39,6 +40,7 @@ export class RtcCallViewState {
   direction: RtcCallDirection = RtcCallDirection.NONE
   mode: RtcCallMode = RtcCallMode.AUDIO
   callId: string = ''
+  uid: string = ''
   local: RtcCallViewPeer = { number: '' }
   remote: RtcCallViewPeer = { number: '' }
   autoAnswer: boolean = false

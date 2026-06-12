@@ -32,6 +32,7 @@ import {
   RtcIncomingCallQueueSnapshot,
   RtcIncomingCallRecord
 } from './RtcIncomingCallQueue'
+import { RtcCallSessionStore, RtcCallSessionStoreSnapshot } from './RtcCallSessionStore'
 
 export const RTC_CALL_CONTROL_ACTION_ACCEPT = 'accept'
 export const RTC_CALL_CONTROL_ACTION_ANSWER = 'answer'
@@ -55,10 +56,16 @@ export interface RtcDefaultCallServiceOptions {
   handlers?: RtcDefaultCallServiceHandlers
   idFactory?: () => string
   incomingQueue?: RtcIncomingCallQueue
+  sessionStore?: RtcCallSessionStore
 }
 
 export interface RtcIncomingCallOptions {
   callId?: string
+  uid?: string
+  from?: string
+  to?: string
+  status?: string
+  isHold?: boolean
   target: RtcCallTarget
   mode?: RtcCallMode
   autoAnswer?: boolean
@@ -79,11 +86,13 @@ export class RtcDefaultCallService implements RtcCallService {
   private handlers?: RtcDefaultCallServiceHandlers
   private idFactory: () => string
   private incomingQueue: RtcIncomingCallQueue
+  private sessionStore: RtcCallSessionStore
 
   constructor(options?: RtcDefaultCallServiceOptions) {
     this.handlers = options?.handlers
     this.idFactory = options?.idFactory || (() => `${Date.now()}`)
     this.incomingQueue = options?.incomingQueue || new RtcIncomingCallQueue()
+    this.sessionStore = options?.sessionStore || new RtcCallSessionStore()
   }
 
   configure(config: RtcCallRuntimeConfig): void {
@@ -148,11 +157,28 @@ export class RtcDefaultCallService implements RtcCallService {
   async receiveIncomingCall(options: RtcIncomingCallOptions): Promise<void> {
     const callId = options.callId || this.idFactory()
     const mode = options.mode || RtcCallMode.AUDIO
+    const uid = options.uid || callId
+    const stored = this.sessionStore.upsert({
+      uid,
+      peerNumber: options.target.number,
+      displayName: options.target.displayName,
+      from: options.from,
+      to: options.to,
+      status: options.status || 'incoming',
+      isHold: options.isHold === true,
+      mode,
+      target: options.target
+    })
     const incoming = this.incomingQueue.upsert({
       callId,
+      uid,
+      peerNumber: options.target.number,
+      sessionKey: stored?.uid || uid,
       target: options.target,
       mode,
-      autoAnswer: options.autoAnswer
+      autoAnswer: options.autoAnswer,
+      isHold: options.isHold,
+      status: options.status || 'incoming'
     })
     const mediaBusy = this.session.active && this.session.hostPhase === RtcHostPhase.MEDIA_ACTIVE
     if (mediaBusy && options.autoAnswer !== true && !this.viewState.autoAnswer) {
@@ -166,10 +192,21 @@ export class RtcDefaultCallService implements RtcCallService {
     }
   }
 
-  async acceptIncomingCall(callId: string, command?: RtcCallControlCommand): Promise<void> {
-    const incoming = this.incomingQueue.accept(callId)
+  async acceptIncomingCall(callIdOrUid: string, command?: RtcCallControlCommand): Promise<void> {
+    const incoming = this.incomingQueue.accept(callIdOrUid)
     if (!incoming) {
       return
+    }
+    if (incoming.uid) {
+      this.sessionStore.upsert({
+        uid: incoming.uid,
+        peerNumber: incoming.peerNumber || incoming.target.number,
+        displayName: incoming.target.displayName,
+        status: 'accepted',
+        isHold: false,
+        mode: incoming.mode,
+        target: incoming.target
+      })
     }
     if (this.session.requestId !== incoming.callId) {
       this.activateIncomingCall(incoming)
@@ -185,7 +222,9 @@ export class RtcDefaultCallService implements RtcCallService {
     this.session.hostPhase = RtcHostPhase.MEDIA_ACTIVE
     this.session.visible = true
     this.session.pendingTrigger = false
+    this.session.isHold = 'false'
     this.incomingQueue.accept(this.session.requestId)
+    this.sessionStore.markHold(this.session.uid || this.session.requestId || this.session.calleeNumber, false)
     this.viewState.visible = true
     this.viewState.phase = RtcCallViewPhase.CONNECTING
     this.viewState.canAccept = false
@@ -200,6 +239,7 @@ export class RtcDefaultCallService implements RtcCallService {
     }
     this.session.state = RtcCallState.CONNECTED
     this.session.hostPhase = RtcHostPhase.MEDIA_ACTIVE
+    this.session.isHold = 'false'
     this.session.pendingTrigger = false
     this.viewState.phase = RtcCallViewPhase.CONNECTED
     this.viewState.canAccept = false
@@ -212,9 +252,11 @@ export class RtcDefaultCallService implements RtcCallService {
       return
     }
     this.session.hostPhase = RtcHostPhase.MEDIA_ACTIVE
+    this.session.isHold = 'true'
     this.viewState.phase = RtcCallViewPhase.HELD
     this.viewState.canAccept = false
     this.viewState.canHangup = true
+    this.sessionStore.markHold(this.session.uid || this.session.requestId || this.session.calleeNumber, true)
     this.emitState()
     await this.handlers?.onHoldCall?.(this.copySession(), command)
   }
@@ -224,11 +266,35 @@ export class RtcDefaultCallService implements RtcCallService {
       return
     }
     this.session.hostPhase = RtcHostPhase.MEDIA_ACTIVE
+    this.session.isHold = 'false'
     this.viewState.phase = RtcCallViewPhase.CONNECTED
     this.viewState.canAccept = false
     this.viewState.canHangup = true
+    this.sessionStore.markHold(this.session.uid || this.session.requestId || this.session.calleeNumber, false)
     this.emitState()
     await this.handlers?.onResumeCall?.(this.copySession(), command)
+  }
+
+  async holdCallById(callIdOrUid: string, command?: RtcCallControlCommand): Promise<void> {
+    if (this.session.requestId !== callIdOrUid && this.session.uid !== callIdOrUid) {
+      const incoming = this.incomingQueue.accept(callIdOrUid)
+      if (incoming) {
+        this.activateIncomingCall(incoming)
+      }
+    }
+    await this.holdCall(command)
+    this.sessionStore.markHold(callIdOrUid, true)
+  }
+
+  async resumeCallById(callIdOrUid: string, command?: RtcCallControlCommand): Promise<void> {
+    if (this.session.requestId !== callIdOrUid && this.session.uid !== callIdOrUid) {
+      const incoming = this.incomingQueue.accept(callIdOrUid)
+      if (incoming) {
+        this.activateIncomingCall(incoming)
+      }
+    }
+    await this.resumeCall(command)
+    this.sessionStore.markHold(callIdOrUid, false)
   }
 
   async terminateCall(reason: string = 'terminate'): Promise<void> {
@@ -238,6 +304,11 @@ export class RtcDefaultCallService implements RtcCallService {
     const previousSession = this.copySession()
     if (previousSession.requestId) {
       this.incomingQueue.end(previousSession.requestId, reason)
+    }
+    if (previousSession.uid) {
+      this.sessionStore.removeUid(previousSession.uid)
+    } else if (previousSession.calleeNumber) {
+      this.sessionStore.removePeer(previousSession.calleeNumber)
     }
     this.session.state = RtcCallState.ENDED
     this.session.hostPhase = RtcHostPhase.TEARING_DOWN
@@ -325,6 +396,10 @@ export class RtcDefaultCallService implements RtcCallService {
     return this.incomingQueue.getSnapshot()
   }
 
+  getCallSessions(): RtcCallSessionStoreSnapshot {
+    return this.sessionStore.snapshot()
+  }
+
   onIncomingCallsChange(listener: RtcIncomingCallQueueListener): RtcCallUnsubscribe {
     return this.incomingQueue.onChange(listener)
   }
@@ -357,6 +432,7 @@ export class RtcDefaultCallService implements RtcCallService {
   private resetForNewCall(callId: string, target: RtcCallTarget, mode: RtcCallMode): void {
     this.session = new RtcCallSession()
     this.session.requestId = callId
+    this.session.uid = target.uid || target.identity || callId
     this.session.mode = mode
     this.session.localNumber = this.config?.local.number || ''
     this.session.calleeNumber = target.number
@@ -368,6 +444,7 @@ export class RtcDefaultCallService implements RtcCallService {
     this.session.hospitalId = target.hospitalId || ''
     this.session.isAutoAnswer = this.config?.autoAnswer === true ? 'true' : 'false'
     this.viewState.callId = callId
+    this.viewState.uid = this.session.uid
     this.viewState.mode = mode
     this.viewState.local = this.config ? RtcDefaultCallService.toViewPeerFromIdentity(this.config.local) :
       RtcDefaultCallService.emptyViewPeer()
@@ -377,6 +454,7 @@ export class RtcDefaultCallService implements RtcCallService {
 
   private activateIncomingCall(incoming: RtcIncomingCallRecord): void {
     this.resetForNewCall(incoming.callId, incoming.target, incoming.mode)
+    this.session.uid = incoming.uid || incoming.callId
     this.session.state = RtcCallState.RINGING
     this.session.hostPhase = RtcHostPhase.INCOMING_READY
     this.session.active = true
@@ -387,6 +465,7 @@ export class RtcDefaultCallService implements RtcCallService {
     this.viewState.direction = RtcCallDirection.INCOMING
     this.viewState.canAccept = true
     this.viewState.canHangup = true
+    this.viewState.uid = this.session.uid
   }
 
   private emitState(): void {
@@ -400,6 +479,7 @@ export class RtcDefaultCallService implements RtcCallService {
   private copySession(): RtcCallSession {
     const copy = new RtcCallSession()
     copy.requestId = this.session.requestId
+    copy.uid = this.session.uid
     copy.mode = this.session.mode
     copy.state = this.session.state
     copy.hostPhase = this.session.hostPhase
@@ -416,6 +496,7 @@ export class RtcDefaultCallService implements RtcCallService {
     copy.ip = this.session.ip
     copy.identity = this.session.identity
     copy.isAutoAnswer = this.session.isAutoAnswer
+    copy.isHold = this.session.isHold
     copy.triggerScript = this.session.triggerScript
     copy.readyCheckScript = this.session.readyCheckScript
     copy.timeoutMs = this.session.timeoutMs
@@ -431,6 +512,7 @@ export class RtcDefaultCallService implements RtcCallService {
     copy.direction = this.viewState.direction
     copy.mode = this.viewState.mode
     copy.callId = this.viewState.callId
+    copy.uid = this.viewState.uid
     copy.local = RtcDefaultCallService.copyViewPeer(this.viewState.local)
     copy.remote = RtcDefaultCallService.copyViewPeer(this.viewState.remote)
     copy.autoAnswer = this.viewState.autoAnswer
@@ -455,6 +537,7 @@ export class RtcDefaultCallService implements RtcCallService {
   private static toViewPeerFromIdentity(identity: RtcPeerIdentity): RtcCallViewPeer {
     const peer: RtcCallViewPeer = { number: identity.number }
     peer.displayName = identity.displayName
+    peer.uid = identity.uid
     peer.clientType = identity.clientType
     peer.locId = identity.locId
     return peer
@@ -462,6 +545,7 @@ export class RtcDefaultCallService implements RtcCallService {
 
   private static toViewPeerFromTarget(target: RtcCallTarget): RtcCallViewPeer {
     const peer: RtcCallViewPeer = { number: target.number }
+    peer.uid = target.uid
     peer.displayName = target.displayName
     peer.deviceIp = target.deviceIp
     peer.clientType = target.clientType
@@ -472,6 +556,7 @@ export class RtcDefaultCallService implements RtcCallService {
   private static copyViewPeer(peer: RtcCallViewPeer): RtcCallViewPeer {
     return {
       number: peer.number,
+      uid: peer.uid,
       displayName: peer.displayName,
       deviceIp: peer.deviceIp,
       clientType: peer.clientType,

@@ -102,6 +102,7 @@ export default function rtcDefaultCallServiceTest() {
       const service = createService()
       await service.receiveIncomingCall({
         callId: 'bed-1',
+        uid: 'uid-1',
         target: { number: '8001', displayName: '1床' }
       })
       await service.acceptCall()
@@ -109,13 +110,33 @@ export default function rtcDefaultCallServiceTest() {
 
       await service.receiveIncomingCall({
         callId: 'bed-2',
+        uid: 'uid-2',
         target: { number: '8002', displayName: '2床' }
       })
 
       expect(service.getSession().requestId).assertEqual('bed-1')
+      expect(service.getSession().uid).assertEqual('uid-1')
       expect(service.getSession().hostPhase).assertEqual(RtcHostPhase.MEDIA_ACTIVE)
       expect(service.getIncomingCalls().pendingCount).assertEqual(1)
       expect(service.getIncomingCalls().calls.length).assertEqual(2)
+    })
+
+    it('holds and resumes an active call by uid', 0, async () => {
+      const service = createService()
+      await service.receiveIncomingCall({
+        callId: 'bed-1',
+        uid: 'uid-1',
+        target: { number: '8001' }
+      })
+      await service.acceptCall()
+
+      await service.holdCallById('uid-1')
+      expect(service.getSession().isHold).assertEqual('true')
+      expect(service.getCallSessions().sessions[0].isHold).assertEqual(true)
+
+      await service.resumeCallById('uid-1')
+      expect(service.getSession().isHold).assertEqual('false')
+      expect(service.getCallSessions().sessions[0].isHold).assertEqual(false)
     })
 
     it('dispatches hold and resume control commands', 0, async () => {

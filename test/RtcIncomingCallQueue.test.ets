@@ -9,12 +9,14 @@ export default function rtcIncomingCallQueueTest() {
 
       queue.upsert({
         callId: 'bed-1',
+        uid: 'uid-1',
         target: { number: '8001', displayName: '1床' },
         mode: RtcCallMode.AUDIO,
         receivedAt: 1
       })
       queue.upsert({
         callId: 'bed-2',
+        uid: 'uid-2',
         target: { number: '8002', displayName: '2床' },
         mode: RtcCallMode.VIDEO,
         receivedAt: 2
@@ -23,8 +25,17 @@ export default function rtcIncomingCallQueueTest() {
       const snapshot = queue.getSnapshot()
       expect(snapshot.pendingCount).assertEqual(2)
       expect(snapshot.calls.length).assertEqual(2)
-      expect(snapshot.calls[0].callId).assertEqual('bed-1')
-      expect(snapshot.calls[1].callId).assertEqual('bed-2')
+      expect(snapshot.calls.some(item => item.callId === 'bed-1')).assertTrue()
+      expect(snapshot.calls.some(item => item.callId === 'bed-2')).assertTrue()
+    })
+
+    it('sorts by care weight and time', 0, () => {
+      const queue = new RtcIncomingCallQueue()
+
+      queue.upsert({ uid: 'normal', target: { number: '8001' }, sortWeight: 9, receivedAt: 10 })
+      queue.upsert({ uid: 'special', target: { number: '8002' }, sortWeight: 1, receivedAt: 1 })
+
+      expect(queue.getSnapshot().calls[0].uid).assertEqual('special')
     })
 
     it('deduplicates the same call id and preserves other calls', 0, () => {
@@ -51,8 +62,19 @@ export default function rtcIncomingCallQueueTest() {
       const snapshot = queue.getSnapshot()
       expect(snapshot.pendingCount).assertEqual(1)
       expect(snapshot.calls.length).assertEqual(2)
-      expect(snapshot.calls[0].phase).assertEqual('ended')
-      expect(snapshot.calls[1].phase).assertEqual('incoming')
+      expect(snapshot.calls.find(item => item.callId === 'bed-1')?.phase).assertEqual('ended')
+      expect(snapshot.calls.find(item => item.callId === 'bed-2')?.phase).assertEqual('incoming')
+    })
+
+    it('removes by uid without touching other calls from the same peer', 0, () => {
+      const queue = new RtcIncomingCallQueue()
+
+      queue.upsert({ uid: 'uid-a', target: { number: '8001' }, receivedAt: 1 })
+      queue.upsert({ uid: 'uid-b', target: { number: '8001' }, receivedAt: 2 })
+      queue.remove('uid-a')
+
+      expect(queue.getSnapshot().calls.length).assertEqual(1)
+      expect(queue.getSnapshot().calls[0].uid).assertEqual('uid-b')
     })
   })
 }
