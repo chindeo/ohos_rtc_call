@@ -43,6 +43,7 @@ export class RtcIncomingCallRecord {
 export class RtcIncomingCallQueueSnapshot {
   calls: RtcIncomingCallRecord[] = []
   activeCallId: string = ''
+  selectedCallId: string = ''
   pendingCount: number = 0
 }
 
@@ -51,6 +52,7 @@ export type RtcIncomingCallQueueListener = (snapshot: RtcIncomingCallQueueSnapsh
 export class RtcIncomingCallQueue {
   private calls: RtcIncomingCallRecord[] = []
   private activeCallId: string = ''
+  private selectedCallId: string = ''
   private maxSize: number
   private listeners: RtcIncomingCallQueueListener[] = []
 
@@ -84,6 +86,9 @@ export class RtcIncomingCallQueue {
     record.visible = true
     record.endReason = ''
     record.updatedAt = now
+    if (!this.selectedCallId) {
+      this.selectedCallId = record.callId
+    }
 
     this.trim()
     this.emit()
@@ -96,10 +101,34 @@ export class RtcIncomingCallQueue {
       return undefined
     }
     record.phase = 'accepted'
-    record.status = record.status || 'accepted'
+    record.status = 'accepted'
     record.visible = true
     record.updatedAt = Date.now()
     this.activeCallId = record.callId
+    this.selectedCallId = record.callId
+    this.emit()
+    return RtcIncomingCallQueue.copyRecord(record)
+  }
+
+  select(callId: string): RtcIncomingCallRecord | undefined {
+    const record = this.find(callId)
+    if (!record) {
+      return undefined
+    }
+    this.selectedCallId = record.callId
+    record.updatedAt = Date.now()
+    this.emit()
+    return RtcIncomingCallQueue.copyRecord(record)
+  }
+
+  markHold(callId: string, isHold: boolean): RtcIncomingCallRecord | undefined {
+    const record = this.find(callId)
+    if (!record) {
+      return undefined
+    }
+    record.isHold = isHold
+    record.status = isHold ? 'hold' : (record.phase === 'accepted' ? 'accepted' : record.status)
+    record.updatedAt = Date.now()
     this.emit()
     return RtcIncomingCallQueue.copyRecord(record)
   }
@@ -117,14 +146,24 @@ export class RtcIncomingCallQueue {
     if (this.activeCallId === record.callId) {
       this.activeCallId = ''
     }
+    if (this.selectedCallId === record.callId) {
+      this.selectedCallId = this.resolveNextVisibleCallId(record.callId)
+    }
     this.emit()
     return RtcIncomingCallQueue.copyRecord(record)
   }
 
   remove(callId: string): void {
+    const removingActive = this.calls.some((item: RtcIncomingCallRecord) =>
+      item.callId === this.activeCallId && RtcIncomingCallQueue.matches(item, callId))
+    const removingSelected = this.calls.some((item: RtcIncomingCallRecord) =>
+      item.callId === this.selectedCallId && RtcIncomingCallQueue.matches(item, callId))
     this.calls = this.calls.filter((item: RtcIncomingCallRecord) => !RtcIncomingCallQueue.matches(item, callId))
-    if (this.activeCallId === callId) {
+    if (removingActive) {
       this.activeCallId = ''
+    }
+    if (removingSelected) {
+      this.selectedCallId = this.resolveNextVisibleCallId(callId)
     }
     this.emit()
   }
@@ -137,7 +176,13 @@ export class RtcIncomingCallQueue {
   clear(): void {
     this.calls = []
     this.activeCallId = ''
+    this.selectedCallId = ''
     this.emit()
+  }
+
+  getCall(callId: string): RtcIncomingCallRecord | undefined {
+    const record = this.find(callId)
+    return record ? RtcIncomingCallQueue.copyRecord(record) : undefined
   }
 
   getPending(): RtcIncomingCallRecord[] {
@@ -158,6 +203,7 @@ export class RtcIncomingCallQueue {
       })
       .map((item: RtcIncomingCallRecord) => RtcIncomingCallQueue.copyRecord(item))
     snapshot.activeCallId = this.activeCallId
+    snapshot.selectedCallId = this.selectedCallId
     snapshot.pendingCount = snapshot.calls.filter((item: RtcIncomingCallRecord) => item.phase === 'incoming').length
     return snapshot
   }
@@ -188,6 +234,11 @@ export class RtcIncomingCallQueue {
     this.listeners.forEach((listener: RtcIncomingCallQueueListener) => {
       listener(snapshot)
     })
+  }
+
+  private resolveNextVisibleCallId(excludeCallId: string): string {
+    const next = this.calls.find((item: RtcIncomingCallRecord) => item.callId !== excludeCallId && item.visible)
+    return next?.callId || ''
   }
 
   private static resolveKey(options: RtcIncomingCallQueueItemOptions): string {

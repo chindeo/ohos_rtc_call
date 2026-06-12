@@ -66,6 +66,34 @@ export default function rtcIncomingCallQueueTest() {
       expect(snapshot.calls.find(item => item.callId === 'bed-2')?.phase).assertEqual('incoming')
     })
 
+    it('selects a call without accepting it', 0, () => {
+      const queue = new RtcIncomingCallQueue()
+
+      queue.upsert({ callId: 'bed-1', uid: 'uid-1', target: { number: '8001' }, receivedAt: 1 })
+      queue.upsert({ callId: 'bed-2', uid: 'uid-2', target: { number: '8002' }, receivedAt: 2 })
+      queue.select('uid-2')
+
+      const snapshot = queue.getSnapshot()
+      expect(snapshot.selectedCallId).assertEqual('bed-2')
+      expect(snapshot.activeCallId).assertEqual('')
+      expect(snapshot.calls.find(item => item.callId === 'bed-2')?.phase).assertEqual('incoming')
+      expect(snapshot.pendingCount).assertEqual(2)
+    })
+
+    it('marks hold state without changing pending calls', 0, () => {
+      const queue = new RtcIncomingCallQueue()
+
+      queue.upsert({ callId: 'bed-1', uid: 'uid-1', target: { number: '8001' }, receivedAt: 1 })
+      queue.upsert({ callId: 'bed-2', uid: 'uid-2', target: { number: '8002' }, receivedAt: 2 })
+      queue.accept('uid-1')
+      queue.markHold('uid-1', true)
+
+      const snapshot = queue.getSnapshot()
+      expect(snapshot.calls.find(item => item.callId === 'bed-1')?.isHold).assertEqual(true)
+      expect(snapshot.calls.find(item => item.callId === 'bed-1')?.phase).assertEqual('accepted')
+      expect(snapshot.calls.find(item => item.callId === 'bed-2')?.phase).assertEqual('incoming')
+    })
+
     it('removes by uid without touching other calls from the same peer', 0, () => {
       const queue = new RtcIncomingCallQueue()
 

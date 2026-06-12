@@ -121,8 +121,120 @@ export default function rtcDefaultCallServiceTest() {
       expect(service.getIncomingCalls().calls.length).assertEqual(2)
     })
 
-    it('holds and resumes an active call by uid', 0, async () => {
+    it('builds per-call list actions for accepted and pending bedside calls', 0, async () => {
       const service = createService()
+      await service.receiveIncomingCall({
+        callId: 'bed-1',
+        uid: 'uid-1',
+        target: { number: '8001', displayName: '1床' }
+      })
+      await service.acceptCall()
+      service.markConnected()
+
+      await service.receiveIncomingCall({
+        callId: 'bed-2',
+        uid: 'uid-2',
+        target: { number: '8002', displayName: '2床' }
+      })
+
+      const items = service.getCallListItems()
+      const first = items.find(item => item.uid === 'uid-1')
+      const second = items.find(item => item.uid === 'uid-2')
+      expect(first?.phase).assertEqual(RtcCallViewPhase.CONNECTED)
+      expect(first?.canAccept).assertEqual(false)
+      expect(first?.canHold).assertEqual(true)
+      expect(second?.phase).assertEqual(RtcCallViewPhase.INCOMING)
+      expect(second?.canAccept).assertEqual(true)
+      expect(second?.canHold).assertEqual(false)
+    })
+
+    it('selects a pending bedside call without changing its accept state', 0, async () => {
+      const service = createService()
+      await service.receiveIncomingCall({
+        callId: 'bed-1',
+        uid: 'uid-1',
+        target: { number: '8001' }
+      })
+      await service.acceptCall()
+      service.markConnected()
+      await service.receiveIncomingCall({
+        callId: 'bed-2',
+        uid: 'uid-2',
+        target: { number: '8002' }
+      })
+
+      expect(service.selectCall('uid-2')).assertEqual(true)
+      const selected = service.getCallListItems().find(item => item.uid === 'uid-2')
+
+      expect(selected?.isSelected).assertEqual(true)
+      expect(selected?.phase).assertEqual(RtcCallViewPhase.INCOMING)
+      expect(selected?.canAccept).assertEqual(true)
+      expect(service.getIncomingCalls().pendingCount).assertEqual(1)
+    })
+
+    it('terminates a pending call by uid without clearing the active call', 0, async () => {
+      let terminatedUid = ''
+      const service = createService({
+        async onTerminateCall(session, _reason) {
+          terminatedUid = session.uid
+        }
+      })
+      await service.receiveIncomingCall({
+        callId: 'bed-1',
+        uid: 'uid-1',
+        target: { number: '8001' }
+      })
+      await service.acceptCall()
+      service.markConnected()
+      await service.receiveIncomingCall({
+        callId: 'bed-2',
+        uid: 'uid-2',
+        target: { number: '8002' }
+      })
+
+      await service.terminateCallById('uid-2', 'hangup second')
+
+      expect(terminatedUid).assertEqual('uid-2')
+      expect(service.getSession().uid).assertEqual('uid-1')
+      expect(service.getSession().active).assertEqual(true)
+      expect(service.getCallListItems().find(item => item.uid === 'uid-1')?.phase).assertEqual(RtcCallViewPhase.CONNECTED)
+      expect(service.getCallListItems().find(item => item.uid === 'uid-2')?.phase).assertEqual(RtcCallViewPhase.ENDED)
+    })
+
+    it('terminates the active call by uid without clearing another pending call', 0, async () => {
+      const service = createService()
+      await service.receiveIncomingCall({
+        callId: 'bed-1',
+        uid: 'uid-1',
+        target: { number: '8001' }
+      })
+      await service.acceptCall()
+      service.markConnected()
+      await service.receiveIncomingCall({
+        callId: 'bed-2',
+        uid: 'uid-2',
+        target: { number: '8002' }
+      })
+
+      await service.terminateCallById('uid-1', 'hangup first')
+
+      expect(service.getViewState().phase).assertEqual(RtcCallViewPhase.HIDDEN)
+      expect(service.getCallListItems().find(item => item.uid === 'uid-1')?.phase).assertEqual(RtcCallViewPhase.ENDED)
+      expect(service.getCallListItems().find(item => item.uid === 'uid-2')?.phase).assertEqual(RtcCallViewPhase.INCOMING)
+      expect(service.getIncomingCalls().pendingCount).assertEqual(1)
+    })
+
+    it('holds and resumes an active call by uid', 0, async () => {
+      let holdCount = 0
+      let resumeCount = 0
+      const service = createService({
+        async onHoldCall(_session, _command) {
+          holdCount += 1
+        },
+        async onResumeCall(_session, _command) {
+          resumeCount += 1
+        }
+      })
       await service.receiveIncomingCall({
         callId: 'bed-1',
         uid: 'uid-1',
@@ -133,10 +245,12 @@ export default function rtcDefaultCallServiceTest() {
       await service.holdCallById('uid-1')
       expect(service.getSession().isHold).assertEqual('true')
       expect(service.getCallSessions().sessions[0].isHold).assertEqual(true)
+      expect(holdCount).assertEqual(1)
 
       await service.resumeCallById('uid-1')
       expect(service.getSession().isHold).assertEqual('false')
       expect(service.getCallSessions().sessions[0].isHold).assertEqual(false)
+      expect(resumeCount).assertEqual(1)
     })
 
     it('dispatches hold and resume control commands', 0, async () => {

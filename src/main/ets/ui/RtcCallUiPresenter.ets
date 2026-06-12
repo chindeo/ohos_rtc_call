@@ -16,6 +16,8 @@ export enum RtcCallUiLayout {
 export enum RtcCallUiAction {
   ACCEPT = 'accept',
   HANGUP = 'hangup',
+  HOLD = 'hold',
+  RESUME = 'resume',
   MUTE = 'mute',
   SPEAKER = 'speaker',
   CAMERA = 'camera'
@@ -147,6 +149,18 @@ export class RtcCallUiPresenter {
         visible: state.canHangup || state.visible,
         enabled: state.canHangup || state.visible,
         label: '挂断'
+      },
+      {
+        action: RtcCallUiAction.HOLD,
+        visible: state.phase === RtcCallViewPhase.CONNECTED || state.phase === RtcCallViewPhase.CONNECTING,
+        enabled: state.phase === RtcCallViewPhase.CONNECTED || state.phase === RtcCallViewPhase.CONNECTING,
+        label: '保持'
+      },
+      {
+        action: RtcCallUiAction.RESUME,
+        visible: state.phase === RtcCallViewPhase.HELD,
+        enabled: state.phase === RtcCallViewPhase.HELD,
+        label: '恢复'
       },
       {
         action: RtcCallUiAction.MUTE,

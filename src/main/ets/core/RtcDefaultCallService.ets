@@ -77,6 +77,25 @@ export interface RtcCallCommandResult {
   command: RtcCallControlCommand
 }
 
+export class RtcCallListItem {
+  key: string = ''
+  callId: string = ''
+  uid: string = ''
+  peerNumber: string = ''
+  displayName: string = ''
+  phase: RtcCallViewPhase = RtcCallViewPhase.HIDDEN
+  status: string = ''
+  isHold: boolean = false
+  isActive: boolean = false
+  isSelected: boolean = false
+  canAccept: boolean = false
+  canHold: boolean = false
+  canResume: boolean = false
+  canHangup: boolean = false
+  mode: RtcCallMode = RtcCallMode.AUDIO
+  target: RtcCallTarget = { number: '' }
+}
+
 export class RtcDefaultCallService implements RtcCallService {
   private config?: RtcCallRuntimeConfig
   private route?: RtcCallRoute
@@ -224,7 +243,15 @@ export class RtcDefaultCallService implements RtcCallService {
     this.session.pendingTrigger = false
     this.session.isHold = 'false'
     this.incomingQueue.accept(this.session.requestId)
-    this.sessionStore.markHold(this.session.uid || this.session.requestId || this.session.calleeNumber, false)
+    this.sessionStore.upsert({
+      uid: this.session.uid || this.session.requestId,
+      peerNumber: this.session.calleeNumber,
+      displayName: this.session.displayName,
+      status: 'accepted',
+      isHold: false,
+      mode: this.session.mode,
+      target: RtcDefaultCallService.toTargetFromSession(this.session)
+    })
     this.viewState.visible = true
     this.viewState.phase = RtcCallViewPhase.CONNECTING
     this.viewState.canAccept = false
@@ -241,6 +268,16 @@ export class RtcDefaultCallService implements RtcCallService {
     this.session.hostPhase = RtcHostPhase.MEDIA_ACTIVE
     this.session.isHold = 'false'
     this.session.pendingTrigger = false
+    this.incomingQueue.markHold(this.session.uid || this.session.requestId || this.session.calleeNumber, false)
+    this.sessionStore.upsert({
+      uid: this.session.uid || this.session.requestId,
+      peerNumber: this.session.calleeNumber,
+      displayName: this.session.displayName,
+      status: 'accepted',
+      isHold: false,
+      mode: this.session.mode,
+      target: RtcDefaultCallService.toTargetFromSession(this.session)
+    })
     this.viewState.phase = RtcCallViewPhase.CONNECTED
     this.viewState.canAccept = false
     this.viewState.canHangup = true
@@ -256,6 +293,7 @@ export class RtcDefaultCallService implements RtcCallService {
     this.viewState.phase = RtcCallViewPhase.HELD
     this.viewState.canAccept = false
     this.viewState.canHangup = true
+    this.incomingQueue.markHold(this.session.uid || this.session.requestId || this.session.calleeNumber, true)
     this.sessionStore.markHold(this.session.uid || this.session.requestId || this.session.calleeNumber, true)
     this.emitState()
     await this.handlers?.onHoldCall?.(this.copySession(), command)
@@ -270,31 +308,40 @@ export class RtcDefaultCallService implements RtcCallService {
     this.viewState.phase = RtcCallViewPhase.CONNECTED
     this.viewState.canAccept = false
     this.viewState.canHangup = true
+    this.incomingQueue.markHold(this.session.uid || this.session.requestId || this.session.calleeNumber, false)
     this.sessionStore.markHold(this.session.uid || this.session.requestId || this.session.calleeNumber, false)
     this.emitState()
     await this.handlers?.onResumeCall?.(this.copySession(), command)
   }
 
   async holdCallById(callIdOrUid: string, command?: RtcCallControlCommand): Promise<void> {
-    if (this.session.requestId !== callIdOrUid && this.session.uid !== callIdOrUid) {
-      const incoming = this.incomingQueue.accept(callIdOrUid)
-      if (incoming) {
-        this.activateIncomingCall(incoming)
-      }
+    if (this.isCurrentCall(callIdOrUid)) {
+      await this.holdCall(command)
+      return
     }
-    await this.holdCall(command)
+    const incoming = this.incomingQueue.getCall(callIdOrUid)
+    if (!incoming || incoming.phase !== 'accepted') {
+      return
+    }
+    this.incomingQueue.markHold(callIdOrUid, true)
     this.sessionStore.markHold(callIdOrUid, true)
+    this.emitState()
+    await this.handlers?.onHoldCall?.(this.toSessionFromRecord(incoming, true), command)
   }
 
   async resumeCallById(callIdOrUid: string, command?: RtcCallControlCommand): Promise<void> {
-    if (this.session.requestId !== callIdOrUid && this.session.uid !== callIdOrUid) {
-      const incoming = this.incomingQueue.accept(callIdOrUid)
-      if (incoming) {
-        this.activateIncomingCall(incoming)
-      }
+    if (this.isCurrentCall(callIdOrUid)) {
+      await this.resumeCall(command)
+      return
     }
-    await this.resumeCall(command)
+    const incoming = this.incomingQueue.getCall(callIdOrUid)
+    if (!incoming || incoming.phase !== 'accepted') {
+      return
+    }
+    this.incomingQueue.markHold(callIdOrUid, false)
     this.sessionStore.markHold(callIdOrUid, false)
+    this.emitState()
+    await this.handlers?.onResumeCall?.(this.toSessionFromRecord(incoming, false), command)
   }
 
   async terminateCall(reason: string = 'terminate'): Promise<void> {
@@ -325,6 +372,25 @@ export class RtcDefaultCallService implements RtcCallService {
     this.viewState.phase = RtcCallViewPhase.HIDDEN
     this.viewState.direction = RtcCallDirection.NONE
     this.emitState()
+  }
+
+  async terminateCallById(callIdOrUid: string, reason: string = 'terminate'): Promise<void> {
+    if (this.isCurrentCall(callIdOrUid)) {
+      await this.terminateCall(reason)
+      return
+    }
+    const incoming = this.incomingQueue.getCall(callIdOrUid)
+    if (!incoming) {
+      return
+    }
+    this.incomingQueue.end(callIdOrUid, reason)
+    if (incoming.uid) {
+      this.sessionStore.removeUid(incoming.uid)
+    } else if (incoming.peerNumber || incoming.target.number) {
+      this.sessionStore.removePeer(incoming.peerNumber || incoming.target.number)
+    }
+    this.emitState()
+    await this.handlers?.onTerminateCall?.(this.toSessionFromRecord(incoming, incoming.isHold), reason)
   }
 
   failCall(message: string): void {
@@ -400,6 +466,20 @@ export class RtcDefaultCallService implements RtcCallService {
     return this.sessionStore.snapshot()
   }
 
+  selectCall(callIdOrUid: string): boolean {
+    const selected = this.incomingQueue.select(callIdOrUid)
+    if (!selected) {
+      return false
+    }
+    this.emitState()
+    return true
+  }
+
+  getCallListItems(): RtcCallListItem[] {
+    const snapshot = this.incomingQueue.getSnapshot()
+    return snapshot.calls.map((record: RtcIncomingCallRecord) => this.toCallListItem(record, snapshot))
+  }
+
   onIncomingCallsChange(listener: RtcIncomingCallQueueListener): RtcCallUnsubscribe {
     return this.incomingQueue.onChange(listener)
   }
@@ -466,6 +546,64 @@ export class RtcDefaultCallService implements RtcCallService {
     this.viewState.canAccept = true
     this.viewState.canHangup = true
     this.viewState.uid = this.session.uid
+  }
+
+  private isCurrentCall(callIdOrUid: string): boolean {
+    const key = (callIdOrUid || '').trim()
+    if (!key) {
+      return false
+    }
+    return this.session.requestId === key ||
+      this.session.uid === key ||
+      this.session.calleeNumber === key
+  }
+
+  private toCallListItem(record: RtcIncomingCallRecord, snapshot: RtcIncomingCallQueueSnapshot): RtcCallListItem {
+    const session = record.uid ? this.sessionStore.findByUid(record.uid) :
+      this.sessionStore.findByPeer(record.peerNumber || record.target.number)
+    const isCurrent = this.isCurrentCall(record.callId) || this.isCurrentCall(record.uid)
+    const isHold = session?.isHold === true || record.isHold === true || (isCurrent && this.session.isHold === 'true')
+    const phase = RtcDefaultCallService.resolveListItemPhase(record, isHold, isCurrent ? this.viewState.phase : undefined)
+    const item = new RtcCallListItem()
+    item.key = record.uid || record.callId || record.key
+    item.callId = record.callId
+    item.uid = record.uid
+    item.peerNumber = record.peerNumber || record.target.number
+    item.displayName = record.target.displayName || session?.displayName || item.peerNumber
+    item.phase = phase
+    item.status = session?.status || record.status
+    item.isHold = isHold
+    item.isActive = snapshot.activeCallId === record.callId || (this.session.active && isCurrent)
+    item.isSelected = snapshot.selectedCallId === record.callId
+    item.canAccept = record.phase === 'incoming'
+    item.canHold = record.phase === 'accepted' && !isHold
+    item.canResume = record.phase === 'accepted' && isHold
+    item.canHangup = record.phase !== 'ended'
+    item.mode = record.mode
+    item.target = RtcDefaultCallService.copyTarget(record.target)
+    return item
+  }
+
+  private toSessionFromRecord(record: RtcIncomingCallRecord, isHold: boolean): RtcCallSession {
+    const session = new RtcCallSession()
+    session.requestId = record.callId
+    session.uid = record.uid || record.callId
+    session.mode = record.mode
+    session.state = record.phase === 'incoming' ? RtcCallState.RINGING : RtcCallState.CONNECTED
+    session.hostPhase = record.phase === 'incoming' ? RtcHostPhase.INCOMING_READY : RtcHostPhase.MEDIA_ACTIVE
+    session.active = record.phase !== 'ended'
+    session.visible = record.visible
+    session.localNumber = this.config?.local.number || ''
+    session.calleeNumber = record.peerNumber || record.target.number
+    session.displayName = record.target.displayName || ''
+    session.clientType = record.target.clientType || ''
+    session.ip = record.target.ip || record.target.deviceIp || ''
+    session.identity = record.target.identity || ''
+    session.locId = record.target.locId || ''
+    session.hospitalId = record.target.hospitalId || ''
+    session.isAutoAnswer = record.autoAnswer ? 'true' : 'false'
+    session.isHold = isHold ? 'true' : 'false'
+    return session
   }
 
   private emitState(): void {
@@ -551,6 +689,54 @@ export class RtcDefaultCallService implements RtcCallService {
     peer.clientType = target.clientType
     peer.locId = target.locId
     return peer
+  }
+
+  private static toTargetFromSession(session: RtcCallSession): RtcCallTarget {
+    return {
+      number: session.calleeNumber,
+      uid: session.uid,
+      displayName: session.displayName,
+      clientType: session.clientType,
+      identity: session.identity,
+      ip: session.ip,
+      locId: session.locId,
+      hospitalId: session.hospitalId,
+      deviceIp: session.ip
+    }
+  }
+
+  private static copyTarget(target: RtcCallTarget): RtcCallTarget {
+    return {
+      number: target.number,
+      uid: target.uid,
+      displayName: target.displayName,
+      clientType: target.clientType,
+      identity: target.identity,
+      ip: target.ip,
+      locId: target.locId,
+      hospitalId: target.hospitalId,
+      deviceIp: target.deviceIp
+    }
+  }
+
+  private static resolveListItemPhase(
+    record: RtcIncomingCallRecord,
+    isHold: boolean,
+    currentPhase?: RtcCallViewPhase
+  ): RtcCallViewPhase {
+    if (record.phase === 'incoming') {
+      return RtcCallViewPhase.INCOMING
+    }
+    if (record.phase === 'ended') {
+      return RtcCallViewPhase.ENDED
+    }
+    if (isHold) {
+      return RtcCallViewPhase.HELD
+    }
+    if (currentPhase === RtcCallViewPhase.CONNECTING) {
+      return RtcCallViewPhase.CONNECTING
+    }
+    return RtcCallViewPhase.CONNECTED
   }
 
   private static copyViewPeer(peer: RtcCallViewPeer): RtcCallViewPeer {
