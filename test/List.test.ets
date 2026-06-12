@@ -1,6 +1,7 @@
 import rtcAdminEntryControllerTest from './RtcAdminEntryController.test'
 import rtcAudioControllerTest from './RtcAudioController.test'
 import rtcCallAudioPolicyControllerTest from './RtcCallAudioPolicyController.test'
+import rtcCallGatewayClientTest from './RtcCallGatewayClient.test'
 import rtcCallSessionStoreTest from './RtcCallSessionStore.test'
 import rtcDefaultCallServiceTest from './RtcDefaultCallService.test'
 import rtcHardwareCallControllerTest from './RtcHardwareCallController.test'
@@ -18,6 +19,7 @@ export default function testsuite() {
   rtcAdminEntryControllerTest()
   rtcAudioControllerTest()
   rtcCallAudioPolicyControllerTest()
+  rtcCallGatewayClientTest()
   rtcCallSessionStoreTest()
   rtcDefaultCallServiceTest()
   rtcHardwareCallControllerTest()

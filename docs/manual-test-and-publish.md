@@ -6,6 +6,16 @@
 - 床旁验证分支：`5.0.1-SHIMeta`
 - 主机验证分支：`v1.0_nurse_SHIMeta`
 
+## 需求验收前置检查
+
+每次开发或修复前，先从下方长清单中抽出本次必须验证的最小集合，并记录在需求说明或提交说明里：
+
+- 确认本次 HAR 版本、业务工程依赖来源，以及是否使用本地 `file:` HAR 临时验证。
+- 确认目标设备角色：床旁、主机、门口机、手表等仅音频设备，避免用错误设备规则判断接通状态。
+- 确认本次覆盖单路、双路或多路通话；多路改动必须先验证单路流程没有被破坏。
+- 确认本次预期行为、非目标和不能破坏的已验证行为，例如按钮条件、信令字段、挂断语义和 track 接通判定。
+- 确认验收顺序：先公共包单元或预检，再 Example 最小编译验证，最后按目标设备执行手工验收。
+
 ## 发布包预检
 
 在 `ohos_rtc_call` 项目根目录执行：
@@ -20,43 +30,28 @@
 dist\ohos-rtc-call-0.1.4-rc3.har
 ```
 
-## 业务工程构建
+## Example 最小编译验证
 
-如果验证的是尚未线上发布的公共包改动，先将业务工程中所有 `@chindeo/ohos-rtc-call` 依赖临时替换为本次生成的
-HAR 或本地源码路径，例如：
+如果验证的是尚未线上发布的公共包改动，优先使用 `example/basic-call-setup.ets` 做最小 SDK 编译验证，不直接替换床旁或主机业务工程依赖。
+
+准备一个最小 OpenHarmony 宿主工程或临时验证模块，在宿主工程依赖中使用本次生成的 HAR：
 
 ```json5
 "@chindeo/ohos-rtc-call": "file:<本机 harmony 工作目录>/ohos_rtc_call/dist/ohos-rtc-call-0.1.4-rc3.har"
 ```
 
-床旁工程至少检查根目录、`common` 和 `entry` 模块的 `oh-package.json5`；主机工程至少检查 `nurse` 模块的
-`oh-package.json5`。验证完成后再按线上发布结果恢复为正式版本号。
+宿主工程仍需提供兼容的 `@ohos/webrtc` 依赖，因为公共包在 `oh-package.json5` 中将其声明为动态依赖。
 
-如果使用临时克隆的业务工程验证，先确认 `ohos_webrtc\libs` 下包含 `armeabi-v7a\libohos_webrtc.so` 和
-`arm64-v8a\libohos_webrtc.so`。如果临时克隆缺少 `.so`，从本机床旁工程复制：
+将 `example/basic-call-setup.ets` 引入宿主工程可编译入口。示例中的信令地址、设备号码和 adapter 只用于编译验证，可替换为本地测试配置，也可保持不会实际联网的占位值。
 
-```powershell
-$HARMONY_ROOT = "<本机 harmony 工作目录>"
-Copy-Item -Recurse -Force `
-  "$HARMONY_ROOT\5.0.1-SHIMeta\ohos_webrtc\libs" `
-  <临时业务工程>\ohos_webrtc\libs
-```
+执行宿主工程 debug 构建，目标是验证：
 
-床旁：
+- 本次 HAR 能被外部工程消费。
+- `Index.ets` 导出的 SDK 类型可被 ArkTS 正常导入。
+- `example/basic-call-setup.ets` 的基础 WebRTC/SIP 路由、信令状态机和铃声策略示例可编译。
+- `@ohos/webrtc` 动态依赖由宿主工程正确提供。
 
-```powershell
-$HARMONY_ROOT = "<本机 harmony 工作目录>"
-cd "$HARMONY_ROOT\5.0.1-SHIMeta"
-.\tools\build-call-app.ps1 -BuildMode debug
-```
-
-主机：
-
-```powershell
-$HARMONY_ROOT = "<本机 harmony 工作目录>"
-cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
-.\tools\build-nurse-app.ps1 -BuildMode debug
-```
+Example 最小编译验证只证明公共 SDK 可被消费和示例代码可编译；真机通话、音频路由、多路来电和 call-gateway 行为仍以后续设备安装和手工验收点为准。
 
 ## 设备安装
 
@@ -77,6 +72,17 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 ```
 
 ## 手工验收点
+
+### call-gateway SDK 验收基准
+
+- 新 SDK 对接以 `call-gateway/docs/integration/client_av_integration.md` 为基准；`docs/gateway/interface.md` 和 `docs/gateway/ctl.md` 是回调与操作字段来源。
+- 所有通话 UI、操作、日志、SDP 和 ICE 绑定都必须使用 `uid` / `signalUID`，号码只作为显示、联系人索引和旧单通话兼容兜底。
+- SDP / ICE 必须原样透传并绑定 `signalUID`、`rtcUID`、`channelType`；`channelType` 只允许 `publish` 或 `subscribe`。
+- 本地生成 answer 或 candidate 后，必须通过 `SendSdp(signalUID, rtcUID, channelType, ...)` 或 `SendCandidate(signalUID, rtcUID, channelType, ...)` 带回同一组字段。
+- 接听、保持 / 恢复、普通挂断必须按目标 `uid` 调用 `CallAnswer(uid)`、`CallSwitch(uid)`、`CallHangUp(uid, d)`；缺少 `uid` 时只能走明确的旧单通话兼容路径，多通话或 `subscribe` 信令必须阻断。
+- 旧 WebSocket / `s__apply` 路径中的 `applyType`、`isAll`、`c__sdp`、`c__candidate`、`c__answer` 只作为兼容验证项，不作为新 call-gateway SDK 主验收口径。
+- 客户端日志至少能定位 `signal_uid`、`rtc_uid`、`channel_type`、peer、target、action、state 和 reason；多通话下不得出现用最新 `uid` 覆盖旧通话 SDP / ICE 的情况。
+- 来电预接听阶段停留 5-10 秒不接听时，主叫端不应听到被叫真实麦克风环境声；接听成功且音频路由稳定后，真实上行音频应恢复。
 
 ### 通用启动和基础通话
 
@@ -105,8 +111,8 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 
 ### 主机多床旁来电
 
-- 公共模块构建产物版本保持 `0.1.4-rc3`；业务工程构建前必须确认使用的是本次新构建的 rc3 HAR，不能混入旧 rc2 或旧 rc3 缓存。
-- 单路来电必须沿用改造前已经验证的单人流程和界面风格：publish offer 完成且本地 answer SDP 已发送后接听按钮可点击；接听发送当前会话的 `applyType=2`；挂断发送当前唯一会话的 `applyType=3`。
+- 公共模块构建产物版本保持 `0.1.4-rc3`；Example 最小编译验证和后续真机业务验证前必须确认使用的是本次新构建的 rc3 HAR，不能混入旧 rc2 或旧 rc3 缓存。
+- 单路来电必须沿用改造前已经验证的单人流程和界面风格：publish offer 完成且本地 answer SDP 已发送后接听按钮可点击；新 call-gateway SDK 接听 / 挂断按当前会话 `uid` 调用，旧 WebSocket 兼容路径才继续验证 `applyType=2/3`。
 - 单路场景不得因多人会话 uid 门控导致接听或挂断不可点击；只有第二路可见会话加入后才启用多人调度和 uid 歧义保护。
 - 单路接听、挂断按钮沿用原单人界面的尺寸、间距、配色和交互反馈，图标使用安卓 `call-lib` 对应原始资源。
 - 两个床旁同时拨打主机时，主机列表显示两个独立条目，第二路保持待接听状态，不继承第一路接听状态。
@@ -115,16 +121,16 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 - 点击主机列表中的床旁条目时，选中样式立即切换；仅选择条目不应把待接听来电改成已接听。
 - 主机来电默认保持手动接听；即使配置中带自动接听标记，床旁拨入后也应先停留在待接听页面。
 - 主机通话 UI 可通过临时版本标记和日志确认实际进入的是 WebRTC 主机组件，而不是 SIP 组件或旧页面。
-- 主机收到 `c__answer` 或 `publish connected` 后不能直接进入通话中；点击接听后应先进入接听中 / 等待媒体状态。
-- 主机只有在对应 `subscribe` 路收到对端音 / 视频 track，且从 `track.id` / `stream.id` 解析出的号码匹配当前床旁后，才显示通话中和保持按钮。
+- 主机收到旧 WebSocket `c__answer`、call-gateway answer 通知或 `publish connected` 后不能直接进入通话中；业务接听以 gateway 接听接口成功为准，媒体接通以目标 `subscribe` track 匹配为准。
+- 主机只有在对应 `uid + rtcUID + subscribe` 路收到对端音 / 视频 track，且从 `track.id` / `stream.id` 解析出的号码匹配当前床旁后，才显示通话中和保持按钮。
 - 音频通话接听后，匹配到对应 `subscribe` 音频 track 即可进入通话中。
 - 普通视频设备的视频通话接听后，必须匹配到对应 `subscribe` 视频 track 后才进入通话中；只收到音频 track 时保持接听中 / 等待视频，不显示保持按钮。
 - 手表等仅音频设备的视频通话接听后，匹配到对应 `subscribe` 音频 track 即可进入通话中，不等待视频 track。
 - 多床旁通话时，每接听一路床旁只建立并绑定该床旁的一路独立 `subscribe`，不能把其它床旁来电串成已接听状态。
 - 多床旁通话时，左侧主界面、右侧远端卡片、`SessionPeer`、`SessionState`、`subscribe` 通道和普通挂断都必须绑定同一个业务 `uid/sessionId`。
-- 收到 `c__invite`、`c__sdp`、`c__candidate`、`c__answer`、`c__hangup` 时，不能因为缺少 uid 就随意绑定到当前 active；必须优先使用业务 uid 或已建立的远端号码 / rtcUid 映射。
-- 多人通话模式下，接听、保持 / 恢复、普通挂断必须优先携带业务 `uid/sessionKey`；缺少 uid 且无法从号码映射到唯一会话时，应阻断该操作并记录日志，不能降级成挂断全部或操作当前 active。
-- `subscribe` peer 隔离规则对齐安卓：不同 uid 的床旁必须独立；同 uid 不同号码也必须独立；无 uid 的兼容路径只能使用 `target + rtcUid + channel` 作为兜底 key。
+- 收到 call-gateway SDP / ICE / answer / hangup 回调或旧 WebSocket `c__*` 信令时，不能因为缺少 `uid` 就随意绑定到当前 active；新 SDK 多通话和 `subscribe` 信令缺少 `uid` 必须阻断，旧单通话兼容路径才允许按唯一号码映射兜底。
+- 多人通话模式下，接听、保持 / 恢复、普通挂断必须携带业务 `uid/sessionKey`；缺少 `uid` 且无法确认单通话兼容路径时，应阻断该操作并记录日志，不能降级成挂断全部或操作当前 active。
+- `subscribe` peer 隔离规则对齐 call-gateway：不同 `uid` 的床旁必须独立；同 `uid` 下不同 `rtcUID` / `channelType` 必须独立；号码兜底只能用于旧单通话兼容路径。
 - 从双路挂断为单路后，剩余会话恢复单路布局和操作方式，但来电、接听、通话、保持及媒体状态不得被重置。
 - 主机左侧当前床旁详情按状态显示操作按钮：待接听显示接听，通话中显示保持，保持中显示恢复，并始终保留当前通话挂断。
 - 主机单路来电时，左侧主操作区必须显示接听按钮；本地 `publish` 应答未完成时接听按钮可置灰，`localAnswerReady` 后必须可点击。
@@ -143,7 +149,7 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 - 待接听来电条目显示来电 / 待接听状态和接听按钮，不显示保持按钮。
 - 按顺序执行“床旁 1 拨打 -> 主机接听 -> 床旁 2 拨打”时，床旁 1 保持已接听状态，床旁 2 保持待接听状态。
 - 继续执行“主机接听床旁 2”后，两个通话条目的接听 / 保持 / 挂断按钮状态分别符合当前通话状态。
-- 左侧主操作区普通“挂断”只结束当前活动床旁，右侧列表普通“挂断”只结束该条目对应床旁；普通挂断信令必须为 `isAll=false`。
+- 左侧主操作区普通“挂断”只结束当前活动床旁，右侧列表普通“挂断”只结束该条目对应床旁；新 call-gateway SDK 必须按目标 `uid` 挂断，旧 WebSocket 兼容路径才验证普通挂断 `isAll=false`。
 - 点击右侧条目的挂断图标时只能触发该路挂断，不能同时触发条目选择，也不能关闭其它路 subscribe peer。
 - 挂断第二路时只结束第二路，第一路仍保持原通话状态。
 - 挂断第一路时只结束第一路，第二路仍保留并维持原来电或通话状态。

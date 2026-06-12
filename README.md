@@ -8,6 +8,7 @@ Reusable OpenHarmony audio/video call utilities for ArkTS applications.
 - WebSocket signaling clients for WebRTC call flows, including shared registration URL building and connection-state tracking.
 - SIP config and adapter interfaces for host-provided Dnake SDK integration.
 - WebRTC audio helper for low-latency audio call setup.
+- call-gateway SDK client for uid-based call control, SDP/ICE routing, and host-injected transport adapters.
 - SDP utilities for Opus low-latency audio parameters.
 - Audio output routing helper for speaker/default routes.
 - Ringtone and call volume helpers, including WebRTC/SIP ringtone channel guards.
@@ -86,6 +87,25 @@ signal.connect({
 const audio = new RtcAudioController()
 audio.ensureReady()
 ```
+
+## call-gateway SDK
+
+Use `RtcCallGatewayClient` when a host app integrates with call-gateway audio/video callbacks. The host app owns the concrete gateway transport and injects it through `RtcCallGatewayAdapter`; this package keeps only SDK state, uid routing, and WebRTC SDP/ICE handling.
+
+```ts
+import { RtcCallGatewayClient } from '@chindeo/ohos-rtc-call'
+
+const client = new RtcCallGatewayClient({
+  adapter: hostGatewayAdapter,
+  peerAdapter: hostWebRtcPeerAdapter,
+  local: { number: 'host-1001', displayName: 'Host Device' }
+})
+
+client.handleOpenMultiActivity('bed-1002', 'Bed 1002', 'signal-uid-1002', false)
+client.answer('signal-uid-1002')
+```
+
+Call operations must use call-gateway `uid` / `signalUID`. SDP and ICE routing must preserve `rtcUID` and `channelType`; numbers are display and lookup fields only.
 
 ## Security
 

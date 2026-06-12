@@ -2,6 +2,8 @@
 
 ## 0.1.4-rc3
 
+- Added `RtcCallGatewayClient` and gateway adapter types for call-gateway uid-based call control, SDP answer routing, ICE candidate routing, and multi-call session snapshots.
+- Added a call-gateway compile-time example and focused Hypium tests for uid routing, gateway answer semantics, SDP route preservation, local candidate sending, and targeted hangup.
 - Added shared WebRTC signaling state machine for SDP/Candidate routing, stale session filtering, PeerConnection dispatch, ICE diagnostics, and local answer SDP waiting.
 - Added focused Hypium unit tests for WebRTC signal routing, scoped rtcUid handling, stale filtering, candidate queue flushing, and answer generation.
 - Extended `RtcAudioController` with shared local audio/video track lifecycle, renderer binding, AEC dump control, PCM sample stats, and cleanup snapshots.
