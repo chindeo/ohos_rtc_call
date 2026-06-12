@@ -1,6 +1,6 @@
 # ohos-rtc-call Release Notes
 
-## 0.1.5-rc1
+## 0.1.4-rc3
 
 计划下沉床旁和主机可复用的通话公共逻辑，优先从 WebRTC 信令状态机开始，后续逐步覆盖媒体资源管理、通话会话控制、音频策略、硬件事件适配、启动页管理员入口和运行时配置加载。
 
@@ -13,11 +13,14 @@
 - 硬件事件适配：通过设备能力层统一按键、呼叫键和手柄事件通话控制。已新增 `RtcHardwareCallController`，基于 `RtcDeviceCapabilityManager` 订阅 / 取消订阅硬件事件，业务侧可注入 payload parser，并通过 `RtcCallControlCommand` 统一分发接听、挂断和呼叫键事件。
 - 启动页管理员入口：封装长按进入管理员设置、启动暂停 / 恢复和状态检查完成后延迟进入主界面的辅助控制。已新增 `RtcAdminEntryController`，长按期间暂停自动进入主页，状态检查完成后默认等待 2 秒再导航，避免多入口重复跳转。
 - 运行时配置加载：补齐 RTC server host 选择、WebRTC / SIP 判断、refresh 切换计划和 `micSwitching` 应用流程。已新增 `RtcRuntimeConfigController`，业务侧只需注入 runtime config loader 和 WebRTC/SIP prepare handler。
+- 启动数据缓存：新增 `RtcStartupDataCache`，业务侧可对启动页依赖的配置、床旁配置、床旁详情、运行时配置等数据做成功缓存和失败回退，后台业务接口短时不可用时仍可使用最近一次成功数据进入主界面，通话链路继续由独立 RTC / SIP 服务保障。
+- 网络异常恢复提示：新增 `RtcNetworkRequestRecoveryController`，业务侧在 API 请求失败、缓存回退和后续请求成功时统一维护“网络异常，请检查网络”的提示状态，接口程序恢复后可自动清除异常提示并继续使用正常接口数据。
+- 主机多床旁来电队列：新增 `RtcIncomingCallQueue`，并让 `RtcDefaultCallService` 保留多个床旁来电；当前已有媒体通话时新来电只入队，不覆盖或结束当前通话，主机可基于队列快照显示多床旁列表 / 弹窗。
 
 ### 当前验证结论
 
 - `git diff --check` 通过。
-- `tools/publish-ohos-rtc-call.ps1` 发布包预检通过，生成 `dist/ohos-rtc-call-0.1.5-rc1.har`；OHPM 提示 HAR 包含源码，符合当前源码 HAR 发布形态。
+- `tools/publish-ohos-rtc-call.ps1` 发布包预检通过，生成 `dist/ohos-rtc-call-0.1.4-rc3.har`；OHPM 提示 HAR 包含源码，符合当前源码 HAR 发布形态。
 - 已临时克隆 `bis.git` 的 `5.0.1-SHIMeta` 分支，替换为当前公共包本地 file 依赖后执行 `tools/build-call-app.ps1 -BuildMode debug` 通过。
 - 已临时克隆 `bis.git` 的 `v1.0_nurse_SHIMeta` 分支，替换为当前公共包本地 file 依赖后执行 `tools/build-nurse-app.ps1 -BuildMode debug` 通过。
 - 手工安装测试和线上发布步骤已整理到 `docs/manual-test-and-publish.md`。

@@ -1,15 +1,18 @@
 # Changelog
 
-## 0.1.5-rc1
+## 0.1.4-rc3
 
 - Added shared WebRTC signaling state machine for SDP/Candidate routing, stale session filtering, PeerConnection dispatch, ICE diagnostics, and local answer SDP waiting.
 - Added focused Hypium unit tests for WebRTC signal routing, scoped rtcUid handling, stale filtering, candidate queue flushing, and answer generation.
 - Extended `RtcAudioController` with shared local audio/video track lifecycle, renderer binding, AEC dump control, PCM sample stats, and cleanup snapshots.
 - Added `RtcDefaultCallService` for shared call session control, incoming/outgoing state transitions, auto answer, hold/resume, hangup, and control command dispatch.
+- Extended `RtcDefaultCallService` with an incoming-call queue so nurse hosts can retain multiple bedside calls without overwriting the active media session.
 - Added `RtcCallAudioPolicyController` for shared answer audio routing, volume boost/restore, handset mode, mute state, and device role policy parameters.
 - Added `RtcHardwareCallController` for shared hardware call-key and handset event dispatch through common call control commands.
 - Added `RtcAdminEntryController` for startup long-press admin entry, startup pause/resume, pending navigation protection, and delayed home navigation.
 - Added `RtcRuntimeConfigController` for runtime config loading, RTC server host selection, changed-key detection, protocol switch planning, and micSwitching application.
+- Added `RtcStartupDataCache` for startup API data caching and cache fallback when business APIs are temporarily unavailable.
+- Added `RtcNetworkRequestRecoveryController` for consistent network-error prompts and recovery-state clearing after API requests resume.
 
 ## 0.1.4-rc2
 

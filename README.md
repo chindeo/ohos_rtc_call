@@ -13,6 +13,8 @@ Reusable OpenHarmony audio/video call utilities for ArkTS applications.
 - Ringtone and call volume helpers, including WebRTC/SIP ringtone channel guards.
 - WebRTC answer audio policy helpers for screen speakerphone answers and handset non-speaker answers.
 - Runtime config coordinator for `call.rtcServerHost` and `call.micSwitching` changes.
+- Startup data cache and network recovery state helpers for startup pages that must continue with cached data while business APIs recover.
+- Incoming-call queue helpers for nurse hosts that need to display multiple bedside calls without replacing the active call session.
 - Device capability adapters for vendor-specific MAC, boot, power, LED, and hardware key actions.
 - UI helpers for RTC status hints, admin-entry countdowns, API endpoint settings, and host/bed call view presentation models.
 - Process-local system navigation-bar visibility and window application helpers.

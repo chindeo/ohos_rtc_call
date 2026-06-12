@@ -98,6 +98,26 @@ export default function rtcDefaultCallServiceTest() {
       expect(service.getViewState().canAccept).assertEqual(false)
     })
 
+    it('queues another incoming call without replacing active media session', 0, async () => {
+      const service = createService()
+      await service.receiveIncomingCall({
+        callId: 'bed-1',
+        target: { number: '8001', displayName: '1床' }
+      })
+      await service.acceptCall()
+      service.markConnected()
+
+      await service.receiveIncomingCall({
+        callId: 'bed-2',
+        target: { number: '8002', displayName: '2床' }
+      })
+
+      expect(service.getSession().requestId).assertEqual('bed-1')
+      expect(service.getSession().hostPhase).assertEqual(RtcHostPhase.MEDIA_ACTIVE)
+      expect(service.getIncomingCalls().pendingCount).assertEqual(1)
+      expect(service.getIncomingCalls().calls.length).assertEqual(2)
+    })
+
     it('dispatches hold and resume control commands', 0, async () => {
       const service = createService()
       await service.receiveIncomingCall({

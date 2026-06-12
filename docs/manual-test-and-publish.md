@@ -2,7 +2,7 @@
 
 ## 目标版本
 
-- 公共包：`@chindeo/ohos-rtc-call@0.1.5-rc1`
+- 公共包：`@chindeo/ohos-rtc-call@0.1.4-rc3`
 - 床旁验证分支：`5.0.1-SHIMeta`
 - 主机验证分支：`v1.0_nurse_SHIMeta`
 
@@ -17,7 +17,7 @@
 预检通过后会生成：
 
 ```text
-dist\ohos-rtc-call-0.1.5-rc1.har
+dist\ohos-rtc-call-0.1.4-rc3.har
 ```
 
 ## 业务工程构建
@@ -86,4 +86,4 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 .\tools\publish-ohos-rtc-call.ps1 -Publish
 ```
 
-发布后再更新床旁和主机业务工程依赖版本到 `0.1.5-rc1`，分别重新构建和安装验证。
+发布后再更新床旁和主机业务工程依赖版本到 `0.1.4-rc3`，分别重新构建和安装验证。

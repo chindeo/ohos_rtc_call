@@ -59,6 +59,7 @@ foreach ($Item in $IncludeItems) {
 
 $StagedPackageJsonPath = Join-Path $PackageRoot "oh-package.json5"
 $StagedPackageJson = Get-Content -Path $StagedPackageJsonPath -Raw
+$StagedPackageJson = $StagedPackageJson -replace '"version"\s*:\s*"[^"]+"', "`"version`": `"$Version`""
 $StagedPackageJson = $StagedPackageJson -replace '(?ms)"devDependencies"\s*:\s*\{.*?\}', '"devDependencies": {}'
 Set-Content -Path $StagedPackageJsonPath -Value $StagedPackageJson -NoNewline
 

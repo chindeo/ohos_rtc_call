@@ -1,6 +1,6 @@
 {
   "name": "@chindeo/ohos-rtc-call",
-  "version": "0.1.5-rc1",
+  "version": "0.1.4-rc3",
   "description": "Reusable OpenHarmony WebRTC and SIP call utilities.",
   "main": "Index.ets",
   "author": "Chindeo",
