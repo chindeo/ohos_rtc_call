@@ -38,6 +38,9 @@ export class RtcHostCallOperationResult {
 
 export interface RtcHostMultiCallControllerOptions {
   service: RtcDefaultCallService
+  deviceRole?: RtcCallDeviceRole | string
+  speakerActionLabel?: string
+  speakerActionIsMicSwitch?: boolean
 }
 
 export interface RtcHostLocalCardOptions {
@@ -58,11 +61,18 @@ export class RtcHostMultiCallController {
   private speakerEnabled: boolean = false
   private volume: number = 0
   private message: string = ''
+  private speakerActionLabel: string
+  private speakerActionIsMicSwitch: boolean
+  private deviceRole: RtcCallDeviceRole | string
   private mediaStates: Map<string, RtcWebRtcMediaState> = new Map()
   private answerReadySessions: Map<string, boolean> = new Map()
+  private lastUiModelDebugLogKey: string = ''
 
   constructor(options: RtcHostMultiCallControllerOptions) {
     this.service = options.service
+    this.speakerActionLabel = options.speakerActionLabel || '免提'
+    this.speakerActionIsMicSwitch = options.speakerActionIsMicSwitch === true
+    this.deviceRole = options.deviceRole || RtcCallDeviceRole.HOST
     this.unsubscribeView = this.service.onViewStateChange(() => this.emit())
     this.unsubscribeCalls = this.service.onIncomingCallsChange(() => this.emit())
   }
@@ -124,29 +134,39 @@ export class RtcHostMultiCallController {
   }
 
   async accept(sessionKey?: string, command?: RtcCallControlCommand): Promise<RtcHostCallOperationResult> {
+    this.logOperationRequested(RtcHostCallOperation.ACCEPT, sessionKey)
     const resolved = this.resolveSession(sessionKey, RtcHostCallOperation.ACCEPT)
     if (!resolved.handled) {
+      this.logOperationResolved(resolved)
       return resolved
     }
-    const call = this.getUiModel().activeCall?.sessionKey === resolved.sessionKey ?
-      this.getUiModel().activeCall :
-      this.getUiModel().sideCalls.find((item: RtcHostCallUiItem) => item.sessionKey === resolved.sessionKey)
+    const call = this.service.getCallListItems()
+      .find((item: RtcCallListItem) => this.getStableKey(item) === resolved.sessionKey)
     if (!call?.canAccept) {
-      return this.result(false, 'publish answer not ready', RtcHostCallOperation.ACCEPT, resolved.sessionKey)
+      const result = this.result(false, 'session not acceptable', RtcHostCallOperation.ACCEPT, resolved.sessionKey)
+      this.logOperationResolved(result)
+      return result
     }
-    await this.service.acceptIncomingCall(resolved.sessionKey, command)
+    const activeSessionKey = this.getUiModel().activeCall?.sessionKey || ''
+    await this.service.acceptIncomingCall(resolved.sessionKey, command, {
+      focus: !activeSessionKey || activeSessionKey === resolved.sessionKey
+    })
     this.emit()
+    this.logOperationResolved(resolved)
     return resolved
   }
 
   async hangup(sessionKey?: string, reason: string = 'host single hangup'): Promise<RtcHostCallOperationResult> {
+    this.logOperationRequested(RtcHostCallOperation.HANGUP, sessionKey)
     const resolved = this.resolveSession(sessionKey, RtcHostCallOperation.HANGUP)
     if (!resolved.handled) {
+      this.logOperationResolved(resolved)
       return resolved
     }
     await this.service.terminateCallById(resolved.sessionKey, reason)
     this.clearSessionState(resolved.sessionKey)
     this.emit()
+    this.logOperationResolved(resolved)
     return resolved
   }
 
@@ -160,34 +180,45 @@ export class RtcHostMultiCallController {
   }
 
   async hold(sessionKey?: string, command?: RtcCallControlCommand): Promise<RtcHostCallOperationResult> {
+    this.logOperationRequested(RtcHostCallOperation.HOLD, sessionKey)
     const resolved = this.resolveSession(sessionKey, RtcHostCallOperation.HOLD)
     if (!resolved.handled) {
+      this.logOperationResolved(resolved)
       return resolved
     }
     await this.service.holdCallById(resolved.sessionKey, command)
     this.emit()
+    this.logOperationResolved(resolved)
     return resolved
   }
 
   async resume(sessionKey?: string, command?: RtcCallControlCommand): Promise<RtcHostCallOperationResult> {
+    this.logOperationRequested(RtcHostCallOperation.RESUME, sessionKey)
     const resolved = this.resolveSession(sessionKey, RtcHostCallOperation.RESUME)
     if (!resolved.handled) {
+      this.logOperationResolved(resolved)
       return resolved
     }
     await this.service.resumeCallById(resolved.sessionKey, command)
     this.emit()
+    this.logOperationResolved(resolved)
     return resolved
   }
 
   select(sessionKey?: string): RtcHostCallOperationResult {
+    this.logOperationRequested(RtcHostCallOperation.SELECT, sessionKey)
     const resolved = this.resolveSession(sessionKey, RtcHostCallOperation.SELECT)
     if (!resolved.handled) {
+      this.logOperationResolved(resolved)
       return resolved
     }
     if (!this.service.selectCall(resolved.sessionKey)) {
-      return this.result(false, 'session not selectable', RtcHostCallOperation.SELECT, resolved.sessionKey)
+      const result = this.result(false, 'session not selectable', RtcHostCallOperation.SELECT, resolved.sessionKey)
+      this.logOperationResolved(result)
+      return result
     }
     this.emit()
+    this.logOperationResolved(resolved)
     return resolved
   }
 
@@ -201,6 +232,18 @@ export class RtcHostMultiCallController {
     }
     this.emit()
     return resolved
+  }
+
+  markConnectedByMediaState(state: RtcWebRtcMediaState): RtcHostCallOperationResult {
+    const resolvedKey = this.resolveMediaStateSessionKey(state)
+    if (!resolvedKey) {
+      return this.result(false, 'session not found', RtcHostCallOperation.SELECT, state.sessionKey)
+    }
+    if (!this.service.markConnectedById(resolvedKey)) {
+      return this.result(false, 'session not found', RtcHostCallOperation.SELECT, resolvedKey)
+    }
+    this.emit()
+    return this.result(true, 'resolved media session', RtcHostCallOperation.SELECT, resolvedKey)
   }
 
   applyRemoteHold(sessionKey: string, isHold: boolean): RtcHostCallOperationResult {
@@ -224,10 +267,15 @@ export class RtcHostMultiCallController {
     model.localCard = this.copyLocalCard()
     model.muted = this.muted
     model.speakerEnabled = this.speakerEnabled
+    model.speakerActionLabel = this.speakerActionLabel
+    model.speakerActionIsMicSwitch = this.speakerActionIsMicSwitch
+    model.deviceRole = this.deviceRole
     model.volume = this.volume
     model.message = this.message || viewState.errorMessage || viewState.registrationErrorMessage
 
-    const mapped = calls.map((item: RtcCallListItem) => this.toUiItem(item))
+    const mapped = calls
+      .filter((item: RtcCallListItem) => this.isDisplayableCall(item))
+      .map((item: RtcCallListItem) => this.toUiItem(item))
     model.activeCall = mapped.find((item: RtcHostCallUiItem) => item.isSelected) ||
       mapped.find((item: RtcHostCallUiItem) => item.isActive)
     if (!model.activeCall && mapped.length > 0) {
@@ -235,14 +283,14 @@ export class RtcHostMultiCallController {
     }
     model.sideCalls = model.activeCall ?
       mapped.filter((item: RtcHostCallUiItem) => item.sessionKey !== model.activeCall?.sessionKey) : []
-    model.visible = viewState.visible || mapped.length > 0
-    model.showHangupAll = mapped.length > 1
+    model.visible = mapped.length > 0
+    model.showHangupAll = model.visible && mapped.length > 1
     model.videoState.enabled = !!model.activeCall && model.activeCall.mode === RtcCallMode.VIDEO
     model.videoState.localReady = this.localCard.videoReady
     model.videoState.remoteReady = model.activeCall?.hasRemoteVideo === true
     model.videoState.activeSessionKey = model.activeCall?.sessionKey || ''
     const actionModel = RtcCallUiPresenter.present(viewState, {
-      role: RtcCallDeviceRole.HOST,
+      role: this.deviceRole,
       participantCount: mapped.length,
       muted: this.muted,
       speakerEnabled: this.speakerEnabled,
@@ -255,6 +303,7 @@ export class RtcHostMultiCallController {
       active: action.active,
       label: action.label
     }))
+    this.logUiModelDebug(model)
     return model
   }
 
@@ -309,6 +358,10 @@ export class RtcHostMultiCallController {
     return item.sessionKey || item.uid || item.callId || item.key
   }
 
+  private isDisplayableCall(item: RtcCallListItem): boolean {
+    return item.phase !== RtcCallViewPhase.ENDED && item.canHangup
+  }
+
   private resolveRegisteredSessionKey(
     sessionKey: string,
     aliases: string[] = [],
@@ -336,6 +389,21 @@ export class RtcHostMultiCallController {
     return peerMatches.length === 1 ? this.getStableKey(peerMatches[0]) : ''
   }
 
+  private resolveMediaStateSessionKey(state: RtcWebRtcMediaState): string {
+    const aliases: string[] = []
+    if (state.sessionId) {
+      aliases.push(state.sessionId)
+    }
+    if (state.uid) {
+      aliases.push(state.uid)
+    }
+    return this.resolveRegisteredSessionKey(
+      state.sessionKey,
+      aliases,
+      state.targetNumber
+    )
+  }
+
   private clearSessionState(sessionKey: string): void {
     this.answerReadySessions.delete(sessionKey)
     this.mediaStates.delete(sessionKey)
@@ -348,6 +416,8 @@ export class RtcHostMultiCallController {
     mapped.uid = item.uid
     mapped.peerNumber = item.peerNumber
     mapped.displayName = item.displayName || item.peerNumber
+    mapped.clientType = item.target.clientType || ''
+    mapped.direction = item.direction
     mapped.phase = item.phase
     mapped.mode = item.mode
     mapped.statusText = this.getStatusText(item.phase)
@@ -355,10 +425,13 @@ export class RtcHostMultiCallController {
     mapped.isSelected = item.isSelected
     mapped.isHold = item.isHold
     mapped.mediaConnected = item.phase === RtcCallViewPhase.CONNECTED
-    mapped.canAccept = item.canAccept && this.answerReadySessions.get(mapped.sessionKey) === true
+    mapped.canAccept = item.canAccept
     mapped.canHold = item.canHold
     mapped.canResume = item.canResume
     mapped.canHangup = item.canHangup
+    mapped.receivedAt = item.receivedAt
+    mapped.connectedAt = item.connectedAt
+    mapped.durationText = this.formatDuration(item.connectedAt)
     const media = this.mediaStates.get(mapped.sessionKey)
     if (media) {
       mapped.hasRemoteAudio = media.hasRemoteAudio
@@ -366,6 +439,19 @@ export class RtcHostMultiCallController {
       mapped.mediaConnected = media.mediaConnected
     }
     return mapped
+  }
+
+  private formatDuration(connectedAt: number): string {
+    if (!connectedAt) {
+      return ''
+    }
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - connectedAt) / 1000))
+    const hours = Math.floor(elapsedSeconds / 3600)
+    const minutes = Math.floor((elapsedSeconds % 3600) / 60)
+    const seconds = elapsedSeconds % 60
+    const minuteText = minutes < 10 ? '0' + minutes : '' + minutes
+    const secondText = seconds < 10 ? '0' + seconds : '' + seconds
+    return hours > 0 ? hours + ':' + minuteText + ':' + secondText : minuteText + ':' + secondText
   }
 
   private getStatusText(phase: RtcCallViewPhase): string {
@@ -397,6 +483,59 @@ export class RtcHostMultiCallController {
     copy.hasVideo = this.localCard.hasVideo
     copy.videoReady = this.localCard.videoReady
     return copy
+  }
+
+  private getSessionHash(sessionKey: string): string {
+    const key = (sessionKey || '').trim()
+    let hash = 0
+    for (let i = 0; i < key.length; i += 1) {
+      hash = (hash * 33 + key.charCodeAt(i)) % 60466176
+    }
+    let text = hash.toString(36)
+    while (text.length < 6) {
+      text = '0' + text
+    }
+    return text
+  }
+
+  private logOperationRequested(operation: RtcHostCallOperation, sessionKey?: string): void {
+    console.info('RtcHostMultiCallController ' + operation +
+      ' requested sidHash=' + this.getSessionHash(sessionKey || ''))
+  }
+
+  private logOperationResolved(result: RtcHostCallOperationResult): void {
+    console.info('RtcHostMultiCallController ' + result.operation +
+      ' resolved sidHash=' + this.getSessionHash(result.sessionKey) +
+      ' handled=' + result.handled +
+      ' reason=' + result.reason)
+  }
+
+  private logUiModelDebug(model: RtcHostCallUiModel): void {
+    const active = model.activeCall
+    const sideHashes: string[] = []
+    const sidePhases: string[] = []
+    const sideAccepts: string[] = []
+    const sideHangups: string[] = []
+    model.sideCalls.forEach((call: RtcHostCallUiItem) => {
+      sideHashes.push(this.getSessionHash(call.sessionKey))
+      sidePhases.push(call.phase)
+      sideAccepts.push(call.canAccept ? '1' : '0')
+      sideHangups.push(call.canHangup ? '1' : '0')
+    })
+    const key = 'visible=' + model.visible +
+      '|activeHash=' + this.getSessionHash(active?.sessionKey || '') +
+      '|activePhase=' + (active?.phase || '') +
+      '|activeCanAccept=' + (active?.canAccept === true) +
+      '|activeCanHangup=' + (active?.canHangup === true) +
+      '|sideHashes=' + sideHashes.join(',') +
+      '|sidePhases=' + sidePhases.join(',') +
+      '|sideCanAccept=' + sideAccepts.join(',') +
+      '|sideCanHangup=' + sideHangups.join(',')
+    if (this.lastUiModelDebugLogKey === key) {
+      return
+    }
+    this.lastUiModelDebugLogKey = key
+    console.info('RtcHostMultiCallController ui_model ' + key)
   }
 
   private emit(): void {

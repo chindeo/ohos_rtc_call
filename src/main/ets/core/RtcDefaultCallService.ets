@@ -72,6 +72,10 @@ export interface RtcIncomingCallOptions {
   autoAnswer?: boolean
 }
 
+export interface RtcAcceptIncomingCallOptions {
+  focus?: boolean
+}
+
 export interface RtcCallCommandResult {
   handled: boolean
   reason: string
@@ -85,6 +89,7 @@ export class RtcCallListItem {
   sessionKey: string = ''
   peerNumber: string = ''
   displayName: string = ''
+  direction: RtcCallDirection = RtcCallDirection.NONE
   phase: RtcCallViewPhase = RtcCallViewPhase.HIDDEN
   status: string = ''
   isHold: boolean = false
@@ -95,6 +100,8 @@ export class RtcCallListItem {
   canResume: boolean = false
   canHangup: boolean = false
   mode: RtcCallMode = RtcCallMode.AUDIO
+  receivedAt: number = 0
+  connectedAt: number = 0
   target: RtcCallTarget = { number: '' }
 }
 
@@ -177,6 +184,7 @@ export class RtcDefaultCallService implements RtcCallService {
       sessionKey: this.session.requestId,
       target,
       mode,
+      direction: RtcCallDirection.OUTGOING,
       phase: 'outgoing',
       status: 'outgoing'
     })
@@ -218,6 +226,7 @@ export class RtcDefaultCallService implements RtcCallService {
       mode,
       autoAnswer: options.autoAnswer,
       isHold: options.isHold,
+      direction: RtcCallDirection.INCOMING,
       status: options.status || 'incoming'
     })
     const mediaBusy = this.session.active && this.session.hostPhase === RtcHostPhase.MEDIA_ACTIVE
@@ -233,8 +242,13 @@ export class RtcDefaultCallService implements RtcCallService {
     }
   }
 
-  async acceptIncomingCall(callIdOrUid: string, command?: RtcCallControlCommand): Promise<void> {
-    const incoming = this.incomingQueue.accept(callIdOrUid)
+  async acceptIncomingCall(
+    callIdOrUid: string,
+    command?: RtcCallControlCommand,
+    options?: RtcAcceptIncomingCallOptions
+  ): Promise<void> {
+    const shouldFocus = options?.focus !== false
+    const incoming = this.incomingQueue.accept(callIdOrUid, { focus: shouldFocus })
     if (!incoming) {
       return
     }
@@ -248,6 +262,10 @@ export class RtcDefaultCallService implements RtcCallService {
         mode: incoming.mode,
         target: incoming.target
       })
+    }
+    if (!shouldFocus) {
+      await this.handlers?.onAcceptCall?.(this.toSessionFromRecord(incoming, false), command)
+      return
     }
     if (this.session.requestId !== incoming.callId) {
       this.activateIncomingCall(incoming)
@@ -290,7 +308,9 @@ export class RtcDefaultCallService implements RtcCallService {
     this.session.hostPhase = RtcHostPhase.MEDIA_ACTIVE
     this.session.isHold = 'false'
     this.session.pendingTrigger = false
-    this.incomingQueue.markHold(this.session.uid || this.session.requestId || this.session.calleeNumber, false)
+    this.incomingQueue.markConnected(
+      this.session.uid || this.session.requestId || this.session.calleeNumber
+    )
     this.sessionStore.upsert({
       uid: this.session.uid || this.session.requestId,
       peerNumber: this.session.calleeNumber,
@@ -315,7 +335,7 @@ export class RtcDefaultCallService implements RtcCallService {
     if (!incoming || incoming.phase === 'ended') {
       return false
     }
-    this.incomingQueue.accept(callIdOrUid)
+    this.incomingQueue.markConnected(callIdOrUid, Date.now(), { focus: false })
     this.sessionStore.upsert({
       uid: incoming.uid || incoming.callId,
       peerNumber: incoming.peerNumber || incoming.target.number,
@@ -683,6 +703,7 @@ export class RtcDefaultCallService implements RtcCallService {
     item.sessionKey = record.sessionKey || record.uid || record.callId
     item.peerNumber = record.peerNumber || record.target.number
     item.displayName = record.target.displayName || session?.displayName || item.peerNumber
+    item.direction = record.direction
     item.phase = phase
     item.status = session?.status || record.status
     item.isHold = isHold
@@ -693,6 +714,8 @@ export class RtcDefaultCallService implements RtcCallService {
     item.canResume = record.phase === 'accepted' && isHold
     item.canHangup = record.phase !== 'ended'
     item.mode = record.mode
+    item.receivedAt = record.receivedAt
+    item.connectedAt = record.connectedAt
     item.target = RtcDefaultCallService.copyTarget(record.target)
     return item
   }
@@ -892,6 +915,9 @@ export class RtcDefaultCallService implements RtcCallService {
     }
     if (isHold) {
       return RtcCallViewPhase.HELD
+    }
+    if (!record.connectedAt) {
+      return RtcCallViewPhase.CONNECTING
     }
     if (currentPhase === RtcCallViewPhase.CONNECTING) {
       return RtcCallViewPhase.CONNECTING

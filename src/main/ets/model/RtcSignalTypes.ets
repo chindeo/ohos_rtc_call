@@ -17,6 +17,8 @@ export interface RtcCommonRequest {
 
 export interface RtcSignalPayload {
   commonRequest: RtcCommonRequest
+  applyType?: number
+  isAll?: boolean
   sdp?: string
   sdpType?: string
   rtcUid?: string

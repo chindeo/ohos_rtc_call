@@ -108,6 +108,10 @@ export interface RtcWebRtcSignalStateMachineOptions {
   requireIceParamsForLocalAnswer?: boolean
 }
 
+export interface RtcWebRtcUnregisterSessionOptions {
+  preservePublish?: boolean
+}
+
 export interface RtcWebRtcSignalRouteOptions {
   uuid: string
   local: RtcPeerIdentity
@@ -293,11 +297,12 @@ export class RtcWebRtcSignalStateMachine {
     this.forgetEndedSession(id)
   }
 
-  unregisterSession(uuid: string): void {
+  unregisterSession(uuid: string, options?: RtcWebRtcUnregisterSessionOptions): void {
     const id = RtcWebRtcSignalStateMachine.normalizeSignalSessionId(uuid)
     if (!id) {
       return
     }
+    const preservePublish = options?.preservePublish === true
     this.registeredSessionIds = this.registeredSessionIds.filter((item: string) => item !== id)
     this.rememberEndedSession(id)
     const removals: string[] = []
@@ -307,7 +312,9 @@ export class RtcWebRtcSignalStateMachine {
       }
     })
     removals.forEach((key: string) => this.subscribeStates.delete(key))
-    this.publishStates.delete(id)
+    if (!preservePublish) {
+      this.publishStates.delete(id)
+    }
     if (this.activeUuid === id) {
       this.activeUuid = this.registeredSessionIds.length > 0 ? this.registeredSessionIds[0] : ''
     }

@@ -5,6 +5,7 @@ import {
 } from '../audio/RtcCallAudioPolicyController'
 import { RTC_CALL_CONTROL_SOURCE_SCREEN } from './RtcCallControlCommand'
 import { RtcCallMode, RtcCallSession, RtcPeerIdentity } from '../model/RtcCallConfig'
+import { RtcCallDeviceRole } from '../ui/RtcCallUiPresenter'
 import { RtcHostCallUiModel, RtcHostCallUiModelListener } from '../model/RtcHostCallUiModel'
 import { RtcTransportProtocol } from '../model/RtcProtocolConfig'
 import { RtcCallControlCommand } from './RtcCallControlCommand'
@@ -44,6 +45,10 @@ export interface RtcHostCallControllerOptions {
   onEnded?: (sessionKey: string, all: boolean) => void
   onHold?: (session: RtcCallSession) => void | Promise<void>
   onResume?: (session: RtcCallSession) => void | Promise<void>
+  deviceRole?: RtcCallDeviceRole | string
+  speakerActionLabel?: string
+  speakerActionIsMicSwitch?: boolean
+  onMicSwitch?: () => void | Promise<void>
   onError?: (message: string) => void
   onLog?: (message: string) => void
 }
@@ -57,6 +62,7 @@ export class RtcHostCallController {
   private audioPolicyController: RtcCallAudioPolicyController
   private localVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController()
   private remoteVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController()
+  private sessionRemoteVideoSurfaces: Map<string, RtcVideoSurfaceController> = new Map()
   private started: boolean = false
 
   constructor(options: RtcHostCallControllerOptions) {
@@ -97,6 +103,7 @@ export class RtcHostCallController {
         if (reason.indexOf('remote hangup') !== 0) {
           this.webRtcController.hangup(key)
         }
+        this.releaseSessionRemoteVideoSurface(key)
         if (this.service.getCallListItems().filter((item: RtcCallListItem) => item.canHangup).length === 0) {
           await this.audioPolicyController.restoreAfterCall('last call ended')
         }
@@ -104,6 +111,7 @@ export class RtcHostCallController {
       },
       onTerminateAllCalls: async () => {
         this.webRtcController.hangupAll()
+        this.releaseAllSessionRemoteVideoSurfaces()
         await this.audioPolicyController.restoreAfterCall('all calls ended')
         this.options.onEnded?.('', true)
       },
@@ -127,7 +135,13 @@ export class RtcHostCallController {
       autoAnswer: false,
       protocol: RtcTransportProtocol.WEBRTC
     })
-    this.multiCallController = new RtcHostMultiCallController({ service: this.service })
+    this.multiCallController = new RtcHostMultiCallController({
+      service: this.service,
+      deviceRole: options.deviceRole || RtcCallDeviceRole.HOST,
+      speakerActionLabel: options.speakerActionLabel ||
+        (options.speakerActionIsMicSwitch ? '切麦' : '免提'),
+      speakerActionIsMicSwitch: options.speakerActionIsMicSwitch
+    })
     this.multiCallController.setLocalCard({
       number: options.local.number,
       displayName: options.local.displayName || options.local.number,
@@ -248,6 +262,10 @@ export class RtcHostCallController {
   }
 
   async toggleSpeaker(): Promise<void> {
+    if (this.options.speakerActionIsMicSwitch) {
+      await this.options.onMicSwitch?.()
+      return
+    }
     const audio = this.audioPolicyController.getState()
     await this.audioPolicyController.setSpeakerEnabled(!audio.speakerEnabled, 'host toggle speaker')
     const next = this.audioPolicyController.getState()
@@ -266,12 +284,30 @@ export class RtcHostCallController {
     this.mediaController.bindRemoteVideoRenderer(renderer)
   }
 
+  bindSessionRemoteVideoRenderer(
+    sessionKey: string,
+    renderer?: RtcVideoRendererAdapter
+  ): boolean {
+    return this.mediaController.bindSessionRemoteVideoRenderer(sessionKey, renderer)
+  }
+
   getLocalVideoSurfaceController(): RtcVideoSurfaceController {
     return this.localVideoSurface
   }
 
   getRemoteVideoSurfaceController(): RtcVideoSurfaceController {
     return this.remoteVideoSurface
+  }
+
+  getSessionRemoteVideoSurfaceController(sessionKey: string): RtcVideoSurfaceController {
+    const key = (sessionKey || '').trim()
+    let surface = this.sessionRemoteVideoSurfaces.get(key)
+    if (!surface) {
+      surface = new RtcVideoSurfaceController()
+      this.sessionRemoteVideoSurfaces.set(key, surface)
+    }
+    this.bindSessionRemoteVideoRenderer(key, surface)
+    return surface
   }
 
   getUiModel(): RtcHostCallUiModel {
@@ -287,6 +323,7 @@ export class RtcHostCallController {
     this.multiCallController.dispose()
     this.service.dispose()
     this.webRtcController.dispose()
+    this.releaseAllSessionRemoteVideoSurfaces()
   }
 
   private handleIncoming(session: RtcWebRtcCallSessionInfo): void {
@@ -310,22 +347,52 @@ export class RtcHostCallController {
   }
 
   private handleMediaStateChange(state: RtcWebRtcMediaState): void {
+    this.multiCallController.setLocalCard({
+      videoReady: state.localVideoReady === true
+    })
     this.multiCallController.setCallMediaState(state)
+    this.options.onLog?.(`rtc_answer_state channelType=${state.channelType || ''}` +
+      ` state=${state.mediaConnected ? 'connected' : 'connecting'}`)
     if (!state.mediaConnected) {
       return
     }
-    const result = this.multiCallController.markConnected(state.sessionKey)
+    const result = this.multiCallController.markConnectedByMediaState(state)
+    this.options.onLog?.('rtc_answer_mark handled=' + result.handled + ' reason=' + result.reason)
     if (result.handled) {
-      this.options.onConnected?.(state.sessionKey)
+      this.options.onConnected?.(result.sessionKey)
     }
   }
 
   private handleRemoteHangup(sessionKey: string, all: boolean): void {
     if (all) {
+      this.releaseAllSessionRemoteVideoSurfaces()
       this.multiCallController.hangupAll('remote hangup all')
       return
     }
+    this.releaseSessionRemoteVideoSurface(sessionKey)
     this.multiCallController.hangup(sessionKey, 'remote hangup')
+  }
+
+  private releaseSessionRemoteVideoSurface(sessionKey: string): void {
+    const key = (sessionKey || '').trim()
+    if (!key) {
+      return
+    }
+    this.mediaController.bindSessionRemoteVideoRenderer(key, undefined)
+    const surface = this.sessionRemoteVideoSurfaces.get(key)
+    surface?.setVideoTrack(null)
+    this.sessionRemoteVideoSurfaces.delete(key)
+  }
+
+  private releaseAllSessionRemoteVideoSurfaces(): void {
+    this.sessionRemoteVideoSurfaces.forEach((
+      surface: RtcVideoSurfaceController,
+      sessionKey: string
+    ) => {
+      this.mediaController.bindSessionRemoteVideoRenderer(sessionKey, undefined)
+      surface.setVideoTrack(null)
+    })
+    this.sessionRemoteVideoSurfaces.clear()
   }
 
   private handleRemoteHoldChange(sessionKey: string, isHold: boolean): void {

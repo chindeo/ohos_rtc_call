@@ -45,6 +45,16 @@ The host application must also provide a compatible `@ohos/webrtc` dependency an
 - Use `RtcCallAnswerAudioPolicy.resolve(source)` to map answer source to local audio policy. Screen answers use speakerphone and 90% voice-call volume; handset answers use non-speaker output and 40% voice-call volume.
 - Use `RtcSystemBarController.setNavigationBarVisible(...)` from settings pages and `applyNavigationBarPreference(...)` from each ability/window lifecycle to keep system navigation-bar visibility consistent across pages in the current app process. This state is for temporary remote debugging and resets to hidden after app exit or restart.
 
+## Reference Call UI
+
+`RtcHostMultiCallLayout` keeps its existing API and now delegates to the Android-aligned
+`RtcReferenceCallLayout`. The host should keep `RtcHostCallController.onUiModelChange()` as the only
+call-state source.
+
+Host lifecycle, layout callbacks, per-session video surfaces, device-role behavior, state gates, and
+acceptance checks are documented in
+[音视频通话 UI 宿主对接文档](docs/host-call-ui-integration.md).
+
 ## Basic Usage
 
 More complete examples are available in the `example` directory.

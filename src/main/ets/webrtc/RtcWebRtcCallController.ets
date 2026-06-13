@@ -51,6 +51,13 @@ export interface RtcWebRtcCallControllerListener {
   onLog?: (message: string) => void
 }
 
+interface RtcRecentLocalSingleHangup {
+  sessionKey: string
+  sessionId: string
+  targetNumber: string
+  at: number
+}
+
 export class RtcWebRtcCallController {
   private signalSession: RtcWebRtcSignalSession
   private signalStateMachine: RtcWebRtcSignalStateMachine
@@ -65,6 +72,8 @@ export class RtcWebRtcCallController {
   private sessions: Map<string, RtcWebRtcCallSessionInfo> = new Map()
   private sessionIds: Map<string, string> = new Map()
   private pendingStartSessionKeys: string[] = []
+  private recentLocalSingleHangup?: RtcRecentLocalSingleHangup
+  private localSingleHangupEchoGuardMs: number = 5000
 
   constructor(
     mediaController: RtcWebRtcMediaController,
@@ -141,11 +150,13 @@ export class RtcWebRtcCallController {
     if (this.server.serveNumber) {
       this.sendApply(3, session, false)
     }
+    this.rememberLocalSingleHangup(session)
     this.removeSession(session.sessionKey)
     return true
   }
 
   hangupAll(): void {
+    this.recentLocalSingleHangup = undefined
     const first = this.sessions.values().next()
     if (!first.done && this.server.serveNumber) {
       this.sendApply(3, first.value, true)
@@ -256,6 +267,9 @@ export class RtcWebRtcCallController {
         buildAnswerCommonRequest: (inbound: RtcCommonRequest, context: RtcWebRtcSignalContext) =>
           this.buildAnswerCommonRequest(inbound, context, session)
       }).then((result) => {
+        this.listener.onLog?.(`rtc_route_sdp channelType=${result.role}` +
+          ` sdpType=${payload.sdpType || ''}` +
+          ` handled=${result.handled} reason=${result.reason}`)
         if (result.handled && result.role === RTC_WEBRTC_PEER_ROLE_PUBLISH) {
           this.listener.onPublishReady?.(session.sessionKey, this.copySession(session))
         }
@@ -279,30 +293,47 @@ export class RtcWebRtcCallController {
         sdpMid: payload.sdpMid,
         rtcUid: payload.rtcUid || ''
       }
-      this.signalStateMachine.handleCandidate(candidateData).catch((error: Error) => {
-        this.listener.onError?.('handle candidate failed: ' + JSON.stringify(error))
-      })
+      this.signalStateMachine.handleCandidate(candidateData)
+        .then((result) => {
+          this.listener.onLog?.(`rtc_route_candidate channelType=${result.role}` +
+            ` handled=${result.handled} reason=${result.reason}`)
+        })
+        .catch((error: Error) => {
+          this.listener.onError?.('handle candidate failed: ' + JSON.stringify(error))
+        })
       return
     }
     if (message.eventName === 'c__answer') {
       const payload = this.parsePayload(message.data)
       const session = payload ? this.upsertSession(payload.commonRequest, true, payload.rtcUid) : undefined
       if (session) {
+        const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(payload?.rtcUid || '')
+        this.listener.onLog?.(`rtc_answer_state channelType=${scope.channelType} state=notice`)
         this.listener.onAnswerNotice?.(this.copySession(session))
       }
       return
     }
     if (message.eventName === 'c__hangup' || message.eventName === 'c__offline') {
       const payload = this.parsePayload(message.data)
-      const sessionId = payload?.commonRequest.uuid || ''
-      const session = this.findSession(sessionId)
-      if (session) {
+      const session = payload ? this.resolvePayloadSession(payload) : undefined
+      if (this.shouldIgnoreTerminalEchoAfterLocalSingleHangup(payload, session)) {
+        this.listener.onLog?.('ignore terminal echo after local single hangup')
+      } else if (session) {
         const key = session.sessionKey
         this.removeSession(key)
         this.listener.onHangup?.(key, false)
-      } else if (!sessionId) {
+      } else if (payload?.isAll === true) {
         this.hangupAll()
         this.listener.onHangup?.('', true)
+      } else if (!payload || !this.hasPayloadSessionIdentity(payload)) {
+        if (this.sessions.size <= 1) {
+          this.hangupAll()
+          this.listener.onHangup?.('', true)
+        } else {
+          this.listener.onLog?.('ignore terminal signal without target in multi-call')
+        }
+      } else {
+        this.listener.onLog?.('ignore terminal signal for unknown session')
       }
       return
     }
@@ -378,7 +409,8 @@ export class RtcWebRtcCallController {
     if (!session) {
       return
     }
-    this.mediaController.closeSession(session.sessionKey, 'signal session ended')
+    const preservePublish = true
+    this.mediaController.closeSession(session.sessionKey, 'signal session ended', { preservePublish })
     const sessionIdRemovals: string[] = []
     this.sessionIds.forEach((mappedKey: string, sessionId: string) => {
       if (mappedKey === session.sessionKey) {
@@ -386,12 +418,77 @@ export class RtcWebRtcCallController {
       }
     })
     sessionIdRemovals.forEach((sessionId: string) => {
-      this.signalStateMachine.unregisterSession(sessionId)
+      this.signalStateMachine.unregisterSession(sessionId, { preservePublish })
       this.sessionIds.delete(sessionId)
     })
     this.sessions.delete(session.sessionKey)
     this.pendingStartSessionKeys =
       this.pendingStartSessionKeys.filter((item: string) => item !== session.sessionKey)
+    if (this.sessions.size === 0) {
+      this.signalStateMachine.resetSession()
+    }
+  }
+
+  private rememberLocalSingleHangup(session: RtcWebRtcCallSessionInfo): void {
+    this.recentLocalSingleHangup = {
+      sessionKey: session.sessionKey,
+      sessionId: session.sessionId,
+      targetNumber: session.targetNumber,
+      at: Date.now()
+    }
+  }
+
+  private getRecentLocalSingleHangup(): RtcRecentLocalSingleHangup | undefined {
+    const recent = this.recentLocalSingleHangup
+    if (!recent) {
+      return undefined
+    }
+    if (Date.now() - recent.at > this.localSingleHangupEchoGuardMs) {
+      this.recentLocalSingleHangup = undefined
+      return undefined
+    }
+    return recent
+  }
+
+  private shouldIgnoreTerminalEchoAfterLocalSingleHangup(
+    payload?: RtcSignalPayload,
+    resolvedSession?: RtcWebRtcCallSessionInfo
+  ): boolean {
+    const recent = this.getRecentLocalSingleHangup()
+    if (!recent || this.sessions.size === 0) {
+      return false
+    }
+    if (!payload) {
+      return true
+    }
+    if (!this.hasPayloadSessionIdentity(payload)) {
+      return true
+    }
+    if (payload.isAll === true && !this.payloadMatchesRecentLocalSingleHangup(payload, recent)) {
+      return true
+    }
+    if (this.payloadMatchesRecentLocalSingleHangup(payload, recent)) {
+      return true
+    }
+    return !!resolvedSession && resolvedSession.sessionKey !== recent.sessionKey
+  }
+
+  private payloadMatchesRecentLocalSingleHangup(
+    payload: RtcSignalPayload,
+    recent: RtcRecentLocalSingleHangup
+  ): boolean {
+    const commonRequest = payload.commonRequest
+    const payloadSessionId = this.normalizeSessionId(commonRequest.uuid || '')
+    if (payloadSessionId && (payloadSessionId === recent.sessionKey || payloadSessionId === recent.sessionId)) {
+      return true
+    }
+    const rtcSessionId = this.normalizeSessionId(payload.rtcUid || '')
+    if (rtcSessionId && (rtcSessionId === recent.sessionKey || rtcSessionId === recent.sessionId)) {
+      return true
+    }
+    const localNumber = this.config?.local.number || this.config?.identity.number || ''
+    const targetNumber = this.resolveRemoteNumber(commonRequest, localNumber)
+    return !!targetNumber && targetNumber === recent.targetNumber
   }
 
   private sendApply(applyType: number, session: RtcWebRtcCallSessionInfo, isAll: boolean): void {
@@ -549,6 +646,38 @@ export class RtcWebRtcCallController {
       }
     })
     return matches.length === 1 ? matches[0].sessionKey : ''
+  }
+
+  private findUniqueSessionByTarget(targetNumber: string): RtcWebRtcCallSessionInfo | undefined {
+    const target = (targetNumber || '').trim()
+    if (!target) {
+      return undefined
+    }
+    const matches: RtcWebRtcCallSessionInfo[] = []
+    this.sessions.forEach((session: RtcWebRtcCallSessionInfo) => {
+      if (session.targetNumber === target) {
+        matches.push(session)
+      }
+    })
+    return matches.length === 1 ? matches[0] : undefined
+  }
+
+  private resolvePayloadSession(payload: RtcSignalPayload): RtcWebRtcCallSessionInfo | undefined {
+    const session = this.findSession(payload.commonRequest.uuid || '') ||
+      this.findSession(payload.rtcUid || '')
+    if (session) {
+      return session
+    }
+    const localNumber = this.config?.local.number || this.config?.identity.number || ''
+    const targetNumber = this.resolveRemoteNumber(payload.commonRequest, localNumber)
+    return this.findUniqueSessionByTarget(targetNumber)
+  }
+
+  private hasPayloadSessionIdentity(payload: RtcSignalPayload): boolean {
+    const localNumber = this.config?.local.number || this.config?.identity.number || ''
+    return !!((payload.commonRequest.uuid || '').trim() ||
+      (payload.rtcUid || '').trim() ||
+      this.resolveRemoteNumber(payload.commonRequest, localNumber))
   }
 
   private registerSignalAliases(commonRequest: RtcCommonRequest, rawRtcUid: string = ''): void {

@@ -1,6 +1,6 @@
 import { RtcCallMode } from './RtcCallConfig'
-import { RtcCallViewPhase } from './RtcCallViewState'
-import { RtcCallUiActionState } from '../ui/RtcCallUiPresenter'
+import { RtcCallDirection, RtcCallViewPhase } from './RtcCallViewState'
+import { RtcCallDeviceRole, RtcCallUiActionState } from '../ui/RtcCallUiPresenter'
 
 export class RtcHostLocalCard {
   number: string = ''
@@ -17,10 +17,13 @@ export class RtcHostCallUiItem {
   peerNumber: string = ''
   displayName: string = ''
   clientType: string = ''
+  direction: RtcCallDirection = RtcCallDirection.NONE
   phase: RtcCallViewPhase = RtcCallViewPhase.HIDDEN
   mode: RtcCallMode = RtcCallMode.AUDIO
   statusText: string = ''
   durationText: string = ''
+  receivedAt: number = 0
+  connectedAt: number = 0
   isActive: boolean = false
   isSelected: boolean = false
   isHold: boolean = false
@@ -50,6 +53,9 @@ export class RtcHostCallUiModel {
   showHangupAll: boolean = false
   muted: boolean = false
   speakerEnabled: boolean = false
+  speakerActionLabel: string = '免提'
+  speakerActionIsMicSwitch: boolean = false
+  deviceRole: RtcCallDeviceRole | string = RtcCallDeviceRole.HOST
   volume: number = 0
   videoState: RtcHostVideoState = new RtcHostVideoState()
   message: string = ''

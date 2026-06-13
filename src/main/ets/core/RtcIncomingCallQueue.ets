@@ -1,4 +1,5 @@
 import { RtcCallMode } from '../model/RtcCallConfig'
+import { RtcCallDirection } from '../model/RtcCallViewState'
 import { RtcCallTarget } from './RtcCallService'
 
 export type RtcIncomingCallQueuePhase = 'incoming' | 'outgoing' | 'accepted' | 'ended'
@@ -17,9 +18,14 @@ export interface RtcIncomingCallQueueItemOptions {
   autoAnswer?: boolean
   isHold?: boolean
   status?: string
+  direction?: RtcCallDirection
   phase?: RtcIncomingCallQueuePhase
   sortWeight?: number
   receivedAt?: number
+}
+
+export interface RtcIncomingCallQueueFocusOptions {
+  focus?: boolean
 }
 
 export class RtcIncomingCallRecord {
@@ -34,8 +40,10 @@ export class RtcIncomingCallRecord {
   autoAnswer: boolean = false
   isHold: boolean = false
   status: string = ''
+  direction: RtcCallDirection = RtcCallDirection.INCOMING
   sortWeight: number = 999999
   receivedAt: number = 0
+  connectedAt: number = 0
   updatedAt: number = 0
   visible: boolean = true
   endReason: string = ''
@@ -83,6 +91,7 @@ export class RtcIncomingCallQueue {
     record.autoAnswer = options.autoAnswer === true
     record.isHold = options.isHold === true
     record.status = options.status || record.status
+    record.direction = options.direction || record.direction
     record.sortWeight = options.sortWeight !== undefined ? options.sortWeight : record.sortWeight
     if (isNewRecord || record.phase === 'ended') {
       record.phase = options.phase || 'incoming'
@@ -99,7 +108,7 @@ export class RtcIncomingCallQueue {
     return RtcIncomingCallQueue.copyRecord(record)
   }
 
-  accept(callId: string): RtcIncomingCallRecord | undefined {
+  accept(callId: string, options?: RtcIncomingCallQueueFocusOptions): RtcIncomingCallRecord | undefined {
     const record = this.find(callId)
     if (!record) {
       return undefined
@@ -108,8 +117,10 @@ export class RtcIncomingCallQueue {
     record.status = 'accepted'
     record.visible = true
     record.updatedAt = Date.now()
-    this.activeCallId = record.callId
-    this.selectedCallId = record.callId
+    if (options?.focus !== false) {
+      this.activeCallId = record.callId
+      this.selectedCallId = record.callId
+    }
     this.emit()
     return RtcIncomingCallQueue.copyRecord(record)
   }
@@ -133,6 +144,29 @@ export class RtcIncomingCallQueue {
     record.isHold = isHold
     record.status = isHold ? 'hold' : (record.phase === 'accepted' ? 'accepted' : record.status)
     record.updatedAt = Date.now()
+    this.emit()
+    return RtcIncomingCallQueue.copyRecord(record)
+  }
+
+  markConnected(
+    callId: string,
+    connectedAt: number = Date.now(),
+    options?: RtcIncomingCallQueueFocusOptions
+  ): RtcIncomingCallRecord | undefined {
+    const record = this.find(callId)
+    if (!record) {
+      return undefined
+    }
+    record.phase = 'accepted'
+    record.status = 'accepted'
+    record.isHold = false
+    if (!record.connectedAt) {
+      record.connectedAt = connectedAt
+    }
+    record.updatedAt = Date.now()
+    if (options?.focus !== false) {
+      this.activeCallId = record.callId
+    }
     this.emit()
     return RtcIncomingCallQueue.copyRecord(record)
   }
@@ -285,8 +319,10 @@ export class RtcIncomingCallQueue {
     copy.autoAnswer = record.autoAnswer
     copy.isHold = record.isHold
     copy.status = record.status
+    copy.direction = record.direction
     copy.sortWeight = record.sortWeight
     copy.receivedAt = record.receivedAt
+    copy.connectedAt = record.connectedAt
     copy.updatedAt = record.updatedAt
     copy.visible = record.visible
     copy.endReason = record.endReason

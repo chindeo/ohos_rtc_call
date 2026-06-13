@@ -19,6 +19,58 @@
     {
       "name": "audio_settings",
       "value": "Audio settings access is required for call routing."
+    },
+    {
+      "name": "rtc_call_accept",
+      "value": "接听"
+    },
+    {
+      "name": "rtc_call_reject",
+      "value": "拒接"
+    },
+    {
+      "name": "rtc_call_hangup",
+      "value": "挂断"
+    },
+    {
+      "name": "rtc_call_hangup_all",
+      "value": "挂断全部"
+    },
+    {
+      "name": "rtc_call_mute",
+      "value": "静音"
+    },
+    {
+      "name": "rtc_call_hold",
+      "value": "保持"
+    },
+    {
+      "name": "rtc_call_resume",
+      "value": "恢复"
+    },
+    {
+      "name": "rtc_call_speaker",
+      "value": "免提"
+    },
+    {
+      "name": "rtc_call_switch_microphone",
+      "value": "切麦"
+    },
+    {
+      "name": "rtc_call_connecting",
+      "value": "正在连接"
+    },
+    {
+      "name": "rtc_call_waiting",
+      "value": "正在等待对方接受邀请.."
+    },
+    {
+      "name": "rtc_call_audio_invite",
+      "value": "邀请你语音通话"
+    },
+    {
+      "name": "rtc_call_video_invite",
+      "value": "邀请你视频通话"
     }
   ]
 }

@@ -12,6 +12,7 @@ import rtcPeerSessionRegistryTest from './RtcPeerSessionRegistry.test'
 import rtcRuntimeConfigControllerTest from './RtcRuntimeConfigController.test'
 import rtcStartupFallbackControllerTest from './RtcStartupFallbackController.test'
 import rtcStartupDataCacheTest from './RtcStartupDataCache.test'
+import rtcWebRtcCallControllerTest from './RtcWebRtcCallController.test'
 import rtcWebRtcSignalStateMachineTest from './RtcWebRtcSignalStateMachine.test'
 import rtcWebRtcMediaControllerTest from './RtcWebRtcMediaController.test'
 
@@ -30,6 +31,7 @@ export default function testsuite() {
   rtcRuntimeConfigControllerTest()
   rtcStartupFallbackControllerTest()
   rtcStartupDataCacheTest()
+  rtcWebRtcCallControllerTest()
   rtcWebRtcSignalStateMachineTest()
   rtcWebRtcMediaControllerTest()
 }

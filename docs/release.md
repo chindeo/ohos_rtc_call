@@ -16,6 +16,8 @@
 - 启动数据缓存：新增 `RtcStartupDataCache`，业务侧可对启动页依赖的配置、床旁配置、床旁详情、运行时配置等数据做成功缓存和失败回退，后台业务接口短时不可用时仍可使用最近一次成功数据进入主界面，通话链路继续由独立 RTC / SIP 服务保障。
 - 网络异常恢复提示：新增 `RtcNetworkRequestRecoveryController`，业务侧在 API 请求失败、缓存回退和后续请求成功时统一维护“网络异常，请检查网络”的提示状态，接口程序恢复后可自动清除异常提示并继续使用正常接口数据。
 - 主机多床旁来电队列：新增 `RtcIncomingCallQueue`，并让 `RtcDefaultCallService` 保留多个床旁来电；当前已有媒体通话时新来电只入队，不覆盖或结束当前通话，主机可基于队列快照显示多床旁列表 / 弹窗。
+- 通话参考 UI：新增统一四层 ArkUI 通话布局，复刻 Android `call-lib` 的单路呼入、呼出、音视频通话、多路呼入网格和多路主画面 / 右侧缩略列表；现有 `RtcHostMultiCallLayout` 保持兼容。
+- 多路视频渲染：新增按 `sessionKey` 绑定远端视频 renderer 的接口，活动主画面 renderer API 保持不变，单路挂断时只清理目标 renderer。
 
 ### 当前验证结论
 

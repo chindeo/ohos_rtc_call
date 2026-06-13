@@ -36,8 +36,12 @@ export interface RtcWebRtcMediaSessionOptions {
 export interface RtcWebRtcMediaState {
   sessionKey: string
   sessionId: string
+  uid?: string
   targetNumber: string
+  rtcUid?: string
+  channelType?: string
   mode: RtcCallMode
+  localVideoReady?: boolean
   hasRemoteAudio: boolean
   hasRemoteVideo: boolean
   mediaConnected: boolean
@@ -55,6 +59,10 @@ export interface RtcWebRtcMediaControllerOptions {
   onMediaStateChange?: (state: RtcWebRtcMediaState) => void
   onLog?: (message: string) => void
   onError?: (message: string) => void
+}
+
+export interface RtcWebRtcCloseSessionOptions {
+  preservePublish?: boolean
 }
 
 export class RtcVideoSurfaceController implements RtcVideoRendererAdapter {
@@ -125,6 +133,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private activeSessionKey: string = ''
   private userMuted: boolean = false
   private heldSessionKeys: Map<string, boolean> = new Map()
+  private sessionRemoteVideoRenderers: Map<string, RtcVideoRendererAdapter> = new Map()
   private onSendSignal?: (message: RtcSignalMessage, context: RtcWebRtcSignalContext) => void | Promise<void>
   private onMediaStateChange?: (state: RtcWebRtcMediaState) => void
   private onLog?: (message: string) => void
@@ -207,6 +216,24 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     }
   }
 
+  bindSessionRemoteVideoRenderer(sessionKey: string, renderer?: RtcVideoRendererAdapter): boolean {
+    const session = this.findSession(sessionKey)
+    if (!session) {
+      return false
+    }
+    const current = this.sessionRemoteVideoRenderers.get(session.sessionKey)
+    if (current && current !== renderer) {
+      this.clearRenderer(current)
+    }
+    if (!renderer) {
+      this.sessionRemoteVideoRenderers.delete(session.sessionKey)
+      return true
+    }
+    this.sessionRemoteVideoRenderers.set(session.sessionKey, renderer)
+    this.setRendererTrack(renderer, session.remoteVideoTrack)
+    return true
+  }
+
   setMuted(muted: boolean): void {
     this.userMuted = muted
     this.applyLocalAudioState()
@@ -248,6 +275,9 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     }
     if (role === RTC_WEBRTC_PEER_ROLE_PUBLISH) {
       this.prepareLocalMedia(this.localVideoEnabled && session?.mode === RtcCallMode.VIDEO)
+      if (session) {
+        this.emitMediaState(session)
+      }
     }
     const pcf = this.audioController.getPeerConnectionFactory()
     const pc = pcf?.createPeerConnection(this.pcConfig)
@@ -353,14 +383,24 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     await this.onSendSignal?.(message, context)
   }
 
-  closeSession(sessionKey: string, reason: string = 'close session'): boolean {
+  closeSession(
+    sessionKey: string,
+    reason: string = 'close session',
+    options?: RtcWebRtcCloseSessionOptions
+  ): boolean {
     const session = this.findSession(sessionKey)
     if (!session) {
       return false
     }
+    const isLastSession = this.sessions.size === 1
+    const preservePublish = options?.preservePublish === true
     const removals: string[] = []
     this.peers.forEach((record: RtcWebRtcPeerRecord, key: string) => {
-      if (record.session?.sessionKey === session.sessionKey) {
+      if (isLastSession || record.session?.sessionKey === session.sessionKey) {
+        if (preservePublish && record.role === RTC_WEBRTC_PEER_ROLE_PUBLISH) {
+          this.log(`preserve publish peer reason=${reason}`)
+          return
+        }
         this.closePeer(record, reason)
         removals.push(key)
       }
@@ -376,6 +416,11 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     sessionIdRemovals.forEach((sessionId: string) => this.sessionIds.delete(sessionId))
     this.sessions.delete(session.sessionKey)
     this.heldSessionKeys.delete(session.sessionKey)
+    this.clearSessionRemoteVideoRenderer(session.sessionKey)
+    if (isLastSession) {
+      this.audioController.releaseLocalVideo()
+      this.emitMediaState(session)
+    }
     if (this.activeSessionKey === session.sessionKey) {
       const next = this.sessions.values().next()
       this.activeSessionKey = next.done ? '' : next.value.sessionKey
@@ -391,9 +436,15 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   closeAll(reason: string = 'close all'): void {
     this.peers.forEach((record: RtcWebRtcPeerRecord) => this.closePeer(record, reason))
     this.peers.clear()
+    this.audioController.releaseLocalVideo()
+    this.sessions.forEach((session: RtcWebRtcMediaSession) => this.emitMediaState(session))
     this.sessions.clear()
     this.sessionIds.clear()
     this.heldSessionKeys.clear()
+    this.sessionRemoteVideoRenderers.forEach((renderer: RtcVideoRendererAdapter) => {
+      this.clearRenderer(renderer)
+    })
+    this.sessionRemoteVideoRenderers.clear()
     this.activeSessionKey = ''
     this.audioController.cleanupRtcCallResources(reason)
   }
@@ -412,6 +463,10 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       return hasRemoteAudio
     }
     return hasRemoteVideo
+  }
+
+  static isLocalVideoReady(readyState?: string): boolean {
+    return readyState === 'live'
   }
 
   private prepareLocalMedia(videoRequested: boolean): void {
@@ -472,12 +527,15 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     }
     const identity = this.resolveTrackIdentity(event)
     if (!identity || !identity.number) {
-      this.error(`ignore unmatched track session=${session.sessionId} kind=${event.track.kind}`)
+      this.log(`rtc_ontrack channelType=${record.role} kind=${event.track.kind}` +
+        ` matched=false reason=missing_identity`)
+      this.error(`ignore unmatched track kind=${event.track.kind}`)
       return
     }
     if (identity.number === this.local.number || identity.number !== session.targetNumber) {
-      this.error(`ignore mismatched track session=${session.sessionId} target=${identity.number}` +
-        ` expected=${session.targetNumber}`)
+      this.log(`rtc_ontrack channelType=${record.role} kind=${event.track.kind}` +
+        ` matched=false reason=identity_mismatch`)
+      this.error(`ignore mismatched track kind=${event.track.kind}`)
       return
     }
     if (event.track.kind === 'audio') {
@@ -495,14 +553,20 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     } else if (event.track.kind === 'video') {
       session.remoteVideoTrack = event.track
       session.hasRemoteVideo = true
+      const renderer = this.sessionRemoteVideoRenderers.get(session.sessionKey)
+      if (renderer) {
+        this.setRendererTrack(renderer, event.track)
+      }
     } else {
       return
     }
     session.mediaConnected = this.isMediaConnected(session)
+    this.log(`rtc_ontrack channelType=${record.role} kind=${event.track.kind}` +
+      ` matched=true mediaConnected=${session.mediaConnected}`)
     if (this.activeSessionKey === session.sessionKey) {
       this.selectSession(session.sessionKey)
     }
-    this.onMediaStateChange?.(this.copyMediaState(session))
+    this.emitMediaState(session)
   }
 
   private resolveTrackIdentity(event: webrtc.RTCTrackEvent): RtcWebRtcTrackIdentity | undefined {
@@ -526,6 +590,30 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       session.hasRemoteAudio,
       session.hasRemoteVideo
     )
+  }
+
+  private clearSessionRemoteVideoRenderer(sessionKey: string): void {
+    const renderer = this.sessionRemoteVideoRenderers.get(sessionKey)
+    if (!renderer) {
+      return
+    }
+    this.clearRenderer(renderer)
+    this.sessionRemoteVideoRenderers.delete(sessionKey)
+  }
+
+  private clearRenderer(renderer: RtcVideoRendererAdapter): void {
+    this.setRendererTrack(renderer, undefined)
+  }
+
+  private setRendererTrack(
+    renderer: RtcVideoRendererAdapter,
+    track?: webrtc.MediaStreamTrack
+  ): void {
+    try {
+      renderer.setVideoTrack(track || null)
+    } catch (error) {
+      this.error('bind session remote video renderer error: ' + JSON.stringify(error))
+    }
   }
 
   private static isAudioOnlyDevice(clientType: string): boolean {
@@ -572,12 +660,22 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     return {
       sessionKey: session.sessionKey,
       sessionId: session.sessionId,
+      uid: session.uid || session.sessionKey,
       targetNumber: session.targetNumber,
+      rtcUid: session.rtcUid,
+      channelType: RTC_PEER_SESSION_CHANNEL_SUBSCRIBE,
       mode: session.mode,
+      localVideoReady: RtcWebRtcMediaController.isLocalVideoReady(
+        this.audioController.getLocalVideoTrack()?.readyState
+      ),
       hasRemoteAudio: session.hasRemoteAudio,
       hasRemoteVideo: session.hasRemoteVideo,
       mediaConnected: session.mediaConnected
     }
+  }
+
+  private emitMediaState(session: RtcWebRtcMediaSession): void {
+    this.onMediaStateChange?.(this.copyMediaState(session))
   }
 
   private log(message: string): void {
