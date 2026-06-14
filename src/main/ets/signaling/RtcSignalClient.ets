@@ -39,7 +39,7 @@ export class RtcSignalClient {
     this.bindEvents()
     this.socket.connect(this.options.url, (error, value) => {
       if (error) {
-        this.listener.onError?.(JSON.stringify(error))
+        this.listener.onError?.(this.formatError(error))
         return
       }
       if (value) {
@@ -78,7 +78,7 @@ export class RtcSignalClient {
     }
     this.socket.send(JSON.stringify(message), (error, success) => {
       if (!success) {
-        this.listener.onError?.(JSON.stringify(error))
+        this.listener.onError?.(this.formatError(error))
       }
     })
   }
@@ -98,11 +98,11 @@ export class RtcSignalClient {
     })
     this.socket.on('error', (error) => {
       this.opened = false
-      this.listener.onError?.(JSON.stringify(error))
+      this.listener.onError?.(this.formatError(error))
     })
     this.socket.on('message', (error, data: string | ArrayBuffer) => {
       if (error) {
-        this.listener.onError?.(JSON.stringify(error))
+        this.listener.onError?.(this.formatError(error))
         return
       }
       const text = data.toString()
@@ -117,9 +117,31 @@ export class RtcSignalClient {
           }
           this.listener.onMessage?.(message)
         } catch (parseError) {
-          this.listener.onError?.(JSON.stringify(parseError))
+          this.listener.onError?.(this.formatError(parseError))
         }
       })
     })
+  }
+
+  private formatError(error: Error | string | Object | undefined): string {
+    if (!error) {
+      return 'signal error'
+    }
+    if (typeof error === 'string') {
+      return error || 'signal error'
+    }
+    const maybeError = error as Error
+    if (maybeError.message) {
+      return maybeError.message
+    }
+    const json = JSON.stringify(error)
+    if (json && json !== '{}') {
+      return json
+    }
+    const text = `${error}`
+    if (text && text !== '[object Object]') {
+      return text
+    }
+    return 'signal error'
   }
 }

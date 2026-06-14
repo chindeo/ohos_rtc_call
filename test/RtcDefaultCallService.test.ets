@@ -54,6 +54,30 @@ export default function rtcDefaultCallServiceTest() {
       expect(viewState.canHangup).assertEqual(true)
     })
 
+    it('merges server invite callback into the existing outgoing call card', 0, async () => {
+      const service = createService()
+
+      await service.startCall({ number: '1002', displayName: '1002' }, RtcCallMode.AUDIO)
+      await service.receiveIncomingCall({
+        callId: 'server-call-1',
+        uid: 'server-call-1',
+        from: '1001',
+        to: '1002',
+        direction: RtcCallDirection.OUTGOING,
+        target: { number: '1002', displayName: 'Remote' },
+        mode: RtcCallMode.AUDIO,
+        status: 'outgoing'
+      })
+
+      const items = service.getCallListItems()
+      expect(items.length).assertEqual(1)
+      expect(items[0].sessionKey).assertEqual('server-call-1')
+      expect(items[0].displayName).assertEqual('Remote')
+      expect(items[0].direction).assertEqual(RtcCallDirection.OUTGOING)
+      expect(service.getSession().uid).assertEqual('server-call-1')
+      expect(service.getViewState().uid).assertEqual('server-call-1')
+    })
+
     it('receives incoming call and accepts it', 0, async () => {
       let accepted = false
       const service = createService({
@@ -224,6 +248,54 @@ export default function rtcDefaultCallServiceTest() {
       expect(service.getCallListItems().find(item => item.uid === 'uid-1')?.phase).assertEqual(RtcCallViewPhase.ENDED)
       expect(service.getCallListItems().find(item => item.uid === 'uid-2')?.phase).assertEqual(RtcCallViewPhase.INCOMING)
       expect(service.getIncomingCalls().pendingCount).assertEqual(1)
+    })
+
+    it('does not reconnect the current call after it is hidden', 0, async () => {
+      const service = createService()
+      await service.receiveIncomingCall({
+        callId: 'bed-1',
+        uid: 'uid-1',
+        target: { number: '8001' }
+      })
+      await service.acceptCall()
+      service.markConnected()
+
+      await service.terminateCallById('uid-1', 'hangup first')
+      const handled = service.markConnectedById('uid-1')
+
+      expect(handled).assertEqual(false)
+      expect(service.getViewState().phase).assertEqual(RtcCallViewPhase.HIDDEN)
+      expect(service.getViewState().visible).assertEqual(false)
+      expect(service.getSession().active).assertEqual(false)
+    })
+
+    it('does not reconnect the current call while termination is resolving', 0, async () => {
+      let releaseTerminate: (() => void) | undefined
+      const service = createService({
+        async onTerminateCall(_session, _reason) {
+          await new Promise<void>((resolve) => {
+            releaseTerminate = resolve
+          })
+        }
+      })
+      await service.receiveIncomingCall({
+        callId: 'bed-1',
+        uid: 'uid-1',
+        target: { number: '8001' }
+      })
+      await service.acceptCall()
+      service.markConnected()
+
+      const terminatePromise = service.terminateCallById('uid-1', 'hangup first')
+      const handled = service.markConnectedById('uid-1')
+
+      expect(handled).assertEqual(false)
+      expect(service.getViewState().phase).assertEqual(RtcCallViewPhase.ENDED)
+      expect(service.getViewState().visible).assertEqual(false)
+      expect(service.getSession().active).assertEqual(false)
+
+      releaseTerminate?.()
+      await terminatePromise
     })
 
     it('terminates all calls through an explicit all-hangup path', 0, async () => {

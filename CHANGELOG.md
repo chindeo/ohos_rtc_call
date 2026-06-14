@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4-rc3 timestamp HAR
+
+- Fixed legacy WebSocket `c__hangup.data.isHangUp` handling so `false` preserves publish and the call page, while `true` or a missing field fully closes publish and the call UI.
+- Prevented stale connected media state from reviving a hidden or ended single-call UI after hangup.
+- Added focused regression coverage for single-call hangup, multi-call keep-alive, `c__offline`, and stale media-state handling.
+
 ## 0.1.4-rc3
 
 - Added `RtcCallGatewayClient` and gateway adapter types for call-gateway uid-based call control, SDP answer routing, ICE candidate routing, and multi-call session snapshots.

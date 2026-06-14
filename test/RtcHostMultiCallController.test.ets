@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@ohos/hypium'
 import { RtcCallMode } from '../src/main/ets/model/RtcCallConfig'
+import { RtcCallDirection } from '../src/main/ets/model/RtcCallViewState'
 import { RtcDefaultCallService } from '../src/main/ets/core/RtcDefaultCallService'
 import {
   RtcHostMultiCallController
@@ -329,6 +330,114 @@ export default function rtcHostMultiCallControllerTest() {
       controller.dispose()
     })
 
+    it('hides the ui after hanging up a single connected call', 0, async () => {
+      const terminated: string[] = []
+      const service = new RtcDefaultCallService({
+        handlers: {
+          onTerminateCall: async (session) => {
+            terminated.push(session.uid)
+          }
+        }
+      })
+      const controller = new RtcHostMultiCallController({ service })
+      await controller.receiveIncomingCall({
+        callId: 'call-a',
+        uid: 'uid-a',
+        target: { number: '1101' }
+      })
+      await controller.accept('uid-a')
+      controller.markConnected('uid-a')
+
+      const result = await controller.hangup('uid-a')
+      const model = controller.getUiModel()
+
+      expect(result.handled).assertEqual(true)
+      expect(terminated.length).assertEqual(1)
+      expect(terminated[0]).assertEqual('uid-a')
+      expect(model.visible).assertEqual(false)
+      expect(model.activeCall === undefined).assertEqual(true)
+      expect(model.sideCalls.length).assertEqual(0)
+      controller.dispose()
+    })
+
+    it('does not revive the ui from a stale connected media state after hangup', 0, async () => {
+      const service = new RtcDefaultCallService()
+      const controller = new RtcHostMultiCallController({ service })
+      await controller.receiveIncomingCall({
+        callId: 'call-a',
+        uid: 'uid-a',
+        target: { number: '1101' },
+        mode: RtcCallMode.AUDIO
+      })
+      await controller.accept('uid-a')
+      controller.markConnected('uid-a')
+
+      await controller.hangup('uid-a')
+      const staleMediaState = {
+        sessionKey: 'uid-a',
+        sessionId: 'call-a',
+        uid: 'uid-a',
+        targetNumber: '1101',
+        mode: RtcCallMode.AUDIO,
+        hasRemoteAudio: true,
+        hasRemoteVideo: false,
+        mediaConnected: true
+      }
+      controller.setCallMediaState(staleMediaState)
+      const result = controller.markConnectedByMediaState(staleMediaState)
+      const model = controller.getUiModel()
+
+      expect(result.handled).assertEqual(false)
+      expect(model.visible).assertEqual(false)
+      expect(model.activeCall === undefined).assertEqual(true)
+      controller.dispose()
+    })
+
+    it('does not revive the ui from connected media while hangup is resolving', 0, async () => {
+      let releaseTerminate: (() => void) | undefined
+      const service = new RtcDefaultCallService({
+        handlers: {
+          onTerminateCall: async () => {
+            await new Promise<void>((resolve) => {
+              releaseTerminate = resolve
+            })
+          }
+        }
+      })
+      const controller = new RtcHostMultiCallController({ service })
+      await controller.receiveIncomingCall({
+        callId: 'call-a',
+        uid: 'uid-a',
+        target: { number: '1101' },
+        mode: RtcCallMode.AUDIO
+      })
+      await controller.accept('uid-a')
+      controller.markConnected('uid-a')
+
+      const hangupPromise = controller.hangup('uid-a')
+      const lateMediaState = {
+        sessionKey: 'uid-a',
+        sessionId: 'call-a',
+        uid: 'uid-a',
+        targetNumber: '1101',
+        mode: RtcCallMode.AUDIO,
+        hasRemoteAudio: true,
+        hasRemoteVideo: false,
+        mediaConnected: true
+      }
+      controller.setCallMediaState(lateMediaState)
+      const result = controller.markConnectedByMediaState(lateMediaState)
+      const model = controller.getUiModel()
+
+      expect(result.handled).assertEqual(false)
+      expect(model.visible).assertEqual(false)
+      expect(model.activeCall === undefined).assertEqual(true)
+
+      releaseTerminate?.()
+      await hangupPromise
+      controller.dispose()
+    })
+
     it('keeps the remaining call visible after hanging up the active session', 0, async () => {
       const terminated: string[] = []
       const service = new RtcDefaultCallService({
@@ -438,6 +547,41 @@ export default function rtcHostMultiCallControllerTest() {
       expect(controller.getUiModel().activeCall?.sessionKey).assertEqual('outgoing-1')
       expect(controller.getUiModel().activeCall?.canAccept).assertEqual(false)
       expect(controller.getUiModel().activeCall?.direction).assertEqual('outgoing')
+      controller.dispose()
+    })
+
+    it('merges outgoing invite callback into one named ui card', 0, async () => {
+      let nextId = 0
+      const service = new RtcDefaultCallService({
+        idFactory: () => {
+          nextId += 1
+          return 'outgoing-' + nextId
+        }
+      })
+      service.configure({
+        registerAddress: 'ws://test',
+        local: { number: '1000', displayName: '护士站' }
+      })
+      const controller = new RtcHostMultiCallController({ service })
+
+      await controller.startCall({ number: '1101', displayName: '1101' }, RtcCallMode.AUDIO)
+      await controller.receiveIncomingCall({
+        callId: 'server-call-1',
+        uid: 'server-call-1',
+        from: '1000',
+        to: '1101',
+        direction: RtcCallDirection.OUTGOING,
+        target: { number: '1101', displayName: '床旁1' },
+        mode: RtcCallMode.AUDIO,
+        status: 'outgoing'
+      })
+
+      const model = controller.getUiModel()
+      expect(model.visible).assertEqual(true)
+      expect(model.activeCall?.sessionKey).assertEqual('server-call-1')
+      expect(model.activeCall?.displayName).assertEqual('床旁1')
+      expect(model.activeCall?.direction).assertEqual('outgoing')
+      expect(model.sideCalls.length).assertEqual(0)
       controller.dispose()
     })
   })

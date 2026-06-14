@@ -17,11 +17,13 @@ import {
 } from '../signaling/RtcWebRtcSignalSession'
 import {
   RTC_WEBRTC_PEER_ROLE_PUBLISH,
+  RtcWebRtcRtcScope,
   RtcWebRtcSignalContext,
   RtcWebRtcSignalStateMachine
 } from '../signaling/RtcWebRtcSignalStateMachine'
 import { RtcWebRtcMediaController, RtcWebRtcMediaSessionOptions } from './RtcWebRtcMediaController'
 import { RtcWebRtcTrackIdentityCodec } from './RtcWebRtcTrackIdentity'
+import { RtcCallLifecycleStore } from '../core/RtcCallLifecycleStore'
 
 export interface RtcWebRtcCallControllerConfig extends RtcWebRtcSignalConnectOptions {
   local: RtcPeerIdentity
@@ -62,6 +64,7 @@ export class RtcWebRtcCallController {
   private signalSession: RtcWebRtcSignalSession
   private signalStateMachine: RtcWebRtcSignalStateMachine
   private mediaController: RtcWebRtcMediaController
+  private lifecycle: RtcCallLifecycleStore = new RtcCallLifecycleStore()
   private listener: RtcWebRtcCallControllerListener
   private config?: RtcWebRtcCallControllerConfig
   private server: RtcServerInfo = {
@@ -151,7 +154,7 @@ export class RtcWebRtcCallController {
       this.sendApply(3, session, false)
     }
     this.rememberLocalSingleHangup(session)
-    this.removeSession(session.sessionKey)
+    this.removeSession(session.sessionKey, true)
     return true
   }
 
@@ -161,11 +164,7 @@ export class RtcWebRtcCallController {
     if (!first.done && this.server.serveNumber) {
       this.sendApply(3, first.value, true)
     }
-    const keys: string[] = []
-    this.sessions.forEach((session: RtcWebRtcCallSessionInfo) => keys.push(session.sessionKey))
-    keys.forEach((key: string) => this.removeSession(key))
-    this.mediaController.closeAll('hangup all')
-    this.signalStateMachine.resetSession()
+    this.closeAllLocalSessions('hangup all')
   }
 
   select(sessionKey: string): boolean {
@@ -308,6 +307,7 @@ export class RtcWebRtcCallController {
       const session = payload ? this.upsertSession(payload.commonRequest, true, payload.rtcUid) : undefined
       if (session) {
         const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(payload?.rtcUid || '')
+        this.lifecycle.markPhase(session.uid || session.sessionId || session.sessionKey, 'answered', false)
         this.listener.onLog?.(`rtc_answer_state channelType=${scope.channelType} state=notice`)
         this.listener.onAnswerNotice?.(this.copySession(session))
       }
@@ -316,18 +316,35 @@ export class RtcWebRtcCallController {
     if (message.eventName === 'c__hangup' || message.eventName === 'c__offline') {
       const payload = this.parsePayload(message.data)
       const session = payload ? this.resolvePayloadSession(payload) : undefined
-      if (this.shouldIgnoreTerminalEchoAfterLocalSingleHangup(payload, session)) {
+      const keepAlive = this.shouldKeepAliveAfterRemoteHangup(message.eventName, payload)
+      const useHangupTerminalPolicy = message.eventName === 'c__hangup' && !keepAlive
+      if (!useHangupTerminalPolicy && this.shouldIgnoreTerminalEchoAfterLocalSingleHangup(payload, session)) {
         this.listener.onLog?.('ignore terminal echo after local single hangup')
       } else if (session) {
         const key = session.sessionKey
-        this.removeSession(key)
-        this.listener.onHangup?.(key, false)
+        const preservePublish = keepAlive || this.sessions.size > 1
+        if (keepAlive) {
+          this.removeSession(key, true)
+          this.listener.onHangup?.(key, false)
+        } else if (message.eventName === 'c__hangup') {
+          this.removeSession(key, preservePublish)
+          this.recentLocalSingleHangup = undefined
+          this.listener.onHangup?.(key, false)
+        } else {
+          this.removeSession(key, this.sessions.size > 1)
+          this.listener.onHangup?.(key, false)
+        }
+      } else if (keepAlive) {
+        this.listener.onLog?.('keep call page after remote hangup because other calls remain')
+      } else if (message.eventName === 'c__hangup') {
+        this.closeAllLocalSessions('remote hangup complete')
+        this.listener.onHangup?.('', true)
       } else if (payload?.isAll === true) {
-        this.hangupAll()
+        this.closeAllLocalSessions('remote terminal all')
         this.listener.onHangup?.('', true)
       } else if (!payload || !this.hasPayloadSessionIdentity(payload)) {
         if (this.sessions.size <= 1) {
-          this.hangupAll()
+          this.closeAllLocalSessions('remote terminal last')
           this.listener.onHangup?.('', true)
         } else {
           this.listener.onLog?.('ignore terminal signal without target in multi-call')
@@ -359,13 +376,21 @@ export class RtcWebRtcCallController {
     const sessionId = this.normalizeSessionId(commonRequest.uuid)
     const localNumber = this.config?.local.number || this.config?.identity.number || ''
     const targetNumber = this.resolveRemoteNumber(commonRequest, localNumber)
+    const isCallout = this.isLocalCallout(commonRequest, localNumber)
+    const sessionIncoming = incoming && !isCallout
     const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(rawRtcUid)
     const rtcSessionId = this.normalizeSessionId(scope.rtcUid)
     const existingKey = this.sessionIds.get(sessionId) ||
       this.sessionIds.get(rtcSessionId) ||
-      this.findUniqueSessionKeyByTarget(targetNumber, incoming)
-    const sessionKey = existingKey || sessionId
+      this.findUniqueSessionKeyByTarget(targetNumber)
+    const sessionKey = this.resolveSessionKeyForUpsert(existingKey, sessionId)
     let session = this.sessions.get(sessionKey)
+    if (!session) {
+      session = existingKey ? this.sessions.get(existingKey) : undefined
+    }
+    if (session && existingKey && sessionKey !== existingKey) {
+      this.migrateSessionKey(existingKey, sessionKey, session)
+    }
     if (!session) {
       session = {
         sessionKey,
@@ -375,21 +400,31 @@ export class RtcWebRtcCallController {
         targetName: this.resolveRemoteName(commonRequest, targetNumber),
         remoteClientType: commonRequest.clientType || '',
         mode: commonRequest.isVideo === true ? RtcCallMode.VIDEO : RtcCallMode.AUDIO,
-        incoming,
+        incoming: sessionIncoming,
         commonRequest
       }
       this.sessions.set(sessionKey, session)
     } else {
+      const oldSessionId = session.sessionId
       session.targetNumber = targetNumber || session.targetNumber
       session.targetName = this.resolveRemoteName(commonRequest, session.targetNumber) || session.targetName
       session.remoteClientType = commonRequest.clientType || session.remoteClientType
       session.mode = commonRequest.isVideo === true ? RtcCallMode.VIDEO : session.mode
+      session.sessionId = sessionId || session.sessionId
+      session.uid = session.sessionId || session.uid
+      session.incoming = sessionIncoming
       session.commonRequest = commonRequest
+      if (oldSessionId && oldSessionId !== session.sessionId) {
+        this.sessionIds.set(oldSessionId, session.sessionKey)
+      }
     }
-    this.sessionIds.set(sessionId, sessionKey)
+    if (sessionId) {
+      this.sessionIds.set(sessionId, sessionKey)
+    }
     if (rtcSessionId) {
       this.sessionIds.set(rtcSessionId, sessionKey)
     }
+    this.upsertLifecycleSession(session, commonRequest, sessionIncoming, scope)
     const mediaOptions: RtcWebRtcMediaSessionOptions = {
       sessionKey: session.sessionKey,
       sessionId,
@@ -404,13 +439,16 @@ export class RtcWebRtcCallController {
     return session
   }
 
-  private removeSession(sessionKey: string): void {
+  private removeSession(sessionKey: string, preservePublish: boolean): void {
     const session = this.findSession(sessionKey)
     if (!session) {
       return
     }
-    const preservePublish = true
     this.mediaController.closeSession(session.sessionKey, 'signal session ended', { preservePublish })
+    this.lifecycle.remove(session.uid || session.sessionId || session.sessionKey)
+    if (session.sessionKey !== session.uid && session.sessionKey !== session.sessionId) {
+      this.lifecycle.remove(session.sessionKey)
+    }
     const sessionIdRemovals: string[] = []
     this.sessionIds.forEach((mappedKey: string, sessionId: string) => {
       if (mappedKey === session.sessionKey) {
@@ -427,6 +465,16 @@ export class RtcWebRtcCallController {
     if (this.sessions.size === 0) {
       this.signalStateMachine.resetSession()
     }
+  }
+
+  private closeAllLocalSessions(reason: string): void {
+    this.recentLocalSingleHangup = undefined
+    this.mediaController.closeAll(reason)
+    this.sessions.clear()
+    this.sessionIds.clear()
+    this.lifecycle.clear()
+    this.pendingStartSessionKeys = []
+    this.signalStateMachine.resetSession()
   }
 
   private rememberLocalSingleHangup(session: RtcWebRtcCallSessionInfo): void {
@@ -471,6 +519,10 @@ export class RtcWebRtcCallController {
       return true
     }
     return !!resolvedSession && resolvedSession.sessionKey !== recent.sessionKey
+  }
+
+  private shouldKeepAliveAfterRemoteHangup(eventName: string, payload?: RtcSignalPayload): boolean {
+    return eventName === 'c__hangup' && payload?.isHangUp === false
   }
 
   private payloadMatchesRecentLocalSingleHangup(
@@ -634,14 +686,59 @@ export class RtcWebRtcCallController {
     return key ? this.sessions.get(key) : undefined
   }
 
-  private findUniqueSessionKeyByTarget(targetNumber: string, incoming: boolean): string {
+  private resolveSessionKeyForUpsert(existingKey: string, sessionId: string): string {
+    if (!existingKey) {
+      return sessionId
+    }
+    if (!sessionId || existingKey === sessionId) {
+      return existingKey
+    }
+    const existing = this.sessions.get(existingKey)
+    if (!existing) {
+      return sessionId
+    }
+    return sessionId
+  }
+
+  private migrateSessionKey(
+    oldKey: string,
+    newKey: string,
+    session: RtcWebRtcCallSessionInfo
+  ): void {
+    if (!oldKey || !newKey || oldKey === newKey) {
+      return
+    }
+    this.sessions.delete(oldKey)
+    session.sessionKey = newKey
+    this.sessions.set(newKey, session)
+    this.sessionIds.forEach((mappedKey: string, sessionId: string) => {
+      if (mappedKey === oldKey) {
+        this.sessionIds.set(sessionId, newKey)
+      }
+    })
+    this.sessionIds.set(oldKey, newKey)
+    this.pendingStartSessionKeys = this.pendingStartSessionKeys.map((item: string) =>
+      item === oldKey ? newKey : item)
+    this.lifecycle.remove(oldKey)
+    this.mediaController.rekeySession(oldKey, newKey)
+  }
+
+  private isLocalCallout(commonRequest: RtcCommonRequest, localNumber: string): boolean {
+    const local = (localNumber || '').trim()
+    if (!local) {
+      return false
+    }
+    return RtcWebRtcCallController.splitNumbers(commonRequest.from || '').indexOf(local) >= 0
+  }
+
+  private findUniqueSessionKeyByTarget(targetNumber: string): string {
     const target = (targetNumber || '').trim()
     if (!target) {
       return ''
     }
     const matches: RtcWebRtcCallSessionInfo[] = []
     this.sessions.forEach((session: RtcWebRtcCallSessionInfo) => {
-      if (session.targetNumber === target && session.incoming === incoming) {
+      if (session.targetNumber === target) {
         matches.push(session)
       }
     })
@@ -663,14 +760,61 @@ export class RtcWebRtcCallController {
   }
 
   private resolvePayloadSession(payload: RtcSignalPayload): RtcWebRtcCallSessionInfo | undefined {
+    const localNumber = this.config?.local.number || this.config?.identity.number || ''
+    const targetNumber = this.resolveRemoteNumber(payload.commonRequest, localNumber)
+    const resolved = this.lifecycle.resolveUidOrUniqueNumber(
+      payload.commonRequest.uuid || '',
+      targetNumber,
+      'resolve signal target',
+      true
+    )
+    const lifecycleSession = resolved.handled ? this.findSession(resolved.uid) : undefined
+    if (lifecycleSession) {
+      return lifecycleSession
+    }
     const session = this.findSession(payload.commonRequest.uuid || '') ||
       this.findSession(payload.rtcUid || '')
     if (session) {
       return session
     }
-    const localNumber = this.config?.local.number || this.config?.identity.number || ''
-    const targetNumber = this.resolveRemoteNumber(payload.commonRequest, localNumber)
     return this.findUniqueSessionByTarget(targetNumber)
+  }
+
+  private upsertLifecycleSession(
+    session: RtcWebRtcCallSessionInfo,
+    commonRequest: RtcCommonRequest,
+    incoming: boolean,
+    scope: RtcWebRtcRtcScope
+  ): void {
+    const uid = session.uid || session.sessionId || session.sessionKey
+    if (!uid) {
+      return
+    }
+    this.lifecycle.upsertCall({
+      uid,
+      number: session.targetNumber,
+      name: session.targetName,
+      direction: incoming ? 'incoming' : 'outgoing',
+      phase: incoming ? 'incoming' : 'outgoing',
+      mode: session.mode,
+      from: commonRequest.from || '',
+      to: commonRequest.to || '',
+      fromName: commonRequest.fromName || '',
+      toName: commonRequest.toName || '',
+      clientType: commonRequest.clientType || '',
+      locId: commonRequest.locId || '',
+      hospitalId: commonRequest.hospitalId || '',
+      isCalling: !incoming
+    })
+    if (scope.rtcUid) {
+      this.lifecycle.upsertPeer(
+        uid,
+        scope.rtcUid,
+        scope.channelType,
+        commonRequest.from || '',
+        commonRequest.to || ''
+      )
+    }
   }
 
   private hasPayloadSessionIdentity(payload: RtcSignalPayload): boolean {
@@ -744,6 +888,10 @@ export class RtcWebRtcCallController {
 
   private normalizeSessionId(value: string): string {
     return (value || '').split(',')[0].trim()
+  }
+
+  private static splitNumbers(value: string): string[] {
+    return (value || '').split(',').map((item: string) => item.trim()).filter((item: string) => item.length > 0)
   }
 
   private copySession(session: RtcWebRtcCallSessionInfo): RtcWebRtcCallSessionInfo {

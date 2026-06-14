@@ -7,7 +7,16 @@ export interface RtcCallSessionStoreUpsertOptions {
   displayName?: string
   from?: string
   to?: string
+  fromName?: string
+  toName?: string
+  clientType?: string
+  locId?: string
+  hospitalId?: string
+  isCallout?: boolean
   status?: string
+  errorMessage?: string
+  offline?: boolean
+  isCalling?: boolean
   isHold?: boolean
   mode?: RtcCallMode
   target?: RtcCallTarget
@@ -19,7 +28,17 @@ export class RtcStoredCallSession {
   displayName: string = ''
   from: string = ''
   to: string = ''
+  fromName: string = ''
+  toName: string = ''
+  clientType: string = ''
+  locId: string = ''
+  hospitalId: string = ''
+  isCallout: boolean = false
   status: string = ''
+  stateTimes: Record<string, number> = {}
+  errorMessage: string = ''
+  offline: boolean = false
+  isCalling: boolean = false
   isHold: boolean = false
   mode: RtcCallMode = RtcCallMode.AUDIO
   updatedAt: number = 0
@@ -52,7 +71,19 @@ export class RtcCallSessionStore {
     session.displayName = options.displayName || options.target?.displayName || session.displayName
     session.from = options.from !== undefined ? options.from : session.from
     session.to = options.to !== undefined ? options.to : session.to
+    session.fromName = options.fromName !== undefined ? options.fromName : session.fromName
+    session.toName = options.toName !== undefined ? options.toName : session.toName
+    session.clientType = options.clientType || options.target?.clientType || session.clientType
+    session.locId = options.locId || options.target?.locId || session.locId
+    session.hospitalId = options.hospitalId || options.target?.hospitalId || session.hospitalId
+    session.isCallout = options.isCallout !== undefined ? options.isCallout === true : session.isCallout
     session.status = options.status !== undefined ? options.status : session.status
+    if (options.status) {
+      session.stateTimes[options.status] = Date.now()
+    }
+    session.errorMessage = options.errorMessage !== undefined ? options.errorMessage : session.errorMessage
+    session.offline = options.offline !== undefined ? options.offline === true : session.offline
+    session.isCalling = options.isCalling !== undefined ? options.isCalling === true : session.isCalling
     session.isHold = options.isHold !== undefined ? options.isHold === true : session.isHold
     session.mode = options.mode || session.mode
     this.version += 1
@@ -182,7 +213,21 @@ export class RtcCallSessionStore {
     copy.displayName = session.displayName
     copy.from = session.from
     copy.to = session.to
+    copy.fromName = session.fromName
+    copy.toName = session.toName
+    copy.clientType = session.clientType
+    copy.locId = session.locId
+    copy.hospitalId = session.hospitalId
+    copy.isCallout = session.isCallout
     copy.status = session.status
+    const stateTimes: Record<string, number> = {}
+    Object.keys(session.stateTimes).forEach((key: string) => {
+      stateTimes[key] = session.stateTimes[key]
+    })
+    copy.stateTimes = stateTimes
+    copy.errorMessage = session.errorMessage
+    copy.offline = session.offline
+    copy.isCalling = session.isCalling
     copy.isHold = session.isHold
     copy.mode = session.mode
     copy.updatedAt = session.updatedAt

@@ -193,6 +193,42 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     }
   }
 
+  rekeySession(oldKey: string, newKey: string): boolean {
+    const previous = (oldKey || '').trim()
+    const next = (newKey || '').trim()
+    if (!previous || !next || previous === next) {
+      return false
+    }
+    const session = this.sessions.get(previous)
+    if (!session || this.sessions.get(next)) {
+      return false
+    }
+    this.sessions.delete(previous)
+    session.sessionKey = next
+    session.uid = next
+    this.sessions.set(next, session)
+    this.sessionIds.forEach((mappedKey: string, sessionId: string) => {
+      if (mappedKey === previous) {
+        this.sessionIds.set(sessionId, next)
+      }
+    })
+    this.sessionIds.set(previous, next)
+    if (this.activeSessionKey === previous) {
+      this.activeSessionKey = next
+    }
+    const held = this.heldSessionKeys.get(previous)
+    if (held !== undefined) {
+      this.heldSessionKeys.delete(previous)
+      this.heldSessionKeys.set(next, held)
+    }
+    const renderer = this.sessionRemoteVideoRenderers.get(previous)
+    if (renderer) {
+      this.sessionRemoteVideoRenderers.delete(previous)
+      this.sessionRemoteVideoRenderers.set(next, renderer)
+    }
+    return true
+  }
+
   selectSession(sessionKey: string): boolean {
     const session = this.findSession(sessionKey)
     if (!session) {
@@ -418,6 +454,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     this.heldSessionKeys.delete(session.sessionKey)
     this.clearSessionRemoteVideoRenderer(session.sessionKey)
     if (isLastSession) {
+      this.resetMediaState(session)
       this.audioController.releaseLocalVideo()
       this.emitMediaState(session)
     }
@@ -437,7 +474,10 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     this.peers.forEach((record: RtcWebRtcPeerRecord) => this.closePeer(record, reason))
     this.peers.clear()
     this.audioController.releaseLocalVideo()
-    this.sessions.forEach((session: RtcWebRtcMediaSession) => this.emitMediaState(session))
+    this.sessions.forEach((session: RtcWebRtcMediaSession) => {
+      this.resetMediaState(session)
+      this.emitMediaState(session)
+    })
     this.sessions.clear()
     this.sessionIds.clear()
     this.heldSessionKeys.clear()
@@ -676,6 +716,14 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
 
   private emitMediaState(session: RtcWebRtcMediaSession): void {
     this.onMediaStateChange?.(this.copyMediaState(session))
+  }
+
+  private resetMediaState(session: RtcWebRtcMediaSession): void {
+    session.hasRemoteAudio = false
+    session.hasRemoteVideo = false
+    session.mediaConnected = false
+    session.remoteAudioTrack = undefined
+    session.remoteVideoTrack = undefined
   }
 
   private log(message: string): void {

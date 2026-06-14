@@ -67,6 +67,7 @@ export interface RtcIncomingCallOptions {
   to?: string
   status?: string
   isHold?: boolean
+  direction?: RtcCallDirection
   target: RtcCallTarget
   mode?: RtcCallMode
   autoAnswer?: boolean
@@ -206,13 +207,16 @@ export class RtcDefaultCallService implements RtcCallService {
     const callId = options.callId || this.idFactory()
     const mode = options.mode || RtcCallMode.AUDIO
     const uid = options.uid || callId
+    const direction = options.direction || RtcCallDirection.INCOMING
+    const phase = direction === RtcCallDirection.OUTGOING ? 'outgoing' : 'incoming'
     const stored = this.sessionStore.upsert({
       uid,
       peerNumber: options.target.number,
       displayName: options.target.displayName,
       from: options.from,
       to: options.to,
-      status: options.status || 'incoming',
+      status: options.status || phase,
+      isCallout: direction === RtcCallDirection.OUTGOING,
       isHold: options.isHold === true,
       mode,
       target: options.target
@@ -226,9 +230,13 @@ export class RtcDefaultCallService implements RtcCallService {
       mode,
       autoAnswer: options.autoAnswer,
       isHold: options.isHold,
-      direction: RtcCallDirection.INCOMING,
-      status: options.status || 'incoming'
+      direction,
+      phase,
+      status: options.status || phase
     })
+    if (this.shouldRebindCurrentSession(incoming, direction)) {
+      this.rebindCurrentSession(incoming)
+    }
     const mediaBusy = this.session.active && this.session.hostPhase === RtcHostPhase.MEDIA_ACTIVE
     const hasActiveVisibleSession = this.session.active && this.session.visible
     if ((mediaBusy || hasActiveVisibleSession) && options.autoAnswer !== true && !this.viewState.autoAnswer) {
@@ -328,6 +336,12 @@ export class RtcDefaultCallService implements RtcCallService {
 
   markConnectedById(callIdOrUid: string): boolean {
     if (this.isCurrentCall(callIdOrUid)) {
+      if (!this.session.active || !this.session.visible || !this.viewState.visible ||
+        this.viewState.phase === RtcCallViewPhase.HIDDEN ||
+        this.viewState.phase === RtcCallViewPhase.ENDED ||
+        this.viewState.phase === RtcCallViewPhase.ERROR) {
+        return false
+      }
       this.markConnected()
       return true
     }
@@ -690,6 +704,48 @@ export class RtcDefaultCallService implements RtcCallService {
       this.session.calleeNumber === key
   }
 
+  private shouldRebindCurrentSession(
+    incoming: RtcIncomingCallRecord,
+    direction: RtcCallDirection
+  ): boolean {
+    if (!this.session.active || !this.session.visible) {
+      return false
+    }
+    if (this.isCurrentCall(incoming.callId) || this.isCurrentCall(incoming.uid)) {
+      return true
+    }
+    if (direction !== RtcCallDirection.OUTGOING) {
+      return false
+    }
+    return !!incoming.peerNumber && incoming.peerNumber === this.session.calleeNumber
+  }
+
+  private rebindCurrentSession(incoming: RtcIncomingCallRecord): void {
+    this.session.requestId = incoming.callId || this.session.requestId
+    this.session.uid = incoming.uid || incoming.callId || this.session.uid
+    this.session.mode = incoming.mode
+    this.session.calleeNumber = incoming.peerNumber || incoming.target.number || this.session.calleeNumber
+    this.session.displayName = incoming.target.displayName || this.session.displayName
+    this.session.clientType = incoming.target.clientType || this.session.clientType
+    this.session.ip = incoming.target.ip || incoming.target.deviceIp || this.session.ip
+    this.session.identity = incoming.target.identity || this.session.identity
+    this.session.locId = incoming.target.locId || this.session.locId
+    this.session.hospitalId = incoming.target.hospitalId || this.session.hospitalId
+    this.viewState.callId = this.session.requestId
+    this.viewState.uid = this.session.uid
+    this.viewState.remote = RtcDefaultCallService.toViewPeerFromTarget({
+      number: this.session.calleeNumber,
+      uid: this.session.uid,
+      displayName: this.session.displayName,
+      clientType: this.session.clientType,
+      identity: this.session.identity,
+      ip: this.session.ip,
+      locId: this.session.locId,
+      hospitalId: this.session.hospitalId,
+      deviceIp: this.session.ip
+    })
+  }
+
   private toCallListItem(record: RtcIncomingCallRecord, snapshot: RtcIncomingCallQueueSnapshot): RtcCallListItem {
     const session = record.uid ? this.sessionStore.findByUid(record.uid) :
       this.sessionStore.findByPeer(record.peerNumber || record.target.number)
@@ -730,6 +786,16 @@ export class RtcDefaultCallService implements RtcCallService {
     } else if (previousSession.calleeNumber) {
       this.sessionStore.removePeer(previousSession.calleeNumber)
     }
+    this.session.state = RtcCallState.ENDED
+    this.session.hostPhase = RtcHostPhase.TEARING_DOWN
+    this.session.active = false
+    this.session.pendingTrigger = false
+    this.session.visible = false
+    this.viewState.visible = false
+    this.viewState.phase = RtcCallViewPhase.ENDED
+    this.viewState.canAccept = false
+    this.viewState.canHangup = false
+    this.emitState()
     await this.handlers?.onTerminateCall?.(previousSession, reason)
     const next = this.findNextVisibleCall(previousSession.requestId)
     if (next) {

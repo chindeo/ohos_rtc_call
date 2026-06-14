@@ -163,8 +163,8 @@ export class RtcHostMultiCallController {
       this.logOperationResolved(resolved)
       return resolved
     }
-    await this.service.terminateCallById(resolved.sessionKey, reason)
     this.clearSessionState(resolved.sessionKey)
+    await this.service.terminateCallById(resolved.sessionKey, reason)
     this.emit()
     this.logOperationResolved(resolved)
     return resolved

@@ -5,6 +5,7 @@ import {
 } from '../audio/RtcCallAudioPolicyController'
 import { RTC_CALL_CONTROL_SOURCE_SCREEN } from './RtcCallControlCommand'
 import { RtcCallMode, RtcCallSession, RtcPeerIdentity } from '../model/RtcCallConfig'
+import { RtcCallDirection } from '../model/RtcCallViewState'
 import { RtcCallDeviceRole } from '../ui/RtcCallUiPresenter'
 import { RtcHostCallUiModel, RtcHostCallUiModelListener } from '../model/RtcHostCallUiModel'
 import { RtcTransportProtocol } from '../model/RtcProtocolConfig'
@@ -327,11 +328,13 @@ export class RtcHostCallController {
   }
 
   private handleIncoming(session: RtcWebRtcCallSessionInfo): void {
+    const direction = session.incoming ? RtcCallDirection.INCOMING : RtcCallDirection.OUTGOING
     const incoming: RtcIncomingCallOptions = {
       callId: session.sessionId,
       uid: session.sessionKey,
       from: session.commonRequest.from,
       to: session.commonRequest.to,
+      direction,
       target: {
         number: session.targetNumber,
         displayName: session.targetName,
@@ -339,7 +342,7 @@ export class RtcHostCallController {
       },
       mode: session.mode,
       autoAnswer: false,
-      status: 'incoming'
+      status: session.incoming ? 'incoming' : 'outgoing'
     }
     this.multiCallController.receiveIncomingCall(incoming).then(() => {
       this.options.onIncoming?.(session)

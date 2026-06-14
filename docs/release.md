@@ -1,5 +1,14 @@
 # ohos-rtc-call Release Notes
 
+## 0.1.4-rc3 时间戳联调包
+
+修复床旁项目单人通话点击挂断后通话已结束但 UI 未关闭的问题，统一 call-gateway WebSocket 通话协议中 `c__hangup.data.isHangUp` 的终态语义：
+
+- `isHangUp === false` 表示当前设备仍有其他通话，保留共享 `publish` 和当前通话页面上下文。
+- `isHangUp === true` 或字段缺失表示没有其它通话，关闭 `publish` 并完全关闭通话界面。
+- 本地挂断回显不再吞掉带终态裁决的 `c__hangup`。
+- 关闭最后一路通话时清空旧的 connected 媒体状态，避免迟到 `mediaConnected=true` 重新拉起已隐藏 UI。
+
 ## 0.1.4-rc3
 
 计划下沉床旁和主机可复用的通话公共逻辑，优先从 WebRTC 信令状态机开始，后续逐步覆盖媒体资源管理、通话会话控制、音频策略、硬件事件适配、启动页管理员入口和运行时配置加载。

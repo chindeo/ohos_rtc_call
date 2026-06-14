@@ -1,9 +1,19 @@
+import {
+  RTC_CALL_LIFECYCLE_CHANNEL_SUBSCRIBE,
+  RtcCallLifecycleChannelType,
+  RtcCallLifecycleDirection,
+  RtcCallLifecyclePeerSession,
+  RtcCallLifecyclePhase,
+  RtcCallLifecycleSession,
+  RtcCallLifecycleStore
+} from '../core/RtcCallLifecycleStore'
 import { RtcCallMode } from '../model/RtcCallConfig'
 import {
   RTC_CALL_GATEWAY_CHANNEL_PUBLISH,
   RTC_CALL_GATEWAY_CHANNEL_SUBSCRIBE,
   RtcCallGatewayCallSession,
   RtcCallGatewayChannelType,
+  RtcCallGatewayDirection,
   RtcCallGatewayOpenActivityOptions,
   RtcCallGatewayOperationResult,
   RtcCallGatewayPeerSession,
@@ -12,36 +22,20 @@ import {
 } from './RtcCallGatewayTypes'
 
 export class RtcCallGatewaySessionStore {
-  private calls: Map<string, RtcCallGatewayCallSession> = new Map()
-  private peers: Map<string, RtcCallGatewayPeerSession> = new Map()
-  private selectedUid: string = ''
+  private lifecycle: RtcCallLifecycleStore = new RtcCallLifecycleStore()
 
   upsertOpenActivity(options: RtcCallGatewayOpenActivityOptions): RtcCallGatewayCallSession | undefined {
-    const uid = this.normalizeUid(options.uid)
-    if (!uid) {
-      return undefined
-    }
-    const now = Date.now()
-    const existing = this.calls.get(uid)
-    const phase: RtcCallGatewayPhase = options.isOut ? 'outgoing' : 'incoming'
-    const session: RtcCallGatewayCallSession = {
-      uid,
-      number: options.num || existing?.number || '',
-      name: options.name || existing?.name || '',
+    const phase: RtcCallLifecyclePhase = options.isOut ? 'outgoing' : 'incoming'
+    const session = this.lifecycle.upsertCall({
+      uid: options.uid,
+      number: options.num,
+      name: options.name,
       direction: options.isOut ? 'outgoing' : 'incoming',
-      phase: existing?.phase === 'answered' ? 'answered' : phase,
-      mode: options.isVideo === true ? RtcCallMode.VIDEO : (existing?.mode || RtcCallMode.AUDIO),
-      isSelected: existing?.isSelected === true,
-      uplinkMuted: existing?.uplinkMuted !== false,
-      lastUpdatedAt: now
-    }
-    this.calls.set(uid, session)
-    if (!this.selectedUid) {
-      this.selectedUid = uid
-      session.isSelected = true
-    }
-    this.syncSelectedFlags()
-    return this.copyCall(session)
+      phase,
+      mode: options.isVideo === true ? RtcCallMode.VIDEO : undefined,
+      uplinkMuted: true
+    })
+    return session ? this.toGatewayCall(session) : undefined
   }
 
   upsertPeer(
@@ -51,120 +45,60 @@ export class RtcCallGatewaySessionStore {
     from: string,
     to: string
   ): RtcCallGatewayPeerSession | undefined {
-    const signalUid = this.normalizeUid(uid)
-    const rtcUid = (rtcUID || '').trim()
-    const channel = RtcCallGatewaySessionStore.normalizeChannelType(channelType)
-    if (!signalUid || !rtcUid) {
-      return undefined
-    }
-    const key = RtcCallGatewaySessionStore.peerKey(signalUid, rtcUid, channel)
-    const peer: RtcCallGatewayPeerSession = {
-      key,
-      uid: signalUid,
-      rtcUID: rtcUid,
-      channelType: channel,
+    const peer = this.lifecycle.upsertPeer(
+      uid,
+      rtcUID,
+      RtcCallGatewaySessionStore.normalizeChannelType(channelType),
       from,
-      to,
-      lastUpdatedAt: Date.now()
-    }
-    this.peers.set(key, peer)
-    return this.copyPeer(peer)
+      to
+    )
+    return peer ? this.toGatewayPeer(peer) : undefined
   }
 
   markPhase(uid: string, phase: RtcCallGatewayPhase, uplinkMuted?: boolean): boolean {
-    const session = this.calls.get(this.normalizeUid(uid))
-    if (!session) {
-      return false
-    }
-    session.phase = phase
-    if (uplinkMuted !== undefined) {
-      session.uplinkMuted = uplinkMuted
-    }
-    session.lastUpdatedAt = Date.now()
-    return true
+    return this.lifecycle.markPhase(uid, phase, uplinkMuted)
   }
 
   select(uid: string): boolean {
-    const id = this.normalizeUid(uid)
-    if (!id || !this.calls.has(id)) {
-      return false
-    }
-    this.selectedUid = id
-    this.syncSelectedFlags()
-    return true
+    return this.lifecycle.select(uid)
   }
 
   remove(uid: string): boolean {
-    const id = this.normalizeUid(uid)
-    if (!id) {
-      return false
-    }
-    const removed = this.calls.delete(id)
-    const peerKeys: string[] = []
-    this.peers.forEach((peer: RtcCallGatewayPeerSession, key: string) => {
-      if (peer.uid === id) {
-        peerKeys.push(key)
-      }
-    })
-    peerKeys.forEach((key: string) => this.peers.delete(key))
-    if (this.selectedUid === id) {
-      const remaining = this.listCalls()
-      this.selectedUid = remaining.length > 0 ? remaining[0].uid : ''
-    }
-    this.syncSelectedFlags()
-    return removed
+    return this.lifecycle.remove(uid)
   }
 
   clear(): void {
-    this.calls.clear()
-    this.peers.clear()
-    this.selectedUid = ''
+    this.lifecycle.clear()
   }
 
   get(uid: string): RtcCallGatewayCallSession | undefined {
-    const session = this.calls.get(this.normalizeUid(uid))
-    return session ? this.copyCall(session) : undefined
+    const session = this.lifecycle.get(uid)
+    return session ? this.toGatewayCall(session) : undefined
   }
 
   resolveUid(uid: string, operation: string, allowSingleCallFallback: boolean = false): RtcCallGatewayOperationResult {
-    const id = this.normalizeUid(uid)
-    if (id && this.calls.has(id)) {
-      return { handled: true, reason: operation, uid: id }
-    }
-    if (id) {
-      return { handled: false, reason: 'unknown uid', uid: id }
-    }
-    const calls = this.listCalls()
-    if (allowSingleCallFallback && calls.length === 1) {
-      return { handled: true, reason: operation + ' by single call fallback', uid: calls[0].uid }
-    }
-    return { handled: false, reason: calls.length > 1 ? 'ambiguous uid' : 'missing uid', uid: '' }
+    return this.lifecycle.resolveUid(uid, operation, allowSingleCallFallback)
   }
 
   snapshot(): RtcCallGatewaySnapshot {
+    const snapshot = this.lifecycle.snapshot()
     return {
-      selectedUid: this.selectedUid,
+      selectedUid: snapshot.selectedUid,
       calls: this.listCalls(),
       peers: this.listPeers()
     }
   }
 
   listCalls(): RtcCallGatewayCallSession[] {
-    const calls: RtcCallGatewayCallSession[] = []
-    this.calls.forEach((session: RtcCallGatewayCallSession) => calls.push(this.copyCall(session)))
-    calls.sort((left: RtcCallGatewayCallSession, right: RtcCallGatewayCallSession) => left.lastUpdatedAt - right.lastUpdatedAt)
-    return calls
+    return this.lifecycle.listCalls().map((session: RtcCallLifecycleSession) => this.toGatewayCall(session))
   }
 
   listPeers(): RtcCallGatewayPeerSession[] {
-    const peers: RtcCallGatewayPeerSession[] = []
-    this.peers.forEach((peer: RtcCallGatewayPeerSession) => peers.push(this.copyPeer(peer)))
-    peers.sort((left: RtcCallGatewayPeerSession, right: RtcCallGatewayPeerSession) => left.lastUpdatedAt - right.lastUpdatedAt)
-    return peers
+    return this.lifecycle.listPeers().map((peer: RtcCallLifecyclePeerSession) => this.toGatewayPeer(peer))
   }
 
   static peerKey(uid: string, rtcUID: string, channelType: RtcCallGatewayChannelType): string {
-    return uid + ':' + channelType + ':' + rtcUID
+    return RtcCallLifecycleStore.peerKey(uid, rtcUID, RtcCallGatewaySessionStore.normalizeChannelType(channelType))
   }
 
   static normalizeChannelType(channelType?: string): RtcCallGatewayChannelType {
@@ -172,23 +106,13 @@ export class RtcCallGatewaySessionStore {
       RTC_CALL_GATEWAY_CHANNEL_SUBSCRIBE : RTC_CALL_GATEWAY_CHANNEL_PUBLISH
   }
 
-  private normalizeUid(uid?: string): string {
-    return (uid || '').trim()
-  }
-
-  private syncSelectedFlags(): void {
-    this.calls.forEach((session: RtcCallGatewayCallSession) => {
-      session.isSelected = !!this.selectedUid && session.uid === this.selectedUid
-    })
-  }
-
-  private copyCall(session: RtcCallGatewayCallSession): RtcCallGatewayCallSession {
+  private toGatewayCall(session: RtcCallLifecycleSession): RtcCallGatewayCallSession {
     return {
       uid: session.uid,
       number: session.number,
       name: session.name,
-      direction: session.direction,
-      phase: session.phase,
+      direction: this.toGatewayDirection(session.direction),
+      phase: this.toGatewayPhase(session.phase),
       mode: session.mode,
       isSelected: session.isSelected,
       uplinkMuted: session.uplinkMuted,
@@ -196,15 +120,34 @@ export class RtcCallGatewaySessionStore {
     }
   }
 
-  private copyPeer(peer: RtcCallGatewayPeerSession): RtcCallGatewayPeerSession {
+  private toGatewayPeer(peer: RtcCallLifecyclePeerSession): RtcCallGatewayPeerSession {
     return {
       key: peer.key,
       uid: peer.uid,
       rtcUID: peer.rtcUID,
-      channelType: peer.channelType,
+      channelType: this.toGatewayChannel(peer.channelType),
       from: peer.from,
       to: peer.to,
       lastUpdatedAt: peer.lastUpdatedAt
     }
+  }
+
+  private toGatewayDirection(direction: RtcCallLifecycleDirection): RtcCallGatewayDirection {
+    return direction === 'outgoing' ? 'outgoing' : 'incoming'
+  }
+
+  private toGatewayPhase(phase: RtcCallLifecyclePhase): RtcCallGatewayPhase {
+    if (phase === 'answering' || phase === 'answered' || phase === 'held' || phase === 'ended') {
+      return phase
+    }
+    if (phase === 'outgoing') {
+      return 'outgoing'
+    }
+    return 'incoming'
+  }
+
+  private toGatewayChannel(channelType: RtcCallLifecycleChannelType): RtcCallGatewayChannelType {
+    return channelType === RTC_CALL_LIFECYCLE_CHANNEL_SUBSCRIBE ?
+      RTC_CALL_GATEWAY_CHANNEL_SUBSCRIBE : RTC_CALL_GATEWAY_CHANNEL_PUBLISH
   }
 }

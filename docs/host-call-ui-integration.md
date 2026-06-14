@@ -15,10 +15,12 @@
 
 ## 2. 依赖和导出
 
-宿主安装：
+宿主工程通过本地 `libs` HAR 引用公共包，包内名称仍为 `@chindeo/ohos-rtc-call`，业务 import 不需要改变：
 
-```shell
-ohpm install @chindeo/ohos-rtc-call
+```json5
+"dependencies": {
+  "@chindeo/ohos-rtc-call": 'file:./libs/ohos-rtc-call-0.1.4-rc3-<timestamp>.har'
+}
 ```
 
 宿主还需提供兼容的 `@ohos/webrtc`，并配置相机、麦克风和网络权限。
@@ -115,6 +117,7 @@ aboutToDisappear(): void {
 - `dispose()` 会释放监听、WebRTC 会话和按会话视频 Surface。
 - 多路通话中单个目标挂断时 `model.visible` 仍为 `true`，宿主不能直接关闭页面。
 - 仅当没有剩余通话，或明确执行挂断全部后，才关闭通话页面。
+- call-gateway WebSocket 通话协议中 `c__hangup.data.isHangUp === false` 表示后台确认当前设备仍有其他通话，应保留共享 `publish` 和通话页面；`true` 或缺失表示没有该保留语义，应关闭 `publish` 并在最后一路结束后关闭页面。
 
 ## 5. 视频画面
 

@@ -73,6 +73,15 @@ export class RtcIncomingCallQueue {
     const now = options.receivedAt || Date.now()
     const key = RtcIncomingCallQueue.resolveKey(options)
     let record = this.calls.find((item: RtcIncomingCallRecord) => item.key === key)
+    let previousCallId = ''
+    if (!record) {
+      record = this.findMergeCandidate(options)
+      if (record) {
+        previousCallId = record.callId
+        record.key = key
+        record.callId = options.callId || key
+      }
+    }
     const isNewRecord = !record
     if (!record) {
       record = new RtcIncomingCallRecord()
@@ -101,6 +110,14 @@ export class RtcIncomingCallQueue {
     record.updatedAt = now
     if (!this.selectedCallId) {
       this.selectedCallId = record.callId
+    }
+    if (previousCallId) {
+      if (this.activeCallId === previousCallId) {
+        this.activeCallId = record.callId
+      }
+      if (this.selectedCallId === previousCallId) {
+        this.selectedCallId = record.callId
+      }
     }
 
     this.trim()
@@ -268,6 +285,16 @@ export class RtcIncomingCallQueue {
     }
     const peerMatches = this.calls.filter((item: RtcIncomingCallRecord) => item.peerNumber === key)
     return peerMatches.length === 1 ? peerMatches[0] : undefined
+  }
+
+  private findMergeCandidate(options: RtcIncomingCallQueueItemOptions): RtcIncomingCallRecord | undefined {
+    const peer = (options.peerNumber || options.target.number || '').trim()
+    if (!peer) {
+      return undefined
+    }
+    const matches = this.calls.filter((item: RtcIncomingCallRecord) =>
+      item.phase !== 'ended' && item.peerNumber === peer)
+    return matches.length === 1 ? matches[0] : undefined
   }
 
   private trim(): void {

@@ -102,11 +102,12 @@ export class RtcWebRtcSignalSession {
     })
     this.socket.connect(url, (error, success) => {
       if (error) {
+        const errorMessage = this.formatError(error)
         this.updateState({
           connecting: false,
           connected: false,
           registered: false,
-          lastError: JSON.stringify(error)
+          lastError: errorMessage
         })
         this.listener.onError?.(this.state.lastError, this.copyState())
         return
@@ -147,7 +148,7 @@ export class RtcWebRtcSignalSession {
   sendRaw(message: string): void {
     this.socket.send(message, (error, success) => {
       if (!success) {
-        const errorMessage = JSON.stringify(error)
+        const errorMessage = this.formatError(error)
         this.updateState({ lastError: errorMessage })
         this.listener.onError?.(errorMessage, this.copyState())
       }
@@ -196,7 +197,7 @@ export class RtcWebRtcSignalSession {
       this.listener.onClose?.(this.copyState())
     })
     this.socket.on('error', (error) => {
-      const errorMessage = JSON.stringify(error)
+      const errorMessage = this.formatError(error)
       this.updateState({
         connecting: false,
         connected: false,
@@ -207,7 +208,7 @@ export class RtcWebRtcSignalSession {
     })
     this.socket.on('message', (error, data: string | ArrayBuffer) => {
       if (error) {
-        const errorMessage = JSON.stringify(error)
+        const errorMessage = this.formatError(error)
         this.updateState({ lastError: errorMessage })
         this.listener.onError?.(errorMessage, this.copyState())
         return
@@ -228,7 +229,7 @@ export class RtcWebRtcSignalSession {
         }
         this.listener.onMessage?.(message)
       } catch (error) {
-        const errorMessage = JSON.stringify(error)
+        const errorMessage = this.formatError(error)
         this.updateState({ lastError: errorMessage })
         this.listener.onError?.(errorMessage, this.copyState())
       }
@@ -249,7 +250,7 @@ export class RtcWebRtcSignalSession {
       try {
         server = JSON.parse(message.data) as RtcServerInfo
       } catch (error) {
-        this.updateState({ lastError: JSON.stringify(error) })
+        this.updateState({ lastError: this.formatError(error) })
       }
     }
     this.listener.onRegister?.(message, server)
@@ -274,5 +275,27 @@ export class RtcWebRtcSignalSession {
       registered: this.state.registered,
       lastError: this.state.lastError
     }
+  }
+
+  private formatError(error: Error | string | Object | undefined): string {
+    if (!error) {
+      return 'signal error'
+    }
+    if (typeof error === 'string') {
+      return error || 'signal error'
+    }
+    const maybeError = error as Error
+    if (maybeError.message) {
+      return maybeError.message
+    }
+    const json = JSON.stringify(error)
+    if (json && json !== '{}') {
+      return json
+    }
+    const text = `${error}`
+    if (text && text !== '[object Object]') {
+      return text
+    }
+    return 'signal error'
   }
 }

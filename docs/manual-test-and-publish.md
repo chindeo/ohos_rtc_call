@@ -1,4 +1,4 @@
-# 手工安装测试和线上发布清单
+# 手工安装测试和本地 HAR 分发清单
 
 ## 目标版本
 
@@ -18,29 +18,32 @@
 
 ## 本地开发联调 HAR
 
-个人本地开发联调时，使用带时间戳的 HAR 文件名，避免 OHPM 因相同路径和相同版本复用旧缓存：
+个人本地开发联调时，使用带时间戳的 HAR 文件名，并复制到业务工程 `libs/` 目录，避免 OHPM 因相同路径和相同版本复用旧缓存：
 
 ```powershell
-.\tools\publish-ohos-rtc-call.ps1 -DevTimestampName -SkipPrepublish
+.\tools\publish-ohos-rtc-call.ps1 -DevTimestampName -SkipPrepublish -CopyToLibsDir `
+  ..\5.0.1-SHIMeta\libs,..\v1.0_nurse_SHIMeta\libs
 ```
 
 生成文件示例：
 
 ```text
 dist\ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har
+..\5.0.1-SHIMeta\libs\ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har
+..\v1.0_nurse_SHIMeta\libs\ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har
 ```
 
 包内 `oh-package.json5` 的 `name` 和 `version` 不变，只有本地 HAR 文件名变化。业务工程验证时将
-`@chindeo/ohos-rtc-call` 依赖临时指向本次生成的时间戳 HAR：
+`@chindeo/ohos-rtc-call` 依赖指向本工程 `libs/` 下的时间戳 HAR：
 
 ```json5
-"@chindeo/ohos-rtc-call": "file:<本机 harmony 工作目录>/ohos_rtc_call/dist/ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har"
+"@chindeo/ohos-rtc-call": 'file:./libs/ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har'
 ```
 
-每次生成新的开发 HAR 后，同步更新业务工程依赖路径并执行 `ohpm install`。如果目标工程仍复用旧产物，再按现有方式定向删除
+每次生成新的开发 HAR 后，同步更新业务工程依赖路径并执行 `ohpm install`。公共包后续不使用线上 OHPM 包，也不依赖 `ohos_rtc_call/dist` 的本机绝对路径。如果目标工程仍复用旧产物，再按现有方式定向删除
 RTC junction 和单个 `.ohpm` 缓存目录。
 
-## 正式发布包预检
+## HAR 预检
 
 在 `ohos_rtc_call` 项目根目录执行：
 
@@ -48,8 +51,7 @@ RTC junction 和单个 `.ohpm` 缓存目录。
 .\tools\publish-ohos-rtc-call.ps1
 ```
 
-正式发布和团队共享联调包禁止覆盖相同版本，且不能使用 `-DevTimestampName`。源码变化后应先提升 `oh-package.json5` 版本号，
-再生成和发布标准文件名 HAR。
+团队共享联调包使用版本号加时间戳文件名，不发布到 OHPM。源码变化后应生成新的时间戳 HAR，并复制到床旁和主机工程 `libs/`。
 
 同一版本只允许个人本地临时覆盖标准文件名 HAR，并且必须显式执行：
 
@@ -67,11 +69,10 @@ dist\ohos-rtc-call-0.1.4-rc3.har
 
 以下命令仅作为人工集成验收参考；公共包修复流程不自动执行业务工程构建、编译或安装。
 
-如果验证的是尚未线上发布的公共包改动，先将业务工程中所有 `@chindeo/ohos-rtc-call` 依赖临时替换为本次生成的
-时间戳 HAR 或本地源码路径，例如：
+如果验证的是公共包改动，先将业务工程中唯一的 `@chindeo/ohos-rtc-call` 依赖替换为本工程 `libs/` 下的时间戳 HAR，例如：
 
 ```json5
-"@chindeo/ohos-rtc-call": "file:<本机 harmony 工作目录>/ohos_rtc_call/dist/ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har"
+"@chindeo/ohos-rtc-call": 'file:./libs/ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har'
 ```
 
 宿主工程仍需提供兼容的 `@ohos/webrtc` 依赖，因为公共包在 `oh-package.json5` 中将其声明为动态依赖。
@@ -122,12 +123,12 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 
 ### call-gateway SDK 验收基准
 
-- 新 SDK 对接以 `call-gateway/docs/integration/client_av_integration.md` 为基准；`docs/gateway/interface.md` 和 `docs/gateway/ctl.md` 是回调与操作字段来源。
-- 所有通话 UI、操作、日志、SDP 和 ICE 绑定都必须使用 `uid` / `signalUID`，号码只作为显示、联系人索引和旧单通话兼容兜底。
+- SDK 对接以 `call-gateway/docs/integration/client_av_integration.md` 为基准；`docs/gateway/interface.md` 和 `docs/gateway/ctl.md` 是回调与操作字段来源。
+- 所有通话 UI、操作、日志、SDP 和 ICE 绑定都必须使用 `uid` / `signalUID`，号码只作为显示、联系人索引和单通话唯一候选兜底。
 - SDP / ICE 必须原样透传并绑定 `signalUID`、`rtcUID`、`channelType`；`channelType` 只允许 `publish` 或 `subscribe`。
 - 本地生成 answer 或 candidate 后，必须通过 `SendSdp(signalUID, rtcUID, channelType, ...)` 或 `SendCandidate(signalUID, rtcUID, channelType, ...)` 带回同一组字段。
-- 接听、保持 / 恢复、普通挂断必须按目标 `uid` 调用 `CallAnswer(uid)`、`CallSwitch(uid)`、`CallHangUp(uid, d)`；缺少 `uid` 时只能走明确的旧单通话兼容路径，多通话或 `subscribe` 信令必须阻断。
-- 旧 WebSocket / `s__apply` 路径中的 `applyType`、`isAll`、`c__sdp`、`c__candidate`、`c__answer` 只作为兼容验证项，不作为新 call-gateway SDK 主验收口径。
+- 接听、保持 / 恢复、普通挂断必须按目标 `uid` 调用 `CallAnswer(uid)`、`CallSwitch(uid)`、`CallHangUp(uid, d)`；缺少 `uid` 时只能走明确的单通话唯一候选兜底，多通话或 `subscribe` 信令必须阻断。
+- WebSocket 信令路径中的 `s__apply`、`applyType`、`isAll`、`c__sdp`、`c__candidate`、`c__answer` 与 SDK 接入同属 call-gateway 通话协议，验收时必须共享同一套 uid / peer 归属规则。
 - 客户端日志至少能定位 `signal_uid`、`rtc_uid`、`channel_type`、peer、target、action、state 和 reason；多通话下不得出现用最新 `uid` 覆盖旧通话 SDP / ICE 的情况。
 - 来电预接听阶段停留 5-10 秒不接听时，主叫端不应听到被叫真实麦克风环境声；接听成功且音频路由稳定后，真实上行音频应恢复。
 
@@ -158,8 +159,8 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 
 ### 主机多床旁来电
 
-- 公共模块构建产物版本保持 `0.1.4-rc3`；Example 最小编译验证和后续真机业务验证前必须确认使用的是本次新构建的 rc3 HAR，不能混入旧 rc2 或旧 rc3 缓存。
-- 单路来电必须沿用改造前已经验证的单人流程和界面风格：publish offer 完成且本地 answer SDP 已发送后接听按钮可点击；新 call-gateway SDK 接听 / 挂断按当前会话 `uid` 调用，旧 WebSocket 兼容路径才继续验证 `applyType=2/3`。
+- 公共模块构建产物版本保持 `0.1.4-rc3`；Example 最小编译验证和后续真机业务验证前必须确认使用的是本次新构建的 rc3 时间戳 HAR，不能混入旧 rc2 或旧 rc3 缓存。
+- 单路来电必须沿用改造前已经验证的单人流程和界面风格：publish offer 完成且本地 answer SDP 已发送后接听按钮可点击；call-gateway SDK 接听 / 挂断按当前会话 `uid` 调用，WebSocket 信令路径继续验证 `applyType=2/3`。
 - 单路场景不得因多人会话 uid 门控导致接听或挂断不可点击；只有第二路可见会话加入后才启用多人调度和 uid 歧义保护。
 - 单路接听、挂断按钮沿用原单人界面的尺寸、间距、配色和交互反馈，图标使用安卓 `call-lib` 对应原始资源。
 - 两个床旁同时拨打主机时，主机列表显示两个独立条目，第二路保持待接听状态，不继承第一路接听状态。
@@ -168,7 +169,7 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 - 点击主机列表中的床旁条目时，选中样式立即切换；仅选择条目不应把待接听来电改成已接听。
 - 主机来电默认保持手动接听；即使配置中带自动接听标记，床旁拨入后也应先停留在待接听页面。
 - 主机通话 UI 可通过临时版本标记和日志确认实际进入的是 WebRTC 主机组件，而不是 SIP 组件或旧页面。
-- 主机收到旧 WebSocket `c__answer`、call-gateway answer 通知或 `publish connected` 后不能直接进入通话中；业务接听以 gateway 接听接口成功为准，媒体接通以目标 `subscribe` track 匹配为准。
+- 主机收到 WebSocket `c__answer`、call-gateway answer 通知或 `publish connected` 后不能直接进入通话中；业务接听以 gateway 接听接口成功为准，媒体接通以目标 `subscribe` track 匹配为准。
 - 主机只有在对应 `uid + rtcUID + subscribe` 路收到对端音 / 视频 track，且从 `track.id` / `stream.id` 解析出的号码匹配当前床旁后，才显示通话中和保持按钮。
 - 点击接听后应先进入接听中 / 等待媒体状态，不能直接标记为通话中。
 - 音频通话接听后，匹配到对应 `subscribe` 音频 track 即可进入通话中。
@@ -176,9 +177,9 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 - 手表等仅音频设备的视频通话接听后，匹配到对应 `subscribe` 音频 track 即可进入通话中，不等待视频 track。
 - 多床旁通话时，每接听一路床旁只建立并绑定该床旁的一路独立 `subscribe`，不能把其它床旁来电串成已接听状态。
 - 多床旁通话时，左侧主界面、右侧远端卡片、`SessionPeer`、`SessionState`、`subscribe` 通道和普通挂断都必须绑定同一个业务 `uid/sessionId`。
-- 收到 call-gateway SDP / ICE / answer / hangup 回调或旧 WebSocket `c__*` 信令时，不能因为缺少 `uid` 就随意绑定到当前 active；新 SDK 多通话和 `subscribe` 信令缺少 `uid` 必须阻断，旧单通话兼容路径才允许按唯一号码映射兜底。
+- 收到 call-gateway SDP / ICE / answer / hangup 回调或 WebSocket `c__*` 信令时，不能因为缺少 `uid` 就随意绑定到当前 active；多通话和 `subscribe` 信令缺少 `uid` 必须阻断，单通话兼容路径只允许按唯一号码映射兜底。
 - 多人通话模式下，接听、保持 / 恢复、普通挂断必须携带业务 `uid/sessionKey`；缺少 `uid` 且无法确认单通话兼容路径时，应阻断该操作并记录日志，不能降级成挂断全部或操作当前 active。
-- `subscribe` peer 隔离规则对齐 call-gateway：不同 `uid` 的床旁必须独立；同 `uid` 下不同 `rtcUID` / `channelType` 必须独立；号码兜底只能用于旧单通话兼容路径。
+- `subscribe` peer 隔离规则对齐 call-gateway：不同 `uid` 的床旁必须独立；同 `uid` 下不同 `rtcUID` / `channelType` 必须独立；号码兜底只能用于单通话唯一候选场景。
 - 从双路挂断为单路后，剩余会话恢复单路布局和操作方式，但来电、接听、通话、保持及媒体状态不得被重置。
 - 主机左侧当前床旁详情按状态显示操作按钮：待接听显示接听，通话中显示保持，保持中显示恢复，并始终保留当前通话挂断。
 - 主机单路来电时，左侧主操作区必须显示接听按钮；本地 `publish` 应答未完成时接听按钮可置灰，`localAnswerReady` 后必须可点击。
@@ -199,16 +200,16 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 - 待接听来电条目显示来电 / 待接听状态和接听按钮，不显示保持按钮。
 - 按顺序执行“床旁 1 拨打 -> 主机接听 -> 床旁 2 拨打”时，床旁 1 保持已接听状态，床旁 2 保持待接听状态。
 - 继续执行“主机接听床旁 2”后，两个通话条目的接听 / 保持 / 挂断按钮状态分别符合当前通话状态。
-- 左侧主操作区普通“挂断”只结束当前活动床旁，右侧列表普通“挂断”只结束该条目对应床旁；新 call-gateway SDK 必须按目标 `uid` 挂断，旧 WebSocket 兼容路径才验证普通挂断 `isAll=false`。
+- 左侧主操作区普通“挂断”只结束当前活动床旁，右侧列表普通“挂断”只结束该条目对应床旁；call-gateway SDK 必须按目标 `uid` 挂断，WebSocket 信令路径继续验证普通挂断 `isAll=false`。
 - 点击右侧床旁 2 的接听按钮后，床旁 2 应留在右侧小框并切换为接听中 / 通话中状态，右侧只显示保持 / 恢复和挂断，不显示挂断全部、静音 / 禁音、免提 / 切麦。
-- 旧 WebSocket 兼容路径的普通挂断信令必须为 `isAll=false`。
+- WebSocket 信令路径的普通挂断信令必须为 `isAll=false`。
 - 点击右侧条目的挂断图标时只能触发该路挂断，不能同时触发条目选择，也不能关闭其它路 subscribe peer。
 - 点击右侧条目的接听图标时只能触发该条目接听，不能只切换选中项；日志应出现对应条目的低敏 `side_action action=accept`。
 - 点击右侧条目的挂断图标时只能触发该条目挂断，不能只切换选中项；日志应出现对应条目的低敏 `side_action action=hangup`。
 - 点击右侧小框预览区域不应切换展示焦点；只有右上角切换按钮会切换，日志应出现对应条目的低敏 `side_switch`。
 - 右侧按钮日志、控制器操作日志和 UI 模型日志应使用同一个低敏 `sidHash` 串联目标会话，不能输出完整 `sessionKey` / `uid` / `rtcUid`。
 - 本地单挂后如果服务端回推无目标身份或误带 `isAll=true` 的终端通知，剩余多路通话不得被清空。
-- `publish` 是页面级共享上行通道；普通单挂或远端单路终端通知不得关闭 `publish`，只有明确 `isAll=true`、用户点击挂断全部、页面 stop / dispose 才能关闭。
+- `publish` 是页面级共享上行通道；call-gateway WebSocket 通话协议中 `c__hangup.data.isHangUp === false` 表示后台确认仍有其他通话，普通单挂或远端单路终端通知应保留 `publish` 和页面；`true` 或缺失表示没有保留语义，最后一路结束时必须关闭 `publish` 和通话页面。
 - 挂断第二路时只结束第二路，第一路仍保持原通话状态。
 - 挂断第一路时只结束第一路，第二路仍保留并维持原来电或通话状态。
 - 两路均已接听时，无论哪一路当前显示在左侧，普通挂断都只能结束当前目标；如果被挂断的是最早建立 publish 的会话，剩余通话仍应自动切到左侧，页面不能关闭。
@@ -236,15 +237,20 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 - 横屏和竖屏分别检查呼入、呼出、音频通话、视频通话、多路呼入和多路通话，无拉伸、遮挡或控制区越界。
 - 对照 `docs/call-ui-reference.md` 检查字号、颜色、圆角、按钮尺寸、边距、用户名半透明背景和媒体裁剪方式。
 
-## 线上发布
+## 本地 HAR 分发
 
-设备验收通过后，在 `ohos_rtc_call` 项目根目录执行：
+设备验收通过后，将已验证的时间戳 HAR 固定在业务工程 `libs/`，并提交对应业务工程依赖路径：
 
 ```powershell
-.\tools\publish-ohos-rtc-call.ps1 -Publish
+.\tools\publish-ohos-rtc-call.ps1 -DevTimestampName -SkipPrepublish -CopyToLibsDir `
+  ..\5.0.1-SHIMeta\libs,..\v1.0_nurse_SHIMeta\libs
 ```
 
-如果同版本 HAR 已存在，发布脚本会直接拒绝覆盖；此时必须提升版本号，不得使用
-`-AllowLocalOverwrite` 绕过正式发布约束。
+如果 HAR 已经生成，并确认要同步到业务工程 `libs/`，可直接复制已有 HAR：
 
-发布后再更新床旁和主机业务工程依赖版本到 `0.1.4-rc3`，分别重新构建和安装验证。
+```powershell
+.\tools\publish-ohos-rtc-call.ps1 -HarPath .\dist\ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har -SkipPrepublish -CopyToLibsDir `
+  ..\5.0.1-SHIMeta\libs,..\v1.0_nurse_SHIMeta\libs
+```
+
+后续不通过 `-Publish` 发布到 OHPM。同步 HAR 后再更新床旁和主机业务工程依赖到对应 `libs` 文件名，分别重新构建和安装验证。

@@ -1,11 +1,13 @@
 param(
   [string]$DistDir = "dist",
   [string]$Version = "",
+  [string]$HarPath = "",
   [string]$Ohpm = "ohpm",
   [switch]$SkipPrepublish,
   [switch]$Publish,
   [switch]$AllowLocalOverwrite,
   [switch]$DevTimestampName,
+  [string[]]$CopyToLibsDir = @(),
   [switch]$KeepStaging
 )
 
@@ -42,6 +44,61 @@ function Get-PackageSourceHash {
   }
 }
 
+function Resolve-OhpmCommand {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Command
+  )
+
+  if ([System.IO.Path]::IsPathRooted($Command) -or $Command.Contains("\") -or $Command.Contains("/")) {
+    $ResolvedCommand = Resolve-Path -LiteralPath $Command -ErrorAction SilentlyContinue
+    if ($ResolvedCommand) {
+      return $ResolvedCommand.Path
+    }
+    throw "OHPM command not found: $Command"
+  }
+
+  $PathCommand = Get-Command $Command -ErrorAction SilentlyContinue
+  if ($PathCommand) {
+    return $PathCommand.Source
+  }
+
+  $KnownOhpmCommands = @(
+    "F:\Program Files\Huawei\DevEco Studio\tools\ohpm\bin\ohpm.bat",
+    "C:\Program Files\Huawei\DevEco Studio\tools\ohpm\bin\ohpm.bat"
+  )
+  foreach ($KnownCommand in $KnownOhpmCommands) {
+    if (Test-Path -LiteralPath $KnownCommand) {
+      return $KnownCommand
+    }
+  }
+
+  throw "OHPM command not found: $Command. Pass -Ohpm with the full path to ohpm.bat."
+}
+
+function Copy-HarToLibsDirs {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$SourceHarPath,
+    [string[]]$LibDirs = @()
+  )
+
+  if (-not $LibDirs -or $LibDirs.Length -eq 0) {
+    return
+  }
+
+  foreach ($LibDir in $LibDirs) {
+    if (-not $LibDir) {
+      continue
+    }
+    New-Item -ItemType Directory -Force -Path $LibDir | Out-Null
+    $ResolvedLibDir = Resolve-Path -LiteralPath $LibDir
+    $TargetHarPath = Join-Path $ResolvedLibDir.Path ([System.IO.Path]::GetFileName($SourceHarPath))
+    Copy-Item -LiteralPath $SourceHarPath -Destination $TargetHarPath -Force
+    Write-Host "Copied HAR to libs: $TargetHarPath"
+  }
+}
+
 if (-not (Test-Path $PackageJsonPath)) {
   throw "Package config not found: $PackageJsonPath"
 }
@@ -56,14 +113,50 @@ if (-not $Version) {
 if ($Publish -and $DevTimestampName) {
   throw "-DevTimestampName is only for local development artifacts and cannot be used with -Publish."
 }
+if ($HarPath -and ($AllowLocalOverwrite -or $DevTimestampName -or $KeepStaging)) {
+  throw "-HarPath publishes or validates an existing HAR and cannot be combined with -AllowLocalOverwrite, -DevTimestampName, or -KeepStaging."
+}
+$OhpmCommand = Resolve-OhpmCommand -Command $Ohpm
+if ($HarPath) {
+  $ResolvedHarPath = Resolve-Path -LiteralPath $HarPath -ErrorAction SilentlyContinue
+  if (-not $ResolvedHarPath) {
+    throw "HAR not found: $HarPath"
+  }
+  $HarPath = $ResolvedHarPath.Path
+  if ([System.IO.Path]::GetExtension($HarPath).ToLowerInvariant() -ne ".har") {
+    throw "Expected a .har package: $HarPath"
+  }
+
+  Write-Host "Using existing HAR: $HarPath"
+
+  if (-not $SkipPrepublish) {
+    Write-Host "Running OHPM prepublish..."
+    & $OhpmCommand prepublish $HarPath
+    if ($LASTEXITCODE -ne 0) {
+      exit $LASTEXITCODE
+    }
+  }
+
+  if ($Publish) {
+    Write-Host "Publishing to OHPM..."
+    & $OhpmCommand publish $HarPath
+    if ($LASTEXITCODE -ne 0) {
+      exit $LASTEXITCODE
+    }
+  }
+
+  Copy-HarToLibsDirs -SourceHarPath $HarPath -LibDirs $CopyToLibsDir
+
+  exit 0
+}
 
 $DistRoot = Join-Path $Root $DistDir
 $StageRoot = Join-Path $DistRoot "ohos-rtc-call-package"
 $PackageRoot = Join-Path $StageRoot "package"
 $HarName = "ohos-rtc-call-$Version.har"
 if ($DevTimestampName) {
-  $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
-  $HarName = "ohos-rtc-call-$Version-$Timestamp.har"
+  $Timestamp = Get-Date -Format "MMdd-HHmmss"
+  $HarName = "ohos-rtc-call-$Timestamp.har"
 }
 $HarPath = Join-Path $DistRoot $HarName
 
@@ -166,7 +259,7 @@ Write-Host "Created HAR: $HarPath"
 
 if (-not $SkipPrepublish) {
   Write-Host "Running OHPM prepublish..."
-  & $Ohpm prepublish $HarPath
+  & $OhpmCommand prepublish $HarPath
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }
@@ -174,11 +267,13 @@ if (-not $SkipPrepublish) {
 
 if ($Publish) {
   Write-Host "Publishing to OHPM..."
-  & $Ohpm publish $HarPath
+  & $OhpmCommand publish $HarPath
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }
 }
+
+Copy-HarToLibsDirs -SourceHarPath $HarPath -LibDirs $CopyToLibsDir
 
 if (-not $KeepStaging -and (Test-Path $StageRoot)) {
   Remove-Item -LiteralPath $StageRoot -Recurse -Force
