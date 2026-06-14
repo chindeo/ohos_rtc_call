@@ -426,8 +426,8 @@ export class RtcHostMultiCallController {
     mapped.isHold = item.isHold
     mapped.mediaConnected = item.phase === RtcCallViewPhase.CONNECTED
     mapped.canAccept = item.canAccept
-    mapped.canHold = item.canHold
-    mapped.canResume = item.canResume
+    mapped.canHold = this.canUseHoldControls() && item.canHold
+    mapped.canResume = this.canUseHoldControls() && item.canResume
     mapped.canHangup = item.canHangup
     mapped.receivedAt = item.receivedAt
     mapped.connectedAt = item.connectedAt
@@ -483,6 +483,10 @@ export class RtcHostMultiCallController {
     copy.hasVideo = this.localCard.hasVideo
     copy.videoReady = this.localCard.videoReady
     return copy
+  }
+
+  private canUseHoldControls(): boolean {
+    return this.deviceRole === RtcCallDeviceRole.HOST
   }
 
   private getSessionHash(sessionKey: string): string {

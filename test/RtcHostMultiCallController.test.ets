@@ -5,6 +5,7 @@ import { RtcDefaultCallService } from '../src/main/ets/core/RtcDefaultCallServic
 import {
   RtcHostMultiCallController
 } from '../src/main/ets/core/RtcHostMultiCallController'
+import { RtcCallDeviceRole } from '../src/main/ets/ui/RtcCallUiPresenter'
 
 export default function rtcHostMultiCallControllerTest() {
   describe('RtcHostMultiCallController', () => {
@@ -525,6 +526,30 @@ export default function rtcHostMultiCallControllerTest() {
       expect(result.handled).assertEqual(true)
       expect(model.activeCall?.isHold).assertEqual(false)
       expect(model.sideCalls[0].isHold).assertEqual(true)
+      controller.dispose()
+    })
+
+    it('hides hold controls for bed role while preserving remote hold state', 0, async () => {
+      const service = new RtcDefaultCallService()
+      const controller = new RtcHostMultiCallController({
+        service,
+        deviceRole: RtcCallDeviceRole.BED
+      })
+      await controller.receiveIncomingCall({
+        callId: 'call-a',
+        uid: 'uid-a',
+        target: { number: '1101' }
+      })
+      await controller.accept('uid-a')
+      controller.markConnected('uid-a')
+
+      expect(controller.getUiModel().activeCall?.canHold).assertEqual(false)
+      expect(controller.applyRemoteHold('uid-a', true).handled).assertEqual(true)
+
+      const model = controller.getUiModel()
+      expect(model.activeCall?.isHold).assertEqual(true)
+      expect(model.activeCall?.phase).assertEqual('held')
+      expect(model.activeCall?.canResume).assertEqual(false)
       controller.dispose()
     })
 

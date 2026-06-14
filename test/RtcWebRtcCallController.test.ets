@@ -335,6 +335,77 @@ export default function rtcWebRtcCallControllerTest() {
       controller.dispose()
     })
 
+    it('applies switch notice map by target number', 0, () => {
+      let holdKey = ''
+      let holdState = false
+      const signalSession = new TestSignalSession()
+      const controller = new RtcWebRtcCallController(createMediaController(), {
+        onHoldChange: (sessionKey: string, isHold: boolean) => {
+          holdKey = sessionKey
+          holdState = isHold
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+      controller.registerOutgoingSession('call-b', { number: '1111' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__broadcast',
+        data: JSON.stringify({
+          data: JSON.stringify({
+            type: 'hold',
+            info: {
+              '1101': true
+            }
+          })
+        })
+      })
+
+      expect(holdKey).assertEqual('call-a')
+      expect(holdState).assertEqual(true)
+      controller.dispose()
+    })
+
+    it('applies camel case resume notice by uid', 0, () => {
+      let holdKey = ''
+      let holdState = true
+      const signalSession = new TestSignalSession()
+      const controller = new RtcWebRtcCallController(createMediaController(), {
+        onHoldChange: (sessionKey: string, isHold: boolean) => {
+          holdKey = sessionKey
+          holdState = isHold
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__broadcast',
+        data: JSON.stringify({
+          data: JSON.stringify({
+            uid: 'call-a',
+            isHold: false
+          })
+        })
+      })
+
+      expect(holdKey).assertEqual('call-a')
+      expect(holdState).assertEqual(false)
+      controller.dispose()
+    })
+
     it('keeps legacy hold broadcast compatibility', 0, () => {
       let holdKey = ''
       let holdState = false

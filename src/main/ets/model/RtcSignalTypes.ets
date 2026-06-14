@@ -61,6 +61,7 @@ export interface RtcHoldSwitchNotice {
   uid?: string
   status?: string
   is_hold?: boolean
+  isHold?: boolean
 }
 
 export interface RtcSdpSignalData {

@@ -369,7 +369,7 @@ export class RtcWebRtcCallController {
       if (holdChanges.length > 0) {
         let handled = false
         holdChanges.forEach((holdChange: RtcParsedHoldChange) => {
-          const session = this.findSession(holdChange.sessionId)
+          const session = this.resolveHoldChangeSession(holdChange.sessionId)
           if (session) {
             handled = true
             this.listener.onHoldChange?.(session.sessionKey, holdChange.isHold)
@@ -769,6 +769,14 @@ export class RtcWebRtcCallController {
     return matches.length === 1 ? matches[0] : undefined
   }
 
+  private resolveHoldChangeSession(sessionIdOrNumber: string): RtcWebRtcCallSessionInfo | undefined {
+    const session = this.findSession(sessionIdOrNumber)
+    if (session) {
+      return session
+    }
+    return this.findUniqueSessionByTarget(sessionIdOrNumber)
+  }
+
   private resolvePayloadSession(payload: RtcSignalPayload): RtcWebRtcCallSessionInfo | undefined {
     const localNumber = this.config?.local.number || this.config?.identity.number || ''
     const targetNumber = this.resolveRemoteNumber(payload.commonRequest, localNumber)
@@ -905,6 +913,15 @@ export class RtcWebRtcCallController {
   private resolveHoldState(notice: RtcHoldSwitchNotice): boolean | undefined {
     if (notice.is_hold === true) {
       return true
+    }
+    if (notice.is_hold === false) {
+      return false
+    }
+    if (notice.isHold === true) {
+      return true
+    }
+    if (notice.isHold === false) {
+      return false
     }
     const type = (notice.type || '').trim()
     if (type === 'hold') {

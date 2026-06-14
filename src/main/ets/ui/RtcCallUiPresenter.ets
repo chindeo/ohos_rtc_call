@@ -138,6 +138,7 @@ export class RtcCallUiPresenter {
     const canControlMedia = state.phase === RtcCallViewPhase.CONNECTING ||
       state.phase === RtcCallViewPhase.CONNECTED ||
       state.phase === RtcCallViewPhase.HELD
+    const canUseHold = options.role === RtcCallDeviceRole.HOST
     const actions: RtcCallUiActionState[] = [
       {
         action: RtcCallUiAction.ACCEPT,
@@ -159,14 +160,16 @@ export class RtcCallUiPresenter {
       },
       {
         action: RtcCallUiAction.HOLD,
-        visible: state.phase === RtcCallViewPhase.CONNECTED || state.phase === RtcCallViewPhase.CONNECTING,
-        enabled: state.phase === RtcCallViewPhase.CONNECTED || state.phase === RtcCallViewPhase.CONNECTING,
+        visible: canUseHold && (state.phase === RtcCallViewPhase.CONNECTED ||
+          state.phase === RtcCallViewPhase.CONNECTING),
+        enabled: canUseHold && (state.phase === RtcCallViewPhase.CONNECTED ||
+          state.phase === RtcCallViewPhase.CONNECTING),
         label: '保持'
       },
       {
         action: RtcCallUiAction.RESUME,
-        visible: state.phase === RtcCallViewPhase.HELD,
-        enabled: state.phase === RtcCallViewPhase.HELD,
+        visible: canUseHold && state.phase === RtcCallViewPhase.HELD,
+        enabled: canUseHold && state.phase === RtcCallViewPhase.HELD,
         label: '恢复'
       },
       {
