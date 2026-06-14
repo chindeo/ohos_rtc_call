@@ -56,8 +56,11 @@ export interface RtcBroadcastSignalData {
 }
 
 export interface RtcHoldSwitchNotice {
-  type: string
-  info: string
+  type?: string
+  info?: string | Record<string, boolean>
+  uid?: string
+  status?: string
+  is_hold?: boolean
 }
 
 export interface RtcSdpSignalData {

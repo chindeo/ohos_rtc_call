@@ -192,6 +192,215 @@ export default function rtcWebRtcCallControllerTest() {
       controller.dispose()
     })
 
+    it('sends hold as a target switch apply', 0, () => {
+      const signalSession = new TestSignalSession()
+      const controller = createController(signalSession)
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+
+      expect(controller.hold('call-a')).assertEqual(true)
+
+      expect(signalSession.sentSignals.length).assertEqual(1)
+      expect(signalSession.sentSignals[0].eventName).assertEqual('s__apply')
+      const apply = parseApply(signalSession.sentSignals[0])
+      expect(apply.applyType).assertEqual(4)
+      expect(apply.isAll).assertEqual(false)
+      expect(apply.commonRequest.uuid).assertEqual('call-a')
+      controller.dispose()
+    })
+
+    it('sends resume as a target switch apply', 0, () => {
+      const signalSession = new TestSignalSession()
+      const controller = createController(signalSession)
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+
+      expect(controller.resume('call-a')).assertEqual(true)
+
+      expect(signalSession.sentSignals.length).assertEqual(1)
+      expect(signalSession.sentSignals[0].eventName).assertEqual('s__apply')
+      const apply = parseApply(signalSession.sentSignals[0])
+      expect(apply.applyType).assertEqual(4)
+      expect(apply.isAll).assertEqual(false)
+      expect(apply.commonRequest.uuid).assertEqual('call-a')
+      controller.dispose()
+    })
+
+    it('applies hold notice by uid', 0, () => {
+      let holdKey = ''
+      let holdState = false
+      const signalSession = new TestSignalSession()
+      const controller = new RtcWebRtcCallController(createMediaController(), {
+        onHoldChange: (sessionKey: string, isHold: boolean) => {
+          holdKey = sessionKey
+          holdState = isHold
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+      controller.registerOutgoingSession('call-b', { number: '1111' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__broadcast',
+        data: JSON.stringify({
+          data: JSON.stringify({
+            uid: 'call-a',
+            is_hold: true,
+            status: 'hold'
+          })
+        })
+      })
+
+      expect(holdKey).assertEqual('call-a')
+      expect(holdState).assertEqual(true)
+      controller.dispose()
+    })
+
+    it('applies resume notice by uid status', 0, () => {
+      let holdKey = ''
+      let holdState = true
+      const signalSession = new TestSignalSession()
+      const controller = new RtcWebRtcCallController(createMediaController(), {
+        onHoldChange: (sessionKey: string, isHold: boolean) => {
+          holdKey = sessionKey
+          holdState = isHold
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__broadcast',
+        data: JSON.stringify({
+          data: JSON.stringify({
+            uid: 'call-a',
+            status: 'answered'
+          })
+        })
+      })
+
+      expect(holdKey).assertEqual('call-a')
+      expect(holdState).assertEqual(false)
+      controller.dispose()
+    })
+
+    it('applies switch notice map by target uid', 0, () => {
+      const holdKeys: string[] = []
+      const holdStates: boolean[] = []
+      const signalSession = new TestSignalSession()
+      const controller = new RtcWebRtcCallController(createMediaController(), {
+        onHoldChange: (sessionKey: string, isHold: boolean) => {
+          holdKeys.push(sessionKey)
+          holdStates.push(isHold)
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+      controller.registerOutgoingSession('call-b', { number: '1111' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__broadcast',
+        data: JSON.stringify({
+          data: JSON.stringify({
+            type: 'switch',
+            info: {
+              'call-a': true,
+              'call-b': false
+            }
+          })
+        })
+      })
+
+      expect(holdKeys.length).assertEqual(2)
+      expect(holdKeys[0]).assertEqual('call-a')
+      expect(holdStates[0]).assertEqual(true)
+      expect(holdKeys[1]).assertEqual('call-b')
+      expect(holdStates[1]).assertEqual(false)
+      controller.dispose()
+    })
+
+    it('keeps legacy hold broadcast compatibility', 0, () => {
+      let holdKey = ''
+      let holdState = false
+      const signalSession = new TestSignalSession()
+      const controller = new RtcWebRtcCallController(createMediaController(), {
+        onHoldChange: (sessionKey: string, isHold: boolean) => {
+          holdKey = sessionKey
+          holdState = isHold
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__broadcast',
+        data: JSON.stringify({
+          data: JSON.stringify({
+            type: 'hold',
+            info: 'call-a'
+          })
+        })
+      })
+
+      expect(holdKey).assertEqual('call-a')
+      expect(holdState).assertEqual(true)
+      controller.dispose()
+    })
+
+    it('ignores hold notice without uid in multi-call', 0, () => {
+      let holdKey = ''
+      const signalSession = new TestSignalSession()
+      const controller = new RtcWebRtcCallController(createMediaController(), {
+        onHoldChange: (sessionKey: string, _isHold: boolean) => {
+          holdKey = sessionKey
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+      controller.registerOutgoingSession('call-b', { number: '1111' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__broadcast',
+        data: JSON.stringify({
+          data: JSON.stringify({
+            status: 'hold',
+            is_hold: true
+          })
+        })
+      })
+
+      expect(holdKey).assertEqual('')
+      controller.dispose()
+    })
+
     it('removes only the matched session for a remote terminal notice when other calls remain', 0, () => {
       let endedKey = ''
       let endedAll = false

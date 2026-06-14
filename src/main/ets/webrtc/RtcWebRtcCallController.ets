@@ -60,6 +60,16 @@ interface RtcRecentLocalSingleHangup {
   at: number
 }
 
+interface RtcParsedHoldChange {
+  sessionId: string
+  isHold: boolean
+}
+
+const RTC_APPLY_INVITE: number = 1
+const RTC_APPLY_ANSWER: number = 2
+const RTC_APPLY_HANGUP: number = 3
+const RTC_APPLY_SWITCH: number = 4
+
 export class RtcWebRtcCallController {
   private signalSession: RtcWebRtcSignalSession
   private signalStateMachine: RtcWebRtcSignalStateMachine
@@ -132,7 +142,7 @@ export class RtcWebRtcCallController {
       }
       return true
     }
-    this.sendApply(1, session, false)
+    this.sendApply(RTC_APPLY_INVITE, session, false)
     return true
   }
 
@@ -141,7 +151,7 @@ export class RtcWebRtcCallController {
     if (!session || !this.server.serveNumber) {
       return false
     }
-    this.sendApply(2, session, false)
+    this.sendApply(RTC_APPLY_ANSWER, session, false)
     return true
   }
 
@@ -151,7 +161,7 @@ export class RtcWebRtcCallController {
       return false
     }
     if (this.server.serveNumber) {
-      this.sendApply(3, session, false)
+      this.sendApply(RTC_APPLY_HANGUP, session, false)
     }
     this.rememberLocalSingleHangup(session)
     this.removeSession(session.sessionKey, true)
@@ -162,7 +172,7 @@ export class RtcWebRtcCallController {
     this.recentLocalSingleHangup = undefined
     const first = this.sessions.values().next()
     if (!first.done && this.server.serveNumber) {
-      this.sendApply(3, first.value, true)
+      this.sendApply(RTC_APPLY_HANGUP, first.value, true)
     }
     this.closeAllLocalSessions('hangup all')
   }
@@ -172,11 +182,11 @@ export class RtcWebRtcCallController {
   }
 
   hold(sessionKey: string): boolean {
-    return this.sendHoldSwitchNotice(sessionKey, true)
+    return this.sendHoldSwitchApply(sessionKey)
   }
 
   resume(sessionKey: string): boolean {
-    return this.sendHoldSwitchNotice(sessionKey, false)
+    return this.sendHoldSwitchApply(sessionKey)
   }
 
   getSession(sessionKey: string): RtcWebRtcCallSessionInfo | undefined {
@@ -355,14 +365,21 @@ export class RtcWebRtcCallController {
       return
     }
     if (message.eventName === 'c__broadcast') {
-      const holdNotice = this.parseHoldSwitchNotice(message.data)
-      if (holdNotice) {
-        const session = this.findSession(holdNotice.info)
-        if (session) {
-          this.listener.onHoldChange?.(session.sessionKey, holdNotice.type === 'hold')
+      const holdChanges = this.parseHoldSwitchNotice(message.data)
+      if (holdChanges.length > 0) {
+        let handled = false
+        holdChanges.forEach((holdChange: RtcParsedHoldChange) => {
+          const session = this.findSession(holdChange.sessionId)
+          if (session) {
+            handled = true
+            this.listener.onHoldChange?.(session.sessionKey, holdChange.isHold)
+          } else {
+            this.listener.onLog?.('ignore hold broadcast for unknown session=' + holdChange.sessionId)
+          }
+        })
+        if (handled) {
           return
         }
-        this.listener.onLog?.('ignore hold broadcast for unknown session=' + holdNotice.info)
       }
       this.listener.onBroadcast?.(message)
     }
@@ -561,19 +578,12 @@ export class RtcWebRtcCallController {
     this.signalSession.sendSignal(this.wrapSignal('s__apply', data))
   }
 
-  private sendHoldSwitchNotice(sessionKey: string, isHold: boolean): boolean {
+  private sendHoldSwitchApply(sessionKey: string): boolean {
     const session = this.findSession(sessionKey)
     if (!session || !this.server.serveNumber) {
       return false
     }
-    const notice: RtcHoldSwitchNotice = {
-      type: isHold ? 'hold' : 'resume',
-      info: session.sessionId
-    }
-    const broadcast: RtcBroadcastSignalData = {
-      data: JSON.stringify(notice)
-    }
-    this.signalSession.sendSignal(this.wrapSignal('s__broadcast', broadcast))
+    this.sendApply(RTC_APPLY_SWITCH, session, false)
     return true
   }
 
@@ -848,9 +858,9 @@ export class RtcWebRtcCallController {
     }
   }
 
-  private parseHoldSwitchNotice(data: string): RtcHoldSwitchNotice | undefined {
+  private parseHoldSwitchNotice(data: string): RtcParsedHoldChange[] {
     if (!data) {
-      return undefined
+      return []
     }
     try {
       const wrapper = JSON.parse(data) as RtcBroadcastSignalData | RtcHoldSwitchNotice
@@ -858,16 +868,59 @@ export class RtcWebRtcCallController {
       const notice = nested ?
         JSON.parse(nested) as RtcHoldSwitchNotice :
         wrapper as RtcHoldSwitchNotice
-      if (notice.type !== 'hold' && notice.type !== 'resume') {
-        return undefined
-      }
-      return {
-        type: notice.type,
-        info: this.normalizeSessionId(notice.info || '')
-      }
+      return this.toHoldChanges(notice)
     } catch (_error) {
-      return undefined
+      return []
     }
+  }
+
+  private toHoldChanges(notice: RtcHoldSwitchNotice): RtcParsedHoldChange[] {
+    const changes: RtcParsedHoldChange[] = []
+    const info = notice.info
+    if (typeof info === 'string') {
+      const sessionId = this.normalizeSessionId(info)
+      const isHold = this.resolveHoldState(notice)
+      if (sessionId && isHold !== undefined) {
+        changes.push({ sessionId, isHold })
+      }
+      return changes
+    }
+    if (info) {
+      Object.keys(info).forEach((sessionId: string) => {
+        const normalized = this.normalizeSessionId(sessionId)
+        if (normalized) {
+          changes.push({ sessionId: normalized, isHold: info[sessionId] === true })
+        }
+      })
+      return changes
+    }
+    const uid = this.normalizeSessionId(notice.uid || '')
+    const isHold = this.resolveHoldState(notice)
+    if (uid && isHold !== undefined) {
+      changes.push({ sessionId: uid, isHold })
+    }
+    return changes
+  }
+
+  private resolveHoldState(notice: RtcHoldSwitchNotice): boolean | undefined {
+    if (notice.is_hold === true) {
+      return true
+    }
+    const type = (notice.type || '').trim()
+    if (type === 'hold') {
+      return true
+    }
+    if (type === 'resume' || type === 'answer' || type === 'answered') {
+      return false
+    }
+    const status = (notice.status || '').trim()
+    if (status === 'hold') {
+      return true
+    }
+    if (status === 'resume' || status === 'answer' || status === 'answered') {
+      return false
+    }
+    return undefined
   }
 
   private encodeSdp(sdp: string): string {
