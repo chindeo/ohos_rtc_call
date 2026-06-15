@@ -20,6 +20,8 @@
 - 修复同类问题时，必须回到数据流、状态机、信令字段或验收点重新定位，并明确本次防回归锚点：单元测试、手工验收点、日志检查或最小复现场景。
 - 实现防偏离：先保留已验证单路流程，再扩展多人、多设备和异常路径；不能为了抽象改掉原有按钮条件、信令字段、挂断语义或 track 接通判定。
 - 公共 controller 与旧业务实现不能同时处理同一条信令或同一份媒体资源，避免双 PeerConnection、双状态源和重复 UI 状态更新。
+- 主机和床旁项目只保留业务入口、业务数据适配和页面挂载点；音视频协议判断、通话状态、铃声、音频路由、设备能力和可复用 UI 优先沉淀到本项目。
+- 修复业务项目问题时，先判断问题是否应进入公共包；如果属于通话共性能力，不在 nurse/bed 里复制实现或长期保留分叉逻辑。
 
 ## call-gateway 对接基准
 
@@ -49,6 +51,8 @@
 - `.\tools\publish-ohos-rtc-call.ps1 -Publish`：设备验收通过后发布到 OHPM。
 - `git diff --check`：提交前检查空白和补丁格式。
 - 单元测试通过 OpenHarmony / DevEco 的 Hypium 流程执行；文档-only 修改不需要运行构建或发布脚本。
+- 需要验证主机或床旁业务项目时，只使用对应项目 `tools/` 下的构建、安装脚本；不要猜测 Hvigor、DevEco、SDK、hdc 的本机路径。
+- nurse/bed 依赖本项目生成的联调 HAR 时，HAR 作为本地分发产物处理，不提交到业务项目 Git；业务项目提交中只允许包含依赖声明、lock 或接入代码。
 
 ## 代码风格和测试
 
@@ -57,6 +61,14 @@
 - 宿主 SDK、服务地址、凭据、bundle 名称和设备标识必须通过 adapter 或配置注入，不能硬编码进公共包。
 - 测试使用 Hypium 的 `describe`、`it`、`expect`，文件命名采用 `FeatureName.test.ets`。
 - 优先补小而确定的单元测试；跨设备通话、音频路由和 call-gateway 真机链路以手工验收清单为准。
+
+## 设备和业务项目接入
+
+- Dnake、Shimeta、Aurine 等厂家能力必须经 `RtcDeviceCapabilityManager` 或专用 adapter 暴露；页面、业务组件和通话 controller 不直接散落厂家 SDK 判断。
+- 只有确认的 Dnake 设备可以启用 Dnake SIP、DMsg、Dnake 铃声、手柄和按键事件；未知厂家和未支持 SIP 的厂家默认走 WebRTC。
+- WebRTC 与 SIP 由服务端地址和设备能力共同决定：`ws://`、`wss://` 走 WebRTC，明确支持的 `ip:port` SIP 地址才进入 SIP 路径。
+- 主机、床旁差异通过 `deviceRole`、配置、回调或 adapter 注入，不能通过复制一套通话状态机解决。
+- 主机/床旁 `AGENTS.md`、`todo.md` 和历史 docs 已统一迁入本项目 `docs/`；后续协作规则以本文件和本项目 docs 为准。
 
 ## 提交和 PR
 

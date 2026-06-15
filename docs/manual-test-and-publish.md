@@ -1,5 +1,12 @@
 # 手工安装测试和本地 HAR 分发清单
 
+相关维护文档：
+
+- `audio-video-maintenance-roadmap.md`：主机/床旁音视频统一维护路线图。
+- `host-bed-project-notes.md`：业务项目接入边界、构建脚本和验收重点。
+- `device-vendor-adapters.md`：Dnake、Shimeta、Aurine 厂家能力适配约束。
+- `webrtc-audio-diagnostics.md`：WebRTC 音频诊断顺序和验证点。
+
 ## 目标版本
 
 - 公共包：`@chindeo/ohos-rtc-call@0.1.4-rc3`
@@ -28,16 +35,16 @@
 生成文件示例：
 
 ```text
-dist\ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har
-..\5.0.1-SHIMeta\libs\ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har
-..\v1.0_nurse_SHIMeta\libs\ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har
+dist\ohos-rtc-call-<version>-<timestamp>.har
+..\5.0.1-SHIMeta\libs\ohos-rtc-call-<version>-<timestamp>.har
+..\v1.0_nurse_SHIMeta\libs\ohos-rtc-call-<version>-<timestamp>.har
 ```
 
 包内 `oh-package.json5` 的 `name` 和 `version` 不变，只有本地 HAR 文件名变化。业务工程验证时将
 `@chindeo/ohos-rtc-call` 依赖指向本工程 `libs/` 下的时间戳 HAR：
 
 ```json5
-"@chindeo/ohos-rtc-call": 'file:./libs/ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har'
+"@chindeo/ohos-rtc-call": 'file:./libs/ohos-rtc-call-<version>-<timestamp>.har'
 ```
 
 每次生成新的开发 HAR 后，同步更新业务工程依赖路径并执行 `ohpm install`。公共包后续不使用线上 OHPM 包，也不依赖 `ohos_rtc_call/dist` 的本机绝对路径。如果目标工程仍复用旧产物，再按现有方式定向删除
@@ -72,7 +79,7 @@ dist\ohos-rtc-call-0.1.4-rc3.har
 如果验证的是公共包改动，先将业务工程中唯一的 `@chindeo/ohos-rtc-call` 依赖替换为本工程 `libs/` 下的时间戳 HAR，例如：
 
 ```json5
-"@chindeo/ohos-rtc-call": 'file:./libs/ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har'
+"@chindeo/ohos-rtc-call": 'file:./libs/ohos-rtc-call-<version>-<timestamp>.har'
 ```
 
 宿主工程仍需提供兼容的 `@ohos/webrtc` 依赖，因为公共包在 `oh-package.json5` 中将其声明为动态依赖。
@@ -249,7 +256,7 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 如果 HAR 已经生成，并确认要同步到业务工程 `libs/`，可直接复制已有 HAR：
 
 ```powershell
-.\tools\publish-ohos-rtc-call.ps1 -HarPath .\dist\ohos-rtc-call-0.1.4-rc3-20260613-153000-123.har -SkipPrepublish -CopyToLibsDir `
+.\tools\publish-ohos-rtc-call.ps1 -HarPath .\dist\ohos-rtc-call-<version>-<timestamp>.har -SkipPrepublish -CopyToLibsDir `
   ..\5.0.1-SHIMeta\libs,..\v1.0_nurse_SHIMeta\libs
 ```
 

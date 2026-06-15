@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>硬件服务接口文档</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+  <meta name="description" content="Description">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="./logo.png" />
+  <link rel="stylesheet" rel="stylesheet" title="light" href="./css/vue.css">
+  <link rel="stylesheet" rel="stylesheet" title="dark" href="./css/dark.css">
+  <link rel="stylesheet" rel="stylesheet" href="./css/docsify-dark-switch.css">
+  <link rel="stylesheet" rel="stylesheet" href="./css/style.css">
+</head>
+
+<body style="font-size: 16px">
+  <div id="app"></div>
+  <script>
+    window.$docsify = {
+      name: '硬件服务接口文档',
+      repo: '',
+      homepage: './docs/introduction/introduction.md',
+      // base: './',
+      // 配置加载自定义侧边栏，设置为 true，则加载默认名为 _sidebar.md 的文件，如果是 string 类型则是加载以string字符串的自定义文件
+      loadSidebar: true,
+      // 显示目录，我们在上面使用了自定义侧边栏后，发现左侧目录只显示我们定义的文件，不显示目录，可以配置 subMaxLevel 来控制显示到几级标题目录
+      subMaxLevel: 4,
+       // 默认不展开菜单
+      sidebarDisplayLevel: 0,    
+      // 启用顶部导航栏，设置为 true，则加载默认名为 _navbar.md 的文件，如果是 string 类型则是加载以string字符串的自定义文件，与上方 loadSidebar 同理
+      // loadNavbar: '_navbar_嵌套.md',
+      loadNavbar: false,
+      // 启用封面，设置为 true，则加载默认名为 _coverpage.md 的文件，如果是 string 类型则是加载以string字符串的自定义文件，与上方 loadSidebar 同理
+      coverpage: true,
+      // 切换页面后是否自动跳转到页面顶部
+      auto2top: true,
+      // 配置文档更新时间
+      formatUpdated: '{YYYY}-{MM}-{DD} {HH}:{mm}:{ss}',
+      // 配置搜索
+      search: {
+        placeholder: '搜索',
+        noData: '没有找到结果',
+        depth: 6,
+        searchMaxDepth: 6,
+        contains: true,
+        paths: [],
+        hideOtherSidebarContent: false,
+      },
+      // 配置代码复制功能
+      copyCode: {
+        buttonText: '点击复制',
+        errorText: 'Error',
+        successText: '复制成功'
+      },
+      // 配置分页导航
+      pagination: {
+        previousText: '上一篇',
+        nextText: '下一篇',
+        crossChapter: true,
+      },
+      disqus: 'shortname',
+      // 1、配置显示底部Copyright
+      plugins: [
+        function (hook) {
+          var footer = [
+            '<hr/>',
+            '<footer style="display: flex;align-items: center;">',
+            '<b>Copyright © 2025 MILI</b>',
+            '<img src="./logo.png" alt="MILI Logo" style="height: 20px; margin-left: 10px;" />',
+            '</footer>',
+          ].join('');
+
+          hook.afterEach(function (html) {
+            return html + footer;
+          });
+        }
+      ],
+      // 配置右侧显示标题栏
+      toc: {
+        tocMaxLevel: 5,
+        target: 'h2, h3, h4, h5, h6',
+        ignoreHeaders: ['<!-- {docsify-ignore} -->', '<!-- {docsify-ignore-all} -->']
+      },
+      // 配置主题切换
+      darkSwitch: {
+        fixed: false,
+      },
+    }
+  </script>
+  <!-- Docsify v4 -->
+  <script src="./js/docsify@4.js"></script>
+  <script src="./js/search.min.js"></script>
+  <script src="./js/prism-java.min.js"></script>
+  <script src="./js/prism-kotlin.min.js"></script>
+  <script src="./js/docsify-copy-code.min.js"></script>
+  <script src="./js//docsify-pagination.min.js"></script>
+  <script src="./js/docsify-tabs@1.js"></script>
+  <script src="./js/zoom-image.min.js"></script>
+  <script src="./js/docsify-sidebar-collapse.min.js"></script>
+  <script src="./js/docsify-dark-switch.js"></script>
+</body>
+
+</html>
