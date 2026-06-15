@@ -93,6 +93,13 @@ export class RtcHostMultiCallController {
     this.emit()
   }
 
+  resetMediaControlState(): void {
+    this.muted = false
+    this.speakerEnabled = false
+    this.volume = 0
+    this.emit()
+  }
+
   setMessage(message: string): void {
     this.message = message
     this.emit()

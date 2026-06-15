@@ -182,11 +182,11 @@ export class RtcWebRtcCallController {
   }
 
   hold(sessionKey: string): boolean {
-    return this.sendHoldSwitchApply(sessionKey)
+    return this.sendHoldSwitchApply(sessionKey, 'hold')
   }
 
   resume(sessionKey: string): boolean {
-    return this.sendHoldSwitchApply(sessionKey)
+    return this.sendHoldSwitchApply(sessionKey, 'resume')
   }
 
   getSession(sessionKey: string): RtcWebRtcCallSessionInfo | undefined {
@@ -578,12 +578,19 @@ export class RtcWebRtcCallController {
     this.signalSession.sendSignal(this.wrapSignal('s__apply', data))
   }
 
-  private sendHoldSwitchApply(sessionKey: string): boolean {
-    const session = this.findSession(sessionKey)
-    if (!session || !this.server.serveNumber) {
+  private sendHoldSwitchApply(sessionKey: string, action: string): boolean {
+    const session = this.resolveHoldSwitchSession(sessionKey)
+    if (!session) {
+      this.logHoldSwitchSend(action, sessionKey, '', false, this.server.serveNumber.length > 0, false,
+        'session not found')
+      return false
+    }
+    if (!this.server.serveNumber) {
+      this.logHoldSwitchSend(action, sessionKey, session.sessionKey, true, false, false, 'server not registered')
       return false
     }
     this.sendApply(RTC_APPLY_SWITCH, session, false)
+    this.logHoldSwitchSend(action, sessionKey, session.sessionKey, true, true, true, 'sent')
     return true
   }
 
@@ -777,6 +784,10 @@ export class RtcWebRtcCallController {
     return this.findUniqueSessionByTarget(sessionIdOrNumber)
   }
 
+  private resolveHoldSwitchSession(sessionIdOrNumber: string): RtcWebRtcCallSessionInfo | undefined {
+    return this.resolveHoldChangeSession(sessionIdOrNumber)
+  }
+
   private resolvePayloadSession(payload: RtcSignalPayload): RtcWebRtcCallSessionInfo | undefined {
     const localNumber = this.config?.local.number || this.config?.identity.number || ''
     const targetNumber = this.resolveRemoteNumber(payload.commonRequest, localNumber)
@@ -958,6 +969,37 @@ export class RtcWebRtcCallController {
 
   private normalizeSessionId(value: string): string {
     return (value || '').split(',')[0].trim()
+  }
+
+  private getSessionHash(sessionKey: string): string {
+    const key = (sessionKey || '').trim()
+    let hash = 0
+    for (let i = 0; i < key.length; i += 1) {
+      hash = (hash * 33 + key.charCodeAt(i)) % 60466176
+    }
+    let text = hash.toString(36)
+    while (text.length < 6) {
+      text = '0' + text
+    }
+    return text
+  }
+
+  private logHoldSwitchSend(
+    action: string,
+    targetKey: string,
+    resolvedKey: string,
+    hasSession: boolean,
+    hasServer: boolean,
+    sent: boolean,
+    reason: string
+  ): void {
+    this.listener.onLog?.('rtc_hold_switch_send action=' + action +
+      '|targetHash=' + this.getSessionHash(targetKey) +
+      '|resolvedHash=' + this.getSessionHash(resolvedKey) +
+      '|hasSession=' + hasSession +
+      '|hasServer=' + hasServer +
+      '|sent=' + sent +
+      '|reason=' + reason)
   }
 
   private static splitNumbers(value: string): string[] {

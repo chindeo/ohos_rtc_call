@@ -147,10 +147,13 @@ export class RtcCallAudioPolicyController {
   async restoreAfterCall(reason: string = 'call ended'): Promise<void> {
     if (this.options.restoreVolumeOnEnd !== false && this.state.hasOriginalVolume) {
       await this.driver.setVoiceCallVolume(this.state.originalVolumeLevel)
+      this.state.currentVolumePercent = this.state.originalVolumePercent
     }
     await this.driver.setSpeaker(false)
+    this.driver.setMuted?.(false)
     this.applyHandsetMode(false, reason)
     this.state.speakerEnabled = false
+    this.state.muted = false
     this.state.handsetMode = false
     this.state.source = RTC_CALL_CONTROL_SOURCE_SCREEN
   }

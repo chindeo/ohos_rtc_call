@@ -35,6 +35,20 @@ export default function rtcHostMultiCallControllerTest() {
       controller.dispose()
     })
 
+    it('resets media control state to defaults', 0, () => {
+      const service = new RtcDefaultCallService()
+      const controller = new RtcHostMultiCallController({ service })
+
+      controller.setMediaControlState(true, true, 90)
+      controller.resetMediaControlState()
+      const model = controller.getUiModel()
+
+      expect(model.muted).assertEqual(false)
+      expect(model.speakerEnabled).assertEqual(false)
+      expect(model.volume).assertEqual(0)
+      controller.dispose()
+    })
+
     it('keeps two incoming calls isolated and exposes one active call', 0, async () => {
       const service = new RtcDefaultCallService()
       const controller = new RtcHostMultiCallController({ service })
@@ -79,6 +93,31 @@ export default function rtcHostMultiCallControllerTest() {
       expect(result.handled).assertEqual(false)
       expect(result.reason).assertEqual('ambiguous session key')
       expect(controller.getUiModel().sideCalls.length).assertEqual(1)
+      controller.dispose()
+    })
+
+    it('keeps media control state when one of multiple sessions hangs up', 0, async () => {
+      const service = new RtcDefaultCallService()
+      const controller = new RtcHostMultiCallController({ service })
+      await controller.receiveIncomingCall({
+        callId: 'call-a',
+        uid: 'uid-a',
+        target: { number: '1101' }
+      })
+      await controller.receiveIncomingCall({
+        callId: 'call-b',
+        uid: 'uid-b',
+        target: { number: '1111' }
+      })
+      controller.setMediaControlState(true, true, 90)
+
+      await controller.hangup('uid-a')
+      const model = controller.getUiModel()
+
+      expect(model.visible).assertEqual(true)
+      expect(model.muted).assertEqual(true)
+      expect(model.speakerEnabled).assertEqual(true)
+      expect(model.volume).assertEqual(90)
       controller.dispose()
     })
 

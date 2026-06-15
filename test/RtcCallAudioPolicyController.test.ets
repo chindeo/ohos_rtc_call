@@ -55,10 +55,15 @@ export default function rtcCallAudioPolicyControllerTest() {
       expect(route.volumePercent).assertEqual(90)
       expect(driver.speakerEnabled).assertEqual(true)
       expect(driver.volume).assertEqual(9)
+      controller.setMuted(true)
+      expect(driver.muted).assertEqual(true)
 
       await controller.restoreAfterCall()
       expect(driver.speakerEnabled).assertEqual(false)
+      expect(driver.muted).assertEqual(false)
       expect(driver.volume).assertEqual(3)
+      expect(controller.getState().muted).assertEqual(false)
+      expect(controller.getState().currentVolumePercent).assertEqual(30)
     })
 
     it('applies handset route and mute state', 0, async () => {

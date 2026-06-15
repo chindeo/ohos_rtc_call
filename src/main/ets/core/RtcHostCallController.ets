@@ -106,25 +106,31 @@ export class RtcHostCallController {
         }
         this.releaseSessionRemoteVideoSurface(key)
         if (this.service.getCallListItems().filter((item: RtcCallListItem) => item.canHangup).length === 0) {
-          await this.audioPolicyController.restoreAfterCall('last call ended')
+          await this.restoreAfterLastCall('last call ended')
         }
         this.options.onEnded?.(key, false)
       },
       onTerminateAllCalls: async () => {
         this.webRtcController.hangupAll()
         this.releaseAllSessionRemoteVideoSurfaces()
-        await this.audioPolicyController.restoreAfterCall('all calls ended')
+        await this.restoreAfterLastCall('all calls ended')
         this.options.onEnded?.('', true)
       },
       onHoldCall: async (session: RtcCallSession) => {
-        const key = session.uid || session.requestId
-        this.webRtcController.hold(key)
+        const key = this.resolveCallSessionKey(session)
+        if (!this.sendHoldSwitch(session, true)) {
+          this.rollbackHoldSwitch(session, false)
+          return
+        }
         this.mediaController.setHeld(key, true)
         await this.options.onHold?.(session)
       },
       onResumeCall: async (session: RtcCallSession) => {
-        const key = session.uid || session.requestId
-        this.webRtcController.resume(key)
+        const key = this.resolveCallSessionKey(session)
+        if (!this.sendHoldSwitch(session, false)) {
+          this.rollbackHoldSwitch(session, true)
+          return
+        }
         this.mediaController.setHeld(key, false)
         await this.options.onResume?.(session)
       }
@@ -396,6 +402,72 @@ export class RtcHostCallController {
       surface.setVideoTrack(null)
     })
     this.sessionRemoteVideoSurfaces.clear()
+  }
+
+  private async restoreAfterLastCall(reason: string): Promise<void> {
+    await this.audioPolicyController.restoreAfterCall(reason)
+    this.mediaController.setMuted(false)
+    this.multiCallController.resetMediaControlState()
+    this.options.onLog?.('host media controls reset reason=' + reason)
+  }
+
+  private resolveCallSessionKey(session: RtcCallSession): string {
+    return session.uid || session.requestId || session.calleeNumber
+  }
+
+  private buildHoldSwitchCandidates(session: RtcCallSession): string[] {
+    const candidates: string[] = [
+      session.uid,
+      session.requestId,
+      session.calleeNumber
+    ]
+    const unique: string[] = []
+    candidates.forEach((candidate: string) => {
+      const key = (candidate || '').trim()
+      if (key && unique.indexOf(key) < 0) {
+        unique.push(key)
+      }
+    })
+    return unique
+  }
+
+  private sendHoldSwitch(session: RtcCallSession, isHold: boolean): boolean {
+    const candidates = this.buildHoldSwitchCandidates(session)
+    for (let i = 0; i < candidates.length; i += 1) {
+      const key = candidates[i]
+      const sent = isHold ? this.webRtcController.hold(key) : this.webRtcController.resume(key)
+      if (sent) {
+        this.options.onLog?.('host hold switch sent action=' + (isHold ? 'hold' : 'resume') +
+          ' sidHash=' + this.getSessionHash(key))
+        return true
+      }
+    }
+    this.options.onLog?.('host hold switch not sent action=' + (isHold ? 'hold' : 'resume') +
+      ' sidHash=' + this.getSessionHash(this.resolveCallSessionKey(session)))
+    return false
+  }
+
+  private rollbackHoldSwitch(session: RtcCallSession, isHold: boolean): void {
+    const key = this.resolveCallSessionKey(session)
+    const result = this.multiCallController.applyRemoteHold(key, isHold)
+    this.mediaController.setHeld(key, isHold)
+    this.options.onLog?.('host hold switch rollback action=' + (isHold ? 'hold' : 'resume') +
+      ' sidHash=' + this.getSessionHash(key) +
+      ' handled=' + result.handled +
+      ' reason=' + result.reason)
+  }
+
+  private getSessionHash(sessionKey: string): string {
+    const key = (sessionKey || '').trim()
+    let hash = 0
+    for (let i = 0; i < key.length; i += 1) {
+      hash = (hash * 33 + key.charCodeAt(i)) % 60466176
+    }
+    let text = hash.toString(36)
+    while (text.length < 6) {
+      text = '0' + text
+    }
+    return text
   }
 
   private handleRemoteHoldChange(sessionKey: string, isHold: boolean): void {
