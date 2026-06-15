@@ -538,6 +538,8 @@ export class RtcHostMultiCallController {
       '|activePhase=' + (active?.phase || '') +
       '|activeCanAccept=' + (active?.canAccept === true) +
       '|activeCanHangup=' + (active?.canHangup === true) +
+      '|activeCanHold=' + (active?.canHold === true) +
+      '|activeCanResume=' + (active?.canResume === true) +
       '|sideHashes=' + sideHashes.join(',') +
       '|sidePhases=' + sidePhases.join(',') +
       '|sideCanAccept=' + sideAccepts.join(',') +

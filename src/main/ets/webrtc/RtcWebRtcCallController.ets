@@ -905,10 +905,14 @@ export class RtcWebRtcCallController {
       return changes
     }
     if (info) {
+      const noticeState = this.resolveHoldState(notice)
       Object.keys(info).forEach((sessionId: string) => {
         const normalized = this.normalizeSessionId(sessionId)
         if (normalized) {
-          changes.push({ sessionId: normalized, isHold: info[sessionId] === true })
+          changes.push({
+            sessionId: normalized,
+            isHold: noticeState !== undefined ? noticeState : info[sessionId] === true
+          })
         }
       })
       return changes
@@ -945,7 +949,10 @@ export class RtcWebRtcCallController {
     if (status === 'hold') {
       return true
     }
-    if (status === 'resume' || status === 'answer' || status === 'answered') {
+    if (status === '保持') {
+      return true
+    }
+    if (status === 'resume' || status === 'answer' || status === 'answered' || status === '接听') {
       return false
     }
     return undefined

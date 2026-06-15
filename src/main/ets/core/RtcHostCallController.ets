@@ -32,6 +32,7 @@ import {
   RtcWebRtcMediaState,
   RtcVideoSurfaceController
 } from '../webrtc/RtcWebRtcMediaController'
+import { RtcCallStatusNotifier } from '../model/RtcCallStatusMessage'
 
 export interface RtcHostCallControllerOptions {
   serverUrl: string
@@ -49,7 +50,7 @@ export interface RtcHostCallControllerOptions {
   deviceRole?: RtcCallDeviceRole | string
   speakerActionLabel?: string
   speakerActionIsMicSwitch?: boolean
-  onMicSwitch?: () => void | Promise<void>
+  onMicSwitch?: () => boolean | void | Promise<boolean | void>
   onError?: (message: string) => void
   onLog?: (message: string) => void
 }
@@ -270,7 +271,30 @@ export class RtcHostCallController {
 
   async toggleSpeaker(): Promise<void> {
     if (this.options.speakerActionIsMicSwitch) {
-      await this.options.onMicSwitch?.()
+      const before = this.getUiModel().speakerEnabled === true
+      this.options.onLog?.('rtc_mic_switch action=speaker before=' + before)
+      if (!this.options.onMicSwitch) {
+        this.options.onLog?.('rtc_mic_switch action=speaker success=false reason=missing_callback')
+        RtcCallStatusNotifier.warning('当前设备不支持切麦或切换失败')
+        return
+      }
+      try {
+        const result = await this.options.onMicSwitch()
+        if (result === false) {
+          this.options.onLog?.('rtc_mic_switch action=speaker success=false before=' + before)
+          RtcCallStatusNotifier.warning('当前设备不支持切麦或切换失败')
+          return
+        }
+        this.multiCallController.setMediaControlState(
+          this.getUiModel().muted,
+          !before,
+          this.getUiModel().volume
+        )
+        this.options.onLog?.('rtc_mic_switch action=speaker success=true after=' + (!before))
+      } catch (error) {
+        this.options.onLog?.('rtc_mic_switch action=speaker success=false error=' + JSON.stringify(error))
+        RtcCallStatusNotifier.warning('当前设备不支持切麦或切换失败')
+      }
       return
     }
     const audio = this.audioPolicyController.getState()

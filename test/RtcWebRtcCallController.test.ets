@@ -451,6 +451,77 @@ export default function rtcWebRtcCallControllerTest() {
       controller.dispose()
     })
 
+    it('applies call-gateway answer switch notice as resume even when info value is true', 0, () => {
+      let holdKey = ''
+      let holdState = true
+      const signalSession = new TestSignalSession()
+      const controller = new RtcWebRtcCallController(createMediaController(), {
+        onHoldChange: (sessionKey: string, isHold: boolean) => {
+          holdKey = sessionKey
+          holdState = isHold
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__broadcast',
+        data: JSON.stringify({
+          data: JSON.stringify({
+            type: 'answer',
+            info: {
+              '1101': true
+            }
+          })
+        })
+      })
+
+      expect(holdKey).assertEqual('call-a')
+      expect(holdState).assertEqual(false)
+      controller.dispose()
+    })
+
+    it('applies chinese answered notice status as resume', 0, () => {
+      let holdKey = ''
+      let holdState = true
+      const signalSession = new TestSignalSession()
+      const controller = new RtcWebRtcCallController(createMediaController(), {
+        onHoldChange: (sessionKey: string, isHold: boolean) => {
+          holdKey = sessionKey
+          holdState = isHold
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__broadcast',
+        data: JSON.stringify({
+          data: JSON.stringify({
+            uid: 'call-a',
+            status: '接听',
+            is_hold: false
+          })
+        })
+      })
+
+      expect(holdKey).assertEqual('call-a')
+      expect(holdState).assertEqual(false)
+      controller.dispose()
+    })
+
     it('applies camel case resume notice by uid', 0, () => {
       let holdKey = ''
       let holdState = true
