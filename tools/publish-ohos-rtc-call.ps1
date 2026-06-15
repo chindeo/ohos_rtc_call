@@ -153,9 +153,11 @@ if ($HarPath) {
 $DistRoot = Join-Path $Root $DistDir
 $StageRoot = Join-Path $DistRoot "ohos-rtc-call-package"
 $PackageRoot = Join-Path $StageRoot "package"
+$PackageVersion = $Version
 $HarName = "ohos-rtc-call-$Version.har"
 if ($DevTimestampName) {
   $Timestamp = Get-Date -Format "MMdd-HHmmss"
+  $PackageVersion = "$Version+ohos-rtc-call-$($Timestamp.Replace("-", "."))"
   $HarName = "ohos-rtc-call-$Timestamp.har"
 }
 $HarPath = Join-Path $DistRoot $HarName
@@ -213,18 +215,18 @@ foreach ($Doc in $PublicDocs) {
 
 $StagedPackageJsonPath = Join-Path $PackageRoot "oh-package.json5"
 $StagedPackageJson = Get-Content -Path $StagedPackageJsonPath -Raw
-$StagedPackageJson = $StagedPackageJson -replace '"version"\s*:\s*"[^"]+"', "`"version`": `"$Version`""
+$StagedPackageJson = $StagedPackageJson -replace '"version"\s*:\s*"[^"]+"', "`"version`": `"$PackageVersion`""
 $StagedPackageJson = $StagedPackageJson -replace '(?ms)"devDependencies"\s*:\s*\{.*?\}', '"devDependencies": {}'
 Set-Content -Path $StagedPackageJsonPath -Value $StagedPackageJson -NoNewline
 
 $SourceHash = Get-PackageSourceHash -PackagePath $PackageRoot -FingerprintName $FingerprintFileName
 $FingerprintPath = Join-Path $PackageRoot $FingerprintFileName
 $Fingerprint = [ordered]@{
-  packageVersion = $Version
+  packageVersion = $PackageVersion
   sourceSha256 = $SourceHash
 }
 $Fingerprint | ConvertTo-Json | Set-Content -Path $FingerprintPath
-Write-Host "Package fingerprint: version=$Version sourceSha256=$SourceHash"
+Write-Host "Package fingerprint: version=$PackageVersion sourceSha256=$SourceHash"
 
 $SensitivePatterns = @(
   "BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY",
