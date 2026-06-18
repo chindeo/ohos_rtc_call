@@ -151,7 +151,9 @@ export struct RtcReferenceCallLayout {
       this.getSideDebugSummary() +
       '|showHangupAll=' + this.model.showHangupAll +
       '|muted=' + this.model.muted +
-      '|speakerEnabled=' + this.model.speakerEnabled
+      '|speakerEnabled=' + this.model.speakerEnabled +
+      '|speakerActionEnabled=' + this.model.speakerActionEnabled +
+      '|speakerActionVisible=' + this.model.speakerActionVisible
     if (this.lastModelLogKey !== key) {
       this.lastModelLogKey = key
       console.info('RtcReferenceCallLayout rtc_layout_model ' + key)
@@ -176,7 +178,9 @@ export struct RtcReferenceCallLayout {
       '|showHangupAll=' + (this.model.showHangupAll === true) +
       '|muted=' + (this.model.muted === true) +
       '|speakerEnabled=' + (this.model.speakerEnabled === true) +
-      '|speakerLabel=' + this.getSpeakerActionLabel()
+      '|speakerLabel=' + this.getSpeakerActionLabel() +
+      '|speakerActionEnabled=' + (this.model.speakerActionEnabled === true) +
+      '|speakerActionVisible=' + (this.model.speakerActionVisible === true)
   }
 
   private getSideCardRenderKey(call: RtcHostCallUiItem): string {
@@ -782,14 +786,16 @@ export struct RtcReferenceCallLayout {
             })
           }
 
-          this.ControlButton(
-            this.model.speakerEnabled ?
-              $r('app.media.rtc_call_speaker_pressed') :
-              $r('app.media.rtc_call_speaker'),
-            this.getSpeakerActionLabel(),
-            true,
-            () => this.onSpeaker?.()
-          )
+          if (this.model.speakerActionVisible) {
+            this.ControlButton(
+              this.model.speakerEnabled ?
+                $r('app.media.rtc_call_speaker_pressed') :
+                $r('app.media.rtc_call_speaker'),
+              this.getSpeakerActionLabel(),
+              this.model.speakerActionEnabled,
+              () => this.onSpeaker?.()
+            )
+          }
         }
         .padding({ left: '50vp', right: '50vp', top: '40vp', bottom: '40vp' })
         .backgroundColor('#B3333333')

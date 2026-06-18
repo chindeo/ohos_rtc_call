@@ -104,10 +104,13 @@ export class RtcCallAudioPolicyController {
     const volumeLevel = RtcCallVolumeMonitor.getVolumeLevelByPercent(volumePercent, snapshot.minLevel, snapshot.maxLevel)
     await this.driver.setSpeaker(route.speakerEnabled)
     await this.driver.setVoiceCallVolume(volumeLevel)
-    this.applyHandsetMode(route.source === RTC_CALL_CONTROL_SOURCE_HANDSET, reason)
+    const nextHandsetMode = route.source === RTC_CALL_CONTROL_SOURCE_HANDSET
+    if (nextHandsetMode || this.state.handsetMode) {
+      this.applyHandsetMode(nextHandsetMode, reason)
+    }
     this.state.source = route.source
     this.state.speakerEnabled = route.speakerEnabled
-    this.state.handsetMode = route.source === RTC_CALL_CONTROL_SOURCE_HANDSET
+    this.state.handsetMode = nextHandsetMode
     this.state.currentVolumePercent = volumePercent
     route.volumePercent = volumePercent
     return route
@@ -122,7 +125,9 @@ export class RtcCallAudioPolicyController {
   }
 
   async applyHandsetPutDown(reason: string = 'handset put down'): Promise<void> {
-    this.applyHandsetMode(false, reason)
+    if (this.state.handsetMode) {
+      this.applyHandsetMode(false, reason)
+    }
     this.state.handsetMode = false
     if (this.state.source === RTC_CALL_CONTROL_SOURCE_HANDSET) {
       await this.driver.setSpeaker(true)
@@ -140,8 +145,21 @@ export class RtcCallAudioPolicyController {
     await this.driver.setSpeaker(enabled)
     this.state.speakerEnabled = enabled
     this.state.source = enabled ? RTC_CALL_CONTROL_SOURCE_SCREEN : RTC_CALL_CONTROL_SOURCE_HANDSET
-    this.applyHandsetMode(!enabled, reason)
-    this.state.handsetMode = !enabled
+    const nextHandsetMode = !enabled
+    if (nextHandsetMode || this.state.handsetMode) {
+      this.applyHandsetMode(nextHandsetMode, reason)
+    }
+    this.state.handsetMode = nextHandsetMode
+  }
+
+  syncSpeakerRouteState(speakerEnabled: boolean, volumePercent?: number): RtcCallAudioPolicyState {
+    this.state.speakerEnabled = speakerEnabled
+    this.state.source = speakerEnabled ? RTC_CALL_CONTROL_SOURCE_SCREEN : RTC_CALL_CONTROL_SOURCE_HANDSET
+    this.state.handsetMode = !speakerEnabled
+    if (volumePercent !== undefined) {
+      this.state.currentVolumePercent = Math.max(0, Math.min(100, volumePercent))
+    }
+    return this.getState()
   }
 
   async restoreAfterCall(reason: string = 'call ended'): Promise<void> {

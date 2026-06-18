@@ -21,6 +21,7 @@ class MemoryAudioPolicyDriver implements RtcCallAudioPolicyDriver {
   volume: number = -1
   speakerEnabled: boolean = false
   handsetMode: boolean = false
+  handsetModeApplyCount: number = 0
   muted: boolean = false
 
   readVoiceCallVolumeSnapshot(): RtcCallVolumeSnapshot {
@@ -37,6 +38,7 @@ class MemoryAudioPolicyDriver implements RtcCallAudioPolicyDriver {
 
   setHandsetMode(enabled: boolean, _reason: string): void {
     this.handsetMode = enabled
+    this.handsetModeApplyCount += 1
   }
 
   setMuted(muted: boolean): void {
@@ -55,6 +57,7 @@ export default function rtcCallAudioPolicyControllerTest() {
       expect(route.volumePercent).assertEqual(90)
       expect(driver.speakerEnabled).assertEqual(true)
       expect(driver.volume).assertEqual(9)
+      expect(driver.handsetModeApplyCount).assertEqual(0)
       controller.setMuted(true)
       expect(driver.muted).assertEqual(true)
 
@@ -76,7 +79,34 @@ export default function rtcCallAudioPolicyControllerTest() {
       expect(route.speakerEnabled).assertEqual(false)
       expect(route.volumePercent).assertEqual(40)
       expect(driver.handsetMode).assertEqual(true)
+      expect(driver.handsetModeApplyCount).assertEqual(1)
       expect(driver.muted).assertEqual(true)
+    })
+
+    it('only clears handset route after it was enabled', 0, async () => {
+      const driver = new MemoryAudioPolicyDriver()
+      const controller = new RtcCallAudioPolicyController({ driver })
+
+      await controller.applyAnswerPolicy(RTC_CALL_CONTROL_SOURCE_HANDSET)
+      await controller.applyAnswerPolicy(RTC_CALL_CONTROL_SOURCE_SCREEN)
+
+      expect(driver.handsetMode).assertEqual(false)
+      expect(driver.handsetModeApplyCount).assertEqual(2)
+      expect(driver.speakerEnabled).assertEqual(true)
+    })
+
+    it('syncs route state without touching hardware driver', 0, () => {
+      const driver = new MemoryAudioPolicyDriver()
+      const controller = new RtcCallAudioPolicyController({ driver })
+
+      const state = controller.syncSpeakerRouteState(false, 55)
+
+      expect(state.speakerEnabled).assertEqual(false)
+      expect(state.handsetMode).assertEqual(true)
+      expect(state.currentVolumePercent).assertEqual(55)
+      expect(driver.handsetModeApplyCount).assertEqual(0)
+      expect(driver.speakerEnabled).assertEqual(false)
+      expect(driver.volume).assertEqual(-1)
     })
   })
 }

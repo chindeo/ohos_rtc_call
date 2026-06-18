@@ -49,6 +49,8 @@ export interface RtcHostMultiCallControllerOptions {
   deviceRole?: RtcCallDeviceRole | string
   speakerActionLabel?: string
   speakerActionIsMicSwitch?: boolean
+  speakerActionEnabled?: boolean
+  speakerActionVisible?: boolean
 }
 
 export interface RtcHostLocalCardOptions {
@@ -71,6 +73,8 @@ export class RtcHostMultiCallController {
   private message: string = ''
   private speakerActionLabel: string
   private speakerActionIsMicSwitch: boolean
+  private speakerActionEnabled: boolean
+  private speakerActionVisible: boolean
   private deviceRole: RtcCallDeviceRole | string
   private mediaStates: Map<string, RtcWebRtcMediaState> = new Map()
   private answerReadySessions: Map<string, boolean> = new Map()
@@ -83,6 +87,8 @@ export class RtcHostMultiCallController {
     this.service = options.service
     this.speakerActionLabel = options.speakerActionLabel || '免提'
     this.speakerActionIsMicSwitch = options.speakerActionIsMicSwitch === true
+    this.speakerActionEnabled = options.speakerActionEnabled !== false
+    this.speakerActionVisible = options.speakerActionVisible !== false
     this.deviceRole = options.deviceRole || RtcCallDeviceRole.HOST
     this.unsubscribeView = this.service.onViewStateChange(() => this.emit())
     this.unsubscribeCalls = this.service.onIncomingCallsChange(() => this.emit())
@@ -321,6 +327,8 @@ export class RtcHostMultiCallController {
     model.speakerEnabled = this.speakerEnabled
     model.speakerActionLabel = this.speakerActionLabel
     model.speakerActionIsMicSwitch = this.speakerActionIsMicSwitch
+    model.speakerActionEnabled = this.speakerActionEnabled
+    model.speakerActionVisible = this.speakerActionVisible
     model.deviceRole = this.deviceRole
     model.volume = this.volume
     model.message = this.message || viewState.errorMessage || viewState.registrationErrorMessage

@@ -55,6 +55,8 @@ export class RtcHostCallUiModel {
   speakerEnabled: boolean = false
   speakerActionLabel: string = '免提'
   speakerActionIsMicSwitch: boolean = false
+  speakerActionEnabled: boolean = true
+  speakerActionVisible: boolean = true
   deviceRole: RtcCallDeviceRole | string = RtcCallDeviceRole.HOST
   volume: number = 0
   videoState: RtcHostVideoState = new RtcHostVideoState()

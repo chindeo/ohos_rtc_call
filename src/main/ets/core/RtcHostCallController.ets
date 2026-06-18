@@ -50,6 +50,8 @@ export interface RtcHostCallControllerOptions {
   deviceRole?: RtcCallDeviceRole | string
   speakerActionLabel?: string
   speakerActionIsMicSwitch?: boolean
+  speakerActionEnabled?: boolean
+  speakerActionVisible?: boolean
   onMicSwitch?: () => boolean | void | Promise<boolean | void>
   onError?: (message: string) => void
   onLog?: (message: string) => void
@@ -150,7 +152,9 @@ export class RtcHostCallController {
       deviceRole: options.deviceRole || RtcCallDeviceRole.HOST,
       speakerActionLabel: options.speakerActionLabel ||
         (options.speakerActionIsMicSwitch ? '切麦' : '免提'),
-      speakerActionIsMicSwitch: options.speakerActionIsMicSwitch
+      speakerActionIsMicSwitch: options.speakerActionIsMicSwitch,
+      speakerActionEnabled: options.speakerActionEnabled,
+      speakerActionVisible: options.speakerActionVisible
     })
     this.multiCallController.setLocalCard({
       number: options.local.number,
@@ -263,6 +267,17 @@ export class RtcHostCallController {
     this.multiCallController.setMediaControlState(muted, speakerEnabled, volume)
   }
 
+  syncSpeakerRouteState(speakerEnabled: boolean, volume?: number, reason: string = 'external route sync'): void {
+    const model = this.getUiModel()
+    const audio = this.audioPolicyController.syncSpeakerRouteState(
+      speakerEnabled,
+      volume !== undefined ? volume : model.volume
+    )
+    this.multiCallController.setMediaControlState(model.muted, audio.speakerEnabled, audio.currentVolumePercent)
+    this.options.onLog?.('rtc_speaker_route_sync speakerEnabled=' + audio.speakerEnabled +
+      ' volume=' + audio.currentVolumePercent + ' reason=' + reason)
+  }
+
   toggleMute(): void {
     const next = !this.getUiModel().muted
     this.audioPolicyController.setMuted(next)
@@ -272,6 +287,10 @@ export class RtcHostCallController {
   }
 
   async toggleSpeaker(): Promise<void> {
+    if (this.options.speakerActionEnabled === false) {
+      this.options.onLog?.('speaker_button_readonly ignored')
+      return
+    }
     if (this.options.speakerActionIsMicSwitch) {
       const before = this.getUiModel().speakerEnabled === true
       this.options.onLog?.('rtc_mic_switch action=speaker before=' + before)
