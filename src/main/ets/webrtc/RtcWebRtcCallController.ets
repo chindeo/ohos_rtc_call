@@ -65,6 +65,13 @@ interface RtcParsedHoldChange {
   isHold: boolean
 }
 
+class RtcPendingAnswerApply {
+  sessionKey: string = ''
+  retryCount: number = 0
+  timer?: number
+  requestedAt: number = 0
+}
+
 const RTC_APPLY_INVITE: number = 1
 const RTC_APPLY_ANSWER: number = 2
 const RTC_APPLY_HANGUP: number = 3
@@ -85,8 +92,12 @@ export class RtcWebRtcCallController {
   private sessions: Map<string, RtcWebRtcCallSessionInfo> = new Map()
   private sessionIds: Map<string, string> = new Map()
   private pendingStartSessionKeys: string[] = []
+  private pendingAcceptSessionKeys: string[] = []
+  private pendingAnswerApplies: Map<string, RtcPendingAnswerApply> = new Map()
   private recentLocalSingleHangup?: RtcRecentLocalSingleHangup
   private localSingleHangupEchoGuardMs: number = 5000
+  private answerRetryDelayMs: number = 1200
+  private maxAnswerRetryCount: number = 2
 
   constructor(
     mediaController: RtcWebRtcMediaController,
@@ -148,10 +159,16 @@ export class RtcWebRtcCallController {
 
   accept(sessionKey: string): boolean {
     const session = this.findSession(sessionKey)
-    if (!session || !this.server.serveNumber) {
+    if (!session) {
+      this.listener.onLog?.('accept_not_ready targetHash=' + this.getSessionHash(sessionKey) +
+        ' reason=session not found')
       return false
     }
-    this.sendApply(RTC_APPLY_ANSWER, session, false)
+    if (!this.server.serveNumber) {
+      this.queuePendingAccept(session.sessionKey, 'server not registered')
+      return true
+    }
+    this.sendAnswerApply(session, 'accept')
     return true
   }
 
@@ -194,6 +211,14 @@ export class RtcWebRtcCallController {
     return session ? this.copySession(session) : undefined
   }
 
+  markMediaConnected(sessionKey: string): void {
+    const session = this.findSession(sessionKey)
+    if (!session) {
+      return
+    }
+    this.clearAnswerApplyRetry(session.sessionKey, 'media connected')
+  }
+
   stop(): void {
     this.hangupAll()
     this.signalSession.close()
@@ -230,6 +255,11 @@ export class RtcWebRtcCallController {
         this.pendingStartSessionKeys = []
         pending.forEach((sessionKey: string) => {
           this.startCall(sessionKey)
+        })
+        const pendingAccepts = this.pendingAcceptSessionKeys.slice()
+        this.pendingAcceptSessionKeys = []
+        pendingAccepts.forEach((sessionKey: string) => {
+          this.accept(sessionKey)
         })
       },
       onError: (message: string) => this.listener.onError?.(message)
@@ -317,6 +347,7 @@ export class RtcWebRtcCallController {
       const session = payload ? this.upsertSession(payload.commonRequest, true, payload.rtcUid) : undefined
       if (session) {
         const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(payload?.rtcUid || '')
+        this.clearAnswerApplyRetry(session.sessionKey, 'answer notice')
         this.lifecycle.markPhase(session.uid || session.sessionId || session.sessionKey, 'answered', false)
         this.listener.onLog?.(`rtc_answer_state channelType=${scope.channelType} state=notice`)
         this.listener.onAnswerNotice?.(this.copySession(session))
@@ -479,6 +510,9 @@ export class RtcWebRtcCallController {
     this.sessions.delete(session.sessionKey)
     this.pendingStartSessionKeys =
       this.pendingStartSessionKeys.filter((item: string) => item !== session.sessionKey)
+    this.pendingAcceptSessionKeys =
+      this.pendingAcceptSessionKeys.filter((item: string) => item !== session.sessionKey)
+    this.clearAnswerApplyRetry(session.sessionKey, 'session removed')
     if (this.sessions.size === 0) {
       this.signalStateMachine.resetSession()
     }
@@ -491,6 +525,8 @@ export class RtcWebRtcCallController {
     this.sessionIds.clear()
     this.lifecycle.clear()
     this.pendingStartSessionKeys = []
+    this.pendingAcceptSessionKeys = []
+    this.clearAllAnswerApplyRetries('close all')
     this.signalStateMachine.resetSession()
   }
 
@@ -576,6 +612,81 @@ export class RtcWebRtcCallController {
       )
     }
     this.signalSession.sendSignal(this.wrapSignal('s__apply', data))
+  }
+
+  private sendAnswerApply(session: RtcWebRtcCallSessionInfo, reason: string): void {
+    this.sendApply(RTC_APPLY_ANSWER, session, false)
+    this.listener.onLog?.('answer_apply_sent sidHash=' + this.getSessionHash(session.sessionKey) +
+      ' retry=' + this.getAnswerRetryCount(session.sessionKey) +
+      ' reason=' + reason)
+    this.scheduleAnswerApplyRetry(session)
+  }
+
+  private queuePendingAccept(sessionKey: string, reason: string): void {
+    if (this.pendingAcceptSessionKeys.indexOf(sessionKey) < 0) {
+      this.pendingAcceptSessionKeys.push(sessionKey)
+    }
+    this.listener.onLog?.('accept_pending sidHash=' + this.getSessionHash(sessionKey) +
+      ' reason=' + reason)
+  }
+
+  private scheduleAnswerApplyRetry(session: RtcWebRtcCallSessionInfo): void {
+    let pending = this.pendingAnswerApplies.get(session.sessionKey)
+    if (!pending) {
+      pending = new RtcPendingAnswerApply()
+      pending.sessionKey = session.sessionKey
+      pending.requestedAt = Date.now()
+      this.pendingAnswerApplies.set(session.sessionKey, pending)
+    }
+    if (pending.timer !== undefined) {
+      clearTimeout(pending.timer)
+    }
+    pending.timer = setTimeout(() => {
+      this.retryAnswerApply(session.sessionKey)
+    }, this.answerRetryDelayMs)
+  }
+
+  private retryAnswerApply(sessionKey: string): void {
+    const pending = this.pendingAnswerApplies.get(sessionKey)
+    const session = this.findSession(sessionKey)
+    if (!pending || !session) {
+      this.clearAnswerApplyRetry(sessionKey, 'retry session missing')
+      return
+    }
+    if (pending.retryCount >= this.maxAnswerRetryCount) {
+      this.listener.onLog?.('answer_apply_retry_stop sidHash=' + this.getSessionHash(sessionKey) +
+        ' elapsedMs=' + (Date.now() - pending.requestedAt))
+      this.clearAnswerApplyRetry(sessionKey, 'retry exhausted')
+      return
+    }
+    pending.retryCount += 1
+    this.listener.onLog?.('answer_retry sidHash=' + this.getSessionHash(sessionKey) +
+      ' retry=' + pending.retryCount)
+    this.sendApply(RTC_APPLY_ANSWER, session, false)
+    this.scheduleAnswerApplyRetry(session)
+  }
+
+  private clearAnswerApplyRetry(sessionKey: string, reason: string): void {
+    const pending = this.pendingAnswerApplies.get(sessionKey)
+    if (!pending) {
+      return
+    }
+    if (pending.timer !== undefined) {
+      clearTimeout(pending.timer)
+    }
+    this.pendingAnswerApplies.delete(sessionKey)
+    this.listener.onLog?.('answer_apply_clear sidHash=' + this.getSessionHash(sessionKey) +
+      ' reason=' + reason)
+  }
+
+  private clearAllAnswerApplyRetries(reason: string): void {
+    const keys: string[] = []
+    this.pendingAnswerApplies.forEach((_pending: RtcPendingAnswerApply, key: string) => keys.push(key))
+    keys.forEach((key: string) => this.clearAnswerApplyRetry(key, reason))
+  }
+
+  private getAnswerRetryCount(sessionKey: string): number {
+    return this.pendingAnswerApplies.get(sessionKey)?.retryCount || 0
   }
 
   private sendHoldSwitchApply(sessionKey: string, action: string): boolean {

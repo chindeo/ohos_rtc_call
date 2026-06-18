@@ -1,4 +1,4 @@
-import webrtc from '@ohos/webrtc'
+import webrtc from '../webrtc/OhosWebRtc'
 
 export enum RtcCallMode {
   AUDIO = 'audio',
@@ -14,6 +14,7 @@ export enum RtcCallState {
   RINGING = 'ringing',
   TRIGGERING_CALL = 'triggering_call',
   CALLING = 'calling',
+  CONNECTING = 'connecting',
   CONNECTED = 'connected',
   FAILED = 'failed',
   ENDED = 'ended'

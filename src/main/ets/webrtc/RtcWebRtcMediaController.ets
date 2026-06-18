@@ -1,20 +1,22 @@
-import webrtc, { ScalingMode, VideoRenderController } from '@ohos/webrtc'
+import webrtc, { ScalingMode, VideoRenderController } from './OhosWebRtc'
 import { RtcAudioController, RtcVideoRendererAdapter } from '../audio/RtcAudioController'
 import {
   RTC_PEER_SESSION_CHANNEL_SUBSCRIBE,
   RtcPeerSessionRegistry
 } from '../core/RtcPeerSessionRegistry'
 import { RtcCallMode, RtcPeerIdentity } from '../model/RtcCallConfig'
-import { RtcSignalMessage } from '../model/RtcSignalTypes'
+import { RtcCommonRequest, RtcSignalMessage } from '../model/RtcSignalTypes'
 import {
   RTC_WEBRTC_PEER_ROLE_PUBLISH,
   RTC_WEBRTC_PEER_ROLE_SUBSCRIBE,
+  RTC_WEBRTC_SIGNAL_EVENT_SEND_CANDIDATE,
   RtcWebRtcIceCandidate,
   RtcWebRtcIceStats,
   RtcWebRtcPeerConnectionAdapter,
   RtcWebRtcPeerRole,
   RtcWebRtcSessionDescription,
-  RtcWebRtcSignalContext
+  RtcWebRtcSignalContext,
+  RtcWebRtcSignalStateMachine
 } from '../signaling/RtcWebRtcSignalStateMachine'
 import { RtcWebRtcVideoSourceOptions } from './RtcWebRtcConfig'
 import {
@@ -103,6 +105,9 @@ class RtcWebRtcPeerRecord {
   context: RtcWebRtcSignalContext
   pc: webrtc.RTCPeerConnection
   session?: RtcWebRtcMediaSession
+  localCandidateCount: number = 0
+  iceCheckingTimer?: number
+  iceCheckingStartedAt: number = 0
 
   constructor(
     key: string,
@@ -138,6 +143,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private onMediaStateChange?: (state: RtcWebRtcMediaState) => void
   private onLog?: (message: string) => void
   private onError?: (message: string) => void
+  private iceCheckingWarnMs: number = 10000
 
   constructor(options: RtcWebRtcMediaControllerOptions) {
     this.local = options.local
@@ -537,6 +543,46 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
 
   private bindPeerEvents(record: RtcWebRtcPeerRecord): void {
     const pc = record.pc
+    pc.onicecandidate = (event: webrtc.RTCPeerConnectionIceEvent) => {
+      if (this.peers.get(record.key)?.pc !== pc) {
+        return
+      }
+      if (!event.candidate) {
+        this.logPeerState(record, 'ice_gathering_complete')
+        return
+      }
+      this.sendLocalIceCandidate(record, event.candidate)
+    }
+    pc.onicecandidateerror = (event: webrtc.RTCPeerConnectionIceErrorEvent) => {
+      if (this.peers.get(record.key)?.pc !== pc) {
+        return
+      }
+      this.error('ice_candidate_error role=' + record.role +
+        ' sessionHash=' + this.getSessionHash(record.context.sessionId) +
+        ' rtcUid=' + record.context.rtcUid +
+        ' url=' + (event.url || '') +
+        ' code=' + (event.errorCode ?? '') +
+        ' text=' + (event.errorText || ''))
+    }
+    pc.oniceconnectionstatechange = () => {
+      if (this.peers.get(record.key)?.pc !== pc) {
+        return
+      }
+      this.handleIceConnectionState(record)
+      this.logPeerState(record, 'ice_state')
+    }
+    pc.onicegatheringstatechange = () => {
+      if (this.peers.get(record.key)?.pc !== pc) {
+        return
+      }
+      this.logPeerState(record, 'ice_gathering_state')
+    }
+    pc.onsignalingstatechange = () => {
+      if (this.peers.get(record.key)?.pc !== pc) {
+        return
+      }
+      this.logPeerState(record, 'signaling_state')
+    }
     pc.onconnectionstatechange = () => {
       if (this.peers.get(record.key)?.pc !== pc) {
         return
@@ -553,7 +599,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
           pc.getReceivers().length
         )
       }
-      this.log(`peer state role=${record.role} session=${record.context.sessionId} state=${pc.connectionState}`)
+      this.logPeerState(record, 'peer_state')
     }
     pc.ontrack = (event: webrtc.RTCTrackEvent) => {
       this.handleRemoteTrack(record, event)
@@ -689,6 +735,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   }
 
   private closePeer(record: RtcWebRtcPeerRecord, reason: string): void {
+    this.clearIceCheckingTimer(record)
     try {
       record.pc.close()
     } catch (_error) {
@@ -732,5 +779,156 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
 
   private error(message: string): void {
     this.onError?.(message)
+  }
+
+  private sendLocalIceCandidate(record: RtcWebRtcPeerRecord, candidate: webrtc.RTCIceCandidate): void {
+    const candidateInit = candidate.toJSON()
+    const candidateText = candidateInit.candidate || ''
+    if (!candidateText) {
+      this.logPeerState(record, 'local_candidate_empty')
+      return
+    }
+    const commonRequest = this.resolveCandidateCommonRequest(record)
+    if (!commonRequest) {
+      this.log('local_candidate_skip role=' + record.role +
+        ' sessionHash=' + this.getSessionHash(record.context.sessionId) +
+        ' rtcUid=' + record.context.rtcUid +
+        ' reason=missing_common_request')
+      return
+    }
+    const message = RtcWebRtcSignalStateMachine.buildCandidateSignal({
+      eventName: RTC_WEBRTC_SIGNAL_EVENT_SEND_CANDIDATE,
+      uuid: record.context.sessionId,
+      rtcUid: record.context.scopedRtcUid,
+      local: this.local,
+      remote: {
+        number: record.session?.targetNumber || commonRequest.to || commonRequest.grpcTo || '',
+        displayName: record.session?.targetName || commonRequest.toName || ''
+      },
+      mode: record.session?.mode || (commonRequest.isVideo ? RtcCallMode.VIDEO : RtcCallMode.AUDIO),
+      candidateType: record.role,
+      candidate: candidateText,
+      sdpMLineIndex: candidateInit.sdpMLineIndex,
+      sdpMid: candidateInit.sdpMid,
+      commonRequest
+    })
+    record.localCandidateCount += 1
+    this.log('local_candidate_send role=' + record.role +
+      ' sessionHash=' + this.getSessionHash(record.context.sessionId) +
+      ' rtcUid=' + record.context.rtcUid +
+      ' count=' + record.localCandidateCount +
+      ' mid=' + (candidateInit.sdpMid || '') +
+      ' mline=' + (candidateInit.sdpMLineIndex ?? '') +
+      ' type=' + this.getCandidateType(candidateText) +
+      ' signaling=' + record.pc.signalingState +
+      ' ice=' + record.pc.iceConnectionState +
+      ' gathering=' + record.pc.iceGatheringState)
+    this.sendSignal(message, record.context).catch((error: Error) => {
+      this.error('local_candidate_send_failed role=' + record.role +
+        ' sessionHash=' + this.getSessionHash(record.context.sessionId) +
+        ' error=' + JSON.stringify(error))
+    })
+  }
+
+  private resolveCandidateCommonRequest(record: RtcWebRtcPeerRecord): RtcCommonRequest | undefined {
+    if (record.context.commonRequest) {
+      return record.context.commonRequest
+    }
+    const session = record.session
+    if (!session) {
+      return undefined
+    }
+    return {
+      uuid: record.context.sessionId,
+      locId: this.local.locId || '',
+      hospitalId: this.local.hospitalId || '',
+      number: this.local.number,
+      displayName: this.local.displayName || this.local.number,
+      clientType: this.local.clientType || '',
+      identity: this.local.identity || '',
+      to: session.targetNumber,
+      toName: session.targetName || session.targetNumber,
+      from: this.local.number,
+      fromName: this.local.displayName || this.local.number,
+      grpcFrom: this.local.number,
+      grpcTo: session.targetNumber,
+      isVideo: session.mode === RtcCallMode.VIDEO
+    }
+  }
+
+  private handleIceConnectionState(record: RtcWebRtcPeerRecord): void {
+    const state = record.pc.iceConnectionState
+    if (state === 'connected' || state === 'completed' || state === 'failed' || state === 'closed') {
+      this.clearIceCheckingTimer(record)
+      return
+    }
+    if (state !== 'checking') {
+      return
+    }
+    if (record.iceCheckingTimer !== undefined) {
+      return
+    }
+    record.iceCheckingStartedAt = Date.now()
+    record.iceCheckingTimer = setTimeout(() => {
+      if (this.peers.get(record.key)?.pc !== record.pc) {
+        return
+      }
+      if (record.pc.iceConnectionState !== 'checking') {
+        this.clearIceCheckingTimer(record)
+        return
+      }
+      this.log('publish_connect_checking_timeout role=' + record.role +
+        ' sessionHash=' + this.getSessionHash(record.context.sessionId) +
+        ' rtcUid=' + record.context.rtcUid +
+        ' elapsedMs=' + (Date.now() - record.iceCheckingStartedAt) +
+        ' localCandidates=' + record.localCandidateCount +
+        ' signaling=' + record.pc.signalingState +
+        ' connection=' + record.pc.connectionState +
+        ' gathering=' + record.pc.iceGatheringState)
+      this.clearIceCheckingTimer(record)
+    }, this.iceCheckingWarnMs)
+  }
+
+  private clearIceCheckingTimer(record: RtcWebRtcPeerRecord): void {
+    if (record.iceCheckingTimer !== undefined) {
+      clearTimeout(record.iceCheckingTimer)
+      record.iceCheckingTimer = undefined
+    }
+    record.iceCheckingStartedAt = 0
+  }
+
+  private logPeerState(record: RtcWebRtcPeerRecord, action: string): void {
+    this.log(action +
+      ' role=' + record.role +
+      ' sessionHash=' + this.getSessionHash(record.context.sessionId) +
+      ' rtcUid=' + record.context.rtcUid +
+      ' signaling=' + record.pc.signalingState +
+      ' ice=' + record.pc.iceConnectionState +
+      ' gathering=' + record.pc.iceGatheringState +
+      ' connection=' + record.pc.connectionState +
+      ' localCandidates=' + record.localCandidateCount)
+  }
+
+  private getCandidateType(candidate: string): string {
+    const marker = ' typ '
+    const index = candidate.indexOf(marker)
+    if (index < 0) {
+      return ''
+    }
+    const rest = candidate.substring(index + marker.length)
+    return rest.split(' ')[0] || ''
+  }
+
+  private getSessionHash(sessionKey: string): string {
+    const key = (sessionKey || '').trim()
+    let hash = 0
+    for (let i = 0; i < key.length; i += 1) {
+      hash = (hash * 33 + key.charCodeAt(i)) % 60466176
+    }
+    let text = hash.toString(36)
+    while (text.length < 6) {
+      text = '0' + text
+    }
+    return text
   }
 }

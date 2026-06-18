@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@ohos/hypium'
-import webrtc from '@ohos/webrtc'
+import webrtc from '../src/main/ets/webrtc/OhosWebRtc'
 import { RtcVideoRendererAdapter } from '../src/main/ets/audio/RtcAudioController'
 import { RtcCallMode } from '../src/main/ets/model/RtcCallConfig'
 import { RtcWebRtcMediaController } from '../src/main/ets/webrtc/RtcWebRtcMediaController'

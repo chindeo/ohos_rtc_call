@@ -61,6 +61,7 @@ export interface RtcWebRtcSignalContext {
   rtcUid: string
   scopedRtcUid: string
   reason: string
+  commonRequest?: RtcCommonRequest
 }
 
 export interface RtcWebRtcPeerConnectionAdapter {
@@ -174,6 +175,7 @@ export interface RtcWebRtcPeerSessionState {
   role: RtcWebRtcPeerRole
   sessionId: string
   rtcUid: string
+  commonRequest?: RtcCommonRequest
   remoteDescReady: boolean
   localDescReady: boolean
   pendingCandidates: RtcWebRtcIceCandidate[]
@@ -345,7 +347,7 @@ export class RtcWebRtcSignalStateMachine {
     const sdpType = (data.sdpType || '').toLowerCase()
     const remoteSdp = options?.decodeSdp ? options.decodeSdp(data.sdp || '') : (data.sdp || '')
     let role = options?.role || scope.channelType
-    const staleContext = this.createContext(role, sessionId, scope.rtcUid, 'handle sdp')
+    const staleContext = this.createContext(role, sessionId, scope.rtcUid, 'handle sdp', data.commonRequest)
     if (this.isStaleSession(sessionId)) {
       this.warn(`skip stale sdp session=${sessionId} rtcUid=${scope.rtcUid}`)
       return this.createResult(false, true, 'stale session', staleContext, sdpType)
@@ -355,12 +357,13 @@ export class RtcWebRtcSignalStateMachine {
       this.rebindSubscribeToPublish(sessionId, scope.rtcUid)
       role = RTC_WEBRTC_PEER_ROLE_PUBLISH
     }
-    const context = this.createContext(role, sessionId, scope.rtcUid, 'handle sdp')
+    const context = this.createContext(role, sessionId, scope.rtcUid, 'handle sdp', data.commonRequest)
     const state = sdpType === 'offer' ?
       this.beginSignalSession(sessionId, role, scope.rtcUid) : this.getExistingPeerState(sessionId, role, scope.rtcUid)
     if (!state) {
       return this.createResult(false, true, 'missing peer state', context, sdpType)
     }
+    state.commonRequest = data.commonRequest
     if (!data.sdp || !sdpType) {
       return this.createResult(false, true, 'empty sdp', context, sdpType)
     }
@@ -432,12 +435,13 @@ export class RtcWebRtcSignalStateMachine {
     const sessionId = RtcWebRtcSignalStateMachine.getSignalSessionId(data, this.activeUuid)
     const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(data.rtcUid)
     const role = options?.role || scope.channelType
-    const context = this.createContext(role, sessionId, scope.rtcUid, 'handle candidate')
+    const context = this.createContext(role, sessionId, scope.rtcUid, 'handle candidate', data.commonRequest)
     if (this.isStaleSession(sessionId)) {
       this.warn(`skip stale candidate session=${sessionId} rtcUid=${scope.rtcUid}`)
       return this.createResult(false, true, 'stale session', context)
     }
     const state = this.getOrCreatePeerState(sessionId, role, scope.rtcUid)
+    state.commonRequest = data.commonRequest
     if (!data.candidate) {
       state.iceStats.endOfCandidatesCount += 1
       return this.createResult(false, true, 'empty candidate', context)
@@ -801,7 +805,8 @@ export class RtcWebRtcSignalStateMachine {
     role: RtcWebRtcPeerRole,
     sessionId: string,
     rtcUid: string = '',
-    reason: string = ''
+    reason: string = '',
+    commonRequest?: RtcCommonRequest
   ): RtcWebRtcSignalContext {
     return {
       role,
@@ -809,7 +814,8 @@ export class RtcWebRtcSignalStateMachine {
       sessionId,
       rtcUid,
       scopedRtcUid: RtcWebRtcSignalStateMachine.encodeRtcScope(rtcUid, role),
-      reason
+      reason,
+      commonRequest
     }
   }
 
@@ -1060,6 +1066,7 @@ export class RtcWebRtcSignalStateMachine {
       role: state.role,
       sessionId: state.sessionId,
       rtcUid: state.rtcUid,
+      commonRequest: state.commonRequest,
       remoteDescReady: state.remoteDescReady,
       localDescReady: state.localDescReady,
       pendingCandidates: state.pendingCandidates.slice(),

@@ -36,6 +36,14 @@ export class RtcHostCallOperationResult {
   sessionKey: string = ''
 }
 
+class RtcPendingAcceptRecord {
+  sessionKey: string = ''
+  requestedAt: number = 0
+  command?: RtcCallControlCommand
+  timer?: number
+  inFlight: boolean = false
+}
+
 export interface RtcHostMultiCallControllerOptions {
   service: RtcDefaultCallService
   deviceRole?: RtcCallDeviceRole | string
@@ -66,6 +74,9 @@ export class RtcHostMultiCallController {
   private deviceRole: RtcCallDeviceRole | string
   private mediaStates: Map<string, RtcWebRtcMediaState> = new Map()
   private answerReadySessions: Map<string, boolean> = new Map()
+  private pendingAccepts: Map<string, RtcPendingAcceptRecord> = new Map()
+  private acceptSentSessions: Map<string, boolean> = new Map()
+  private acceptTimeoutMs: number = 5000
   private lastUiModelDebugLogKey: string = ''
 
   constructor(options: RtcHostMultiCallControllerOptions) {
@@ -112,6 +123,9 @@ export class RtcHostMultiCallController {
       state.targetNumber
     ) || state.sessionKey
     this.mediaStates.set(key, state)
+    if (state.mediaConnected) {
+      this.clearPendingAccept(key, 'media connected')
+    }
     this.emit()
   }
 
@@ -127,6 +141,9 @@ export class RtcHostMultiCallController {
       return
     }
     this.answerReadySessions.set(key, ready)
+    if (ready) {
+      this.flushPendingAccept(key, 'answer ready')
+    }
     this.emit()
   }
 
@@ -149,18 +166,45 @@ export class RtcHostMultiCallController {
     }
     const call = this.service.getCallListItems()
       .find((item: RtcCallListItem) => this.getStableKey(item) === resolved.sessionKey)
+    if (this.acceptSentSessions.get(resolved.sessionKey) === true) {
+      const result = this.result(true, 'duplicate accept', RtcHostCallOperation.ACCEPT, resolved.sessionKey)
+      this.logOperationResolved(result)
+      return result
+    }
+    if (this.pendingAccepts.get(resolved.sessionKey)) {
+      const result = this.result(true, 'accept pending', RtcHostCallOperation.ACCEPT, resolved.sessionKey)
+      this.logOperationResolved(result)
+      return result
+    }
     if (!call?.canAccept) {
       const result = this.result(false, 'session not acceptable', RtcHostCallOperation.ACCEPT, resolved.sessionKey)
       this.logOperationResolved(result)
       return result
     }
+    if (!this.isAnswerReady(resolved.sessionKey)) {
+      const result = this.queuePendingAccept(resolved.sessionKey, command)
+      this.logOperationResolved(result)
+      return result
+    }
+    const result = await this.sendAccept(resolved.sessionKey, command, 'answer ready')
+    this.logOperationResolved(result)
+    return result
+  }
+
+  private async sendAccept(
+    sessionKey: string,
+    command?: RtcCallControlCommand,
+    reason: string = 'accept'
+  ): Promise<RtcHostCallOperationResult> {
     const activeSessionKey = this.getUiModel().activeCall?.sessionKey || ''
-    await this.service.acceptIncomingCall(resolved.sessionKey, command, {
-      focus: !activeSessionKey || activeSessionKey === resolved.sessionKey
+    this.acceptSentSessions.set(sessionKey, true)
+    await this.service.acceptIncomingCall(sessionKey, command, {
+      focus: !activeSessionKey || activeSessionKey === sessionKey
     })
     this.emit()
-    this.logOperationResolved(resolved)
-    return resolved
+    console.info('RtcHostMultiCallController accept_flush sidHash=' + this.getSessionHash(sessionKey) +
+      ' reason=' + reason)
+    return this.result(true, 'accept sent: ' + reason, RtcHostCallOperation.ACCEPT, sessionKey)
   }
 
   async hangup(sessionKey?: string, reason: string = 'host single hangup'): Promise<RtcHostCallOperationResult> {
@@ -180,6 +224,7 @@ export class RtcHostMultiCallController {
   async hangupAll(reason: string = 'host hangup all'): Promise<RtcHostCallOperationResult> {
     const result = this.result(true, 'all calls terminated', RtcHostCallOperation.HANGUP_ALL, '')
     await this.service.terminateAllCalls(reason)
+    this.clearAllSessionState()
     this.answerReadySessions.clear()
     this.mediaStates.clear()
     this.emit()
@@ -412,8 +457,86 @@ export class RtcHostMultiCallController {
   }
 
   private clearSessionState(sessionKey: string): void {
+    this.clearPendingAccept(sessionKey, 'session cleared')
+    this.acceptSentSessions.delete(sessionKey)
     this.answerReadySessions.delete(sessionKey)
     this.mediaStates.delete(sessionKey)
+  }
+
+  private clearAllSessionState(): void {
+    const keys: string[] = []
+    this.pendingAccepts.forEach((_record: RtcPendingAcceptRecord, key: string) => keys.push(key))
+    keys.forEach((key: string) => this.clearPendingAccept(key, 'all sessions cleared'))
+    this.acceptSentSessions.clear()
+  }
+
+  private isAnswerReady(sessionKey: string): boolean {
+    const key = (sessionKey || '').trim()
+    if (!key) {
+      return false
+    }
+    if (this.answerReadySessions.get(key) === true) {
+      return true
+    }
+    const media = this.mediaStates.get(key)
+    return media?.mediaConnected === true
+  }
+
+  private queuePendingAccept(
+    sessionKey: string,
+    command?: RtcCallControlCommand
+  ): RtcHostCallOperationResult {
+    const record = new RtcPendingAcceptRecord()
+    record.sessionKey = sessionKey
+    record.command = command
+    record.requestedAt = Date.now()
+    record.timer = setTimeout(() => {
+      this.handlePendingAcceptTimeout(sessionKey)
+    }, this.acceptTimeoutMs)
+    this.pendingAccepts.set(sessionKey, record)
+    console.info('RtcHostMultiCallController accept_pending sidHash=' + this.getSessionHash(sessionKey) +
+      ' timeoutMs=' + this.acceptTimeoutMs)
+    this.emit()
+    return this.result(true, 'accept pending', RtcHostCallOperation.ACCEPT, sessionKey)
+  }
+
+  private flushPendingAccept(sessionKey: string, reason: string): void {
+    const record = this.pendingAccepts.get(sessionKey)
+    if (!record || record.inFlight) {
+      return
+    }
+    record.inFlight = true
+    this.clearPendingAccept(sessionKey, 'flush')
+    this.sendAccept(sessionKey, record.command, reason).catch((error: Error) => {
+      console.error('RtcHostMultiCallController accept_flush_failed sidHash=' +
+        this.getSessionHash(sessionKey) + ' error=' + JSON.stringify(error))
+      this.acceptSentSessions.delete(sessionKey)
+    })
+  }
+
+  private clearPendingAccept(sessionKey: string, reason: string): void {
+    const record = this.pendingAccepts.get(sessionKey)
+    if (!record) {
+      return
+    }
+    if (record.timer !== undefined) {
+      clearTimeout(record.timer)
+    }
+    this.pendingAccepts.delete(sessionKey)
+    console.info('RtcHostMultiCallController accept_pending_clear sidHash=' +
+      this.getSessionHash(sessionKey) + ' reason=' + reason)
+  }
+
+  private handlePendingAcceptTimeout(sessionKey: string): void {
+    const record = this.pendingAccepts.get(sessionKey)
+    if (!record) {
+      return
+    }
+    this.pendingAccepts.delete(sessionKey)
+    console.warn('RtcHostMultiCallController accept_timeout sidHash=' + this.getSessionHash(sessionKey) +
+      ' elapsedMs=' + (Date.now() - record.requestedAt))
+    this.message = '接听超时，请重试'
+    this.emit()
   }
 
   private toUiItem(item: RtcCallListItem): RtcHostCallUiItem {

@@ -3,6 +3,7 @@ import { RtcCallMode } from '../src/main/ets/model/RtcCallConfig'
 import {
   RTC_WEBRTC_PEER_ROLE_PUBLISH,
   RTC_WEBRTC_PEER_ROLE_SUBSCRIBE,
+  RTC_WEBRTC_SIGNAL_EVENT_SEND_CANDIDATE,
   RTC_WEBRTC_SIGNAL_EVENT_SEND_SDP,
   RtcWebRtcIceCandidate,
   RtcWebRtcPeerConnectionAdapter,
@@ -29,6 +30,7 @@ class MemoryPeerConnectionAdapter implements RtcWebRtcPeerConnectionAdapter {
   localDescription?: RtcWebRtcSessionDescription
   candidates: RtcWebRtcIceCandidate[] = []
   sentSignals: RtcSignalMessage[] = []
+  sentContexts: RtcWebRtcSignalContext[] = []
   current: boolean = true
 
   async ensurePeerConnection(role: RtcWebRtcPeerRole, context: RtcWebRtcSignalContext): Promise<void> {
@@ -83,6 +85,7 @@ class MemoryPeerConnectionAdapter implements RtcWebRtcPeerConnectionAdapter {
 
   sendSignal(message: RtcSignalMessage, _context: RtcWebRtcSignalContext): void {
     this.sentSignals.push(message)
+    this.sentContexts.push(_context)
   }
 }
 
@@ -155,6 +158,30 @@ export default function rtcWebRtcSignalStateMachineTest() {
       expect(payload.commonRequest.grpcTo).assertEqual('1002')
     })
 
+    it('builds candidate signal with the original common request', 0, () => {
+      const request = commonRequest('call-ice')
+      const message = RtcWebRtcSignalStateMachine.buildCandidateSignal({
+        eventName: RTC_WEBRTC_SIGNAL_EVENT_SEND_CANDIDATE,
+        uuid: 'call-ice',
+        rtcUid: RtcWebRtcSignalStateMachine.encodeRtcScope('rtc-ice', RTC_WEBRTC_PEER_ROLE_PUBLISH),
+        local: { number: '1001', displayName: 'Local', clientType: 'client' },
+        remote: { number: '1002', displayName: 'Remote', clientType: 'client' },
+        mode: RtcCallMode.AUDIO,
+        candidateType: RTC_WEBRTC_PEER_ROLE_PUBLISH,
+        candidate: 'candidate:1 1 udp 1 192.0.2.10 10000 typ host',
+        sdpMLineIndex: 0,
+        sdpMid: '0',
+        commonRequest: request
+      })
+      const payload = JSON.parse(message.data) as RtcCandidateSignalData
+
+      expect(message.eventName).assertEqual(RTC_WEBRTC_SIGNAL_EVENT_SEND_CANDIDATE)
+      expect(payload.commonRequest.uuid).assertEqual('call-ice')
+      expect(payload.commonRequest.grpcFrom).assertEqual('1001')
+      expect(payload.rtcUid).assertEqual('publish|rtc-ice')
+      expect(payload.candidateType).assertEqual(RTC_WEBRTC_PEER_ROLE_PUBLISH)
+    })
+
     it('skips stale candidate without creating subscribe state', 0, async () => {
       const adapter = new MemoryPeerConnectionAdapter()
       const machine = new RtcWebRtcSignalStateMachine({ adapter })
@@ -204,6 +231,7 @@ export default function rtcWebRtcSignalStateMachineTest() {
       expect(result.handled).assertEqual(true)
       expect(result.role).assertEqual(RTC_WEBRTC_PEER_ROLE_SUBSCRIBE)
       expect(adapter.sentSignals.length).assertEqual(1)
+      expect(adapter.sentContexts[0].commonRequest?.uuid).assertEqual('call-1')
       expect(adapter.sentSignals[0].eventName).assertEqual(RTC_WEBRTC_SIGNAL_EVENT_SEND_SDP)
       expect(payload.sdpType).assertEqual('answer')
       expect(payload.rtcUid).assertEqual('subscribe|rtc-2')

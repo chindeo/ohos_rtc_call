@@ -18,10 +18,10 @@
     "audio",
     "call"
   ],
-  "dependencies": {},
-  "dynamicDependencies": {
-    "@ohos/webrtc": "*"
+  "dependencies": {
+    "libohos_webrtc.so": "file:./src/main/libohos_webrtc"
   },
+  "dynamicDependencies": {},
   "devDependencies": {
     "@ohos/hypium": "1.0.19"
   }

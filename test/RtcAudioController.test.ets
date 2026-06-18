@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@ohos/hypium'
 import { RtcAudioController, RtcVideoRendererAdapter } from '../src/main/ets/audio/RtcAudioController'
-import webrtc from '@ohos/webrtc'
+import webrtc from '../src/main/ets/webrtc/OhosWebRtc'
 
 class MemoryVideoRenderer implements RtcVideoRendererAdapter {
   bindCount: number = 0

@@ -285,7 +285,7 @@ export class RtcDefaultCallService implements RtcCallService {
     if (!this.session.active) {
       return
     }
-    this.session.state = RtcCallState.CONNECTED
+    this.session.state = RtcCallState.CONNECTING
     this.session.hostPhase = RtcHostPhase.MEDIA_ACTIVE
     this.session.visible = true
     this.session.pendingTrigger = false

@@ -188,6 +188,7 @@ $IncludeItems = @(
   "LICENSE",
   "oh-package.json5",
   "example",
+  "libs",
   "src"
 )
 
@@ -238,7 +239,7 @@ $SensitivePatterns = @(
   "secret[_-]?key",
   "dgzyh\.server\.chindeo\.test",
   "@company/device_sdk",
-  '"file:'
+  '"file:(?!\./src/main/libohos_webrtc")'
 )
 
 $ScanFiles = Get-ChildItem -Path $PackageRoot -Recurse -File -Include *.ets,*.ts,*.json,*.json5,*.md,*.txt

@@ -1,4 +1,4 @@
-import webrtc from '@ohos/webrtc'
+import webrtc from '../webrtc/OhosWebRtc'
 import audio from '@ohos.multimedia.audio'
 import fs from '@ohos.file.fs'
 import { RtcCallDiagnosticsOptions } from '../model/RtcCallConfig'

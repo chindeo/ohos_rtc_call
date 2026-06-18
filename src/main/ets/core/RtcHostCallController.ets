@@ -98,7 +98,9 @@ export class RtcHostCallController {
           route.speakerEnabled,
           route.volumePercent
         )
-        this.webRtcController.accept(session.uid || session.requestId)
+        const sent = this.webRtcController.accept(session.uid || session.requestId)
+        this.options.onLog?.('host accept signal sent=' + sent +
+          ' sidHash=' + this.getSessionHash(session.uid || session.requestId))
       },
       onTerminateCall: async (session: RtcCallSession, reason: string) => {
         const key = session.uid || session.requestId
@@ -392,6 +394,7 @@ export class RtcHostCallController {
     const result = this.multiCallController.markConnectedByMediaState(state)
     this.options.onLog?.('rtc_answer_mark handled=' + result.handled + ' reason=' + result.reason)
     if (result.handled) {
+      this.webRtcController.markMediaConnected(result.sessionKey)
       this.options.onConnected?.(result.sessionKey)
     }
   }
