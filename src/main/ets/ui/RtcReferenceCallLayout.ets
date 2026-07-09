@@ -61,6 +61,64 @@ export struct RtcReferenceCallLayout {
     return this.areaWidth <= 0 || this.areaWidth >= this.areaHeight
   }
 
+  private isCompactViewport(): boolean {
+    if (this.areaWidth <= 0 || this.areaHeight <= 0) {
+      return false
+    }
+    const shortSide = Math.min(this.areaWidth, this.areaHeight)
+    const longSide = Math.max(this.areaWidth, this.areaHeight)
+    return shortSide <= 820 && longSide <= 1320
+  }
+
+  private controlIconSize(): string {
+    return this.isCompactViewport() ? '66vp' : '88vp'
+  }
+
+  private controlTextSize(): string {
+    return this.isCompactViewport() ? '18fp' : '22fp'
+  }
+
+  private overlayAvatarSize(): string {
+    return this.isCompactViewport() ? '88vp' : '150vp'
+  }
+
+  private overlayNameFontSize(call: RtcHostCallUiItem): string {
+    if (this.isCompactViewport()) {
+      return this.isLandscape() ? '42fp' : '36fp'
+    }
+    return call.direction === RtcCallDirection.INCOMING && this.isLandscape() ? '100fp' : '46fp'
+  }
+
+  private overlayActionIconSize(): string {
+    return this.isCompactViewport() ? '72vp' : '120vp'
+  }
+
+  private overlayActionBottomPadding(): string {
+    return this.isCompactViewport() ? (this.isLandscape() ? '34vp' : '42vp') : '100vp'
+  }
+
+  private callControlPadding(): Padding {
+    return this.isCompactViewport() ?
+      { left: '28vp', right: '28vp', top: '22vp', bottom: '22vp' } :
+      { left: '50vp', right: '50vp', top: '40vp', bottom: '40vp' }
+  }
+
+  private localCardHeight(): string {
+    return this.isCompactViewport() ? '180vp' : '300vp'
+  }
+
+  private sideCardMediaHeight(): string {
+    return this.isCompactViewport() ? '150vp' : '208vp'
+  }
+
+  private sideCardActionHeight(): string {
+    return this.isCompactViewport() ? '70vp' : '92vp'
+  }
+
+  private sideCardHeight(): string {
+    return this.isCompactViewport() ? '220vp' : '300vp'
+  }
+
   private getAllCalls(): RtcHostCallUiItem[] {
     const calls: RtcHostCallUiItem[] = []
     if (this.model.activeCall) {
@@ -453,9 +511,9 @@ export struct RtcReferenceCallLayout {
     if (this.logBranch('media', call) && call.mode === RtcCallMode.AUDIO) {
       Stack({ alignContent: Alignment.Center }) {
         Column({ space: '10vp' }) {
-          this.Avatar(call, '150vp')
+          this.Avatar(call, this.isCompactViewport() ? '100vp' : '150vp')
           Text(this.getPeerName(call))
-            .fontSize('30fp')
+            .fontSize(this.isCompactViewport() ? '24fp' : '30fp')
             .fontColor('#FFFFFFFF')
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -488,6 +546,23 @@ export struct RtcReferenceCallLayout {
         .width('100%')
         .height('100%')
         .alignItems(HorizontalAlign.Start)
+
+        if (this.model.localCard.hasVideo) {
+          Row() {
+            Blank()
+            Stack() {
+              this.LocalCard()
+            }
+              .width(this.isCompactViewport() ? '210vp' : '280vp')
+          }
+          .width('100%')
+          .height('100%')
+          .padding({
+            top: this.isCompactViewport() ? '14vp' : '22vp',
+            right: this.isCompactViewport() ? '14vp' : '22vp'
+          })
+          .alignItems(VerticalAlign.Top)
+        }
       }
       .width('100%')
       .height('100%')
@@ -506,8 +581,8 @@ export struct RtcReferenceCallLayout {
         this.localVideoBuilder()
       } else {
         Image($r('app.media.rtc_call_avatar'))
-          .width('82vp')
-          .height('82vp')
+          .width(this.isCompactViewport() ? '60vp' : '82vp')
+          .height(this.isCompactViewport() ? '60vp' : '82vp')
           .objectFit(ImageFit.Contain)
       }
 
@@ -515,7 +590,7 @@ export struct RtcReferenceCallLayout {
         Blank()
         Text((this.model.localCard.displayName || this.model.localCard.number || '自己') + ' -- 自己')
           .width('100%')
-          .fontSize('20fp')
+          .fontSize(this.isCompactViewport() ? '16fp' : '20fp')
           .fontColor('#FFFFFFFF')
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -527,7 +602,7 @@ export struct RtcReferenceCallLayout {
       .height('100%')
     }
     .width('100%')
-    .height('300vp')
+    .height(this.localCardHeight())
     .border({ width: '3vp', color: '#7E7F80' })
     .borderRadius('3vp')
   }
@@ -542,12 +617,12 @@ export struct RtcReferenceCallLayout {
   ) {
     Stack({ alignContent: Alignment.Center }) {
       Image(icon)
-        .width('70vp')
-        .height('70vp')
+        .width(this.isCompactViewport() ? '52vp' : '70vp')
+        .height(this.isCompactViewport() ? '52vp' : '70vp')
         .objectFit(ImageFit.Contain)
     }
-      .width('92vp')
-      .height('92vp')
+      .width(this.isCompactViewport() ? '70vp' : '92vp')
+      .height(this.isCompactViewport() ? '70vp' : '92vp')
       .opacity(enabled ? 1 : 0.35)
       .zIndex(3)
       .onAreaChange((_oldArea: Area, newArea: Area) => {
@@ -639,9 +714,9 @@ export struct RtcReferenceCallLayout {
           })
         }
         .width('100%')
-        .height('208vp')
+        .height(this.sideCardMediaHeight())
 
-        Row({ space: '18vp' }) {
+        Row({ space: this.isCompactViewport() ? '12vp' : '18vp' }) {
           if (call.phase === RtcCallViewPhase.INCOMING) {
             this.SideAction($r('app.media.rtc_call_accept'), call.canAccept, 'accept', call, () => {
               this.onAccept?.(call.sessionKey)
@@ -661,7 +736,7 @@ export struct RtcReferenceCallLayout {
           })
         }
         .width('100%')
-        .height('92vp')
+        .height(this.sideCardActionHeight())
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
         .backgroundColor('#66000000')
@@ -673,7 +748,7 @@ export struct RtcReferenceCallLayout {
         })
       }
       .width('100%')
-      .height('300vp')
+      .height(this.sideCardHeight())
       .margin('2vp')
       .border({
         width: '3vp',
@@ -732,13 +807,13 @@ export struct RtcReferenceCallLayout {
     enabled: boolean,
     action: () => void
   ) {
-    Column({ space: '15vp' }) {
+    Column({ space: this.isCompactViewport() ? '8vp' : '15vp' }) {
       Image(icon)
-        .width('88vp')
-        .height('88vp')
+        .width(this.controlIconSize())
+        .height(this.controlIconSize())
         .objectFit(ImageFit.Contain)
       Text(label)
-        .fontSize('22fp')
+        .fontSize(this.controlTextSize())
         .fontColor('#FFFFFFFF')
         .maxLines(1)
     }
@@ -754,9 +829,9 @@ export struct RtcReferenceCallLayout {
   private CallingControls(call: RtcHostCallUiItem) {
     if (this.logBranch('calling_controls', call)) {
       ForEach([this.getControlsRenderKey(call)], (_controlKey: string) => {
-        Row({ space: this.getAllCalls().length > 1 ? '22vp' : '30vp' }) {
+        Row({ space: this.isCompactViewport() ? '18vp' : (this.getAllCalls().length > 1 ? '22vp' : '30vp') }) {
           Text(this.getDurationText(call))
-            .fontSize('30fp')
+            .fontSize(this.isCompactViewport() ? '24fp' : '30fp')
             .fontColor('#FFFFFFFF')
 
           this.ControlButton(
@@ -797,9 +872,9 @@ export struct RtcReferenceCallLayout {
             )
           }
         }
-        .padding({ left: '50vp', right: '50vp', top: '40vp', bottom: '40vp' })
+        .padding(this.callControlPadding())
         .backgroundColor('#B3333333')
-        .borderRadius('40vp')
+        .borderRadius(this.isCompactViewport() ? '28vp' : '40vp')
         .onAreaChange((_oldArea: Area, newArea: Area) => {
           this.logArea('calling_controls', Number(newArea.width), Number(newArea.height))
         })
@@ -835,9 +910,9 @@ export struct RtcReferenceCallLayout {
             )
           }
         }
-        .padding({ left: '50vp', right: '50vp', top: '40vp', bottom: '40vp' })
+        .padding(this.callControlPadding())
         .backgroundColor('#B3333333')
-        .borderRadius('40vp')
+        .borderRadius(this.isCompactViewport() ? '28vp' : '40vp')
         .margin({ bottom: '20vp' })
       }
     }
@@ -856,13 +931,13 @@ export struct RtcReferenceCallLayout {
     enabled: boolean,
     action: () => void
   ) {
-    Column({ space: '15vp' }) {
+    Column({ space: this.isCompactViewport() ? '8vp' : '15vp' }) {
       Image(icon)
-        .width('120vp')
-        .height('120vp')
+        .width(this.overlayActionIconSize())
+        .height(this.overlayActionIconSize())
         .objectFit(ImageFit.Contain)
       Text(label)
-        .fontSize('22fp')
+        .fontSize(this.controlTextSize())
         .fontColor('#FFFFFFFF')
     }
     .opacity(enabled ? 1 : 0.35)
@@ -881,25 +956,28 @@ export struct RtcReferenceCallLayout {
         .height('100%')
         .objectFit(ImageFit.Cover)
 
-      Column({ space: '30vp' }) {
+      Column({ space: this.isCompactViewport() ? '18vp' : '30vp' }) {
         Image($r('app.media.rtc_call_avatar'))
-          .width('150vp')
-          .height('150vp')
+          .width(this.overlayAvatarSize())
+          .height(this.overlayAvatarSize())
           .objectFit(ImageFit.Contain)
         Text(this.getPeerName(call))
-          .fontSize(call.direction === RtcCallDirection.INCOMING && this.isLandscape() ? '100fp' : '46fp')
+          .fontSize(this.overlayNameFontSize(call))
           .fontColor('#FFFFFFFF')
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width(this.isCompactViewport() ? '84%' : '90%')
+          .textAlign(TextAlign.Center)
         Text(this.getInviteText(call))
-          .fontSize('20fp')
+          .fontSize(this.isCompactViewport() ? '18fp' : '20fp')
           .fontColor('#FFFFFFFF')
       }
+      .width('100%')
       .alignItems(HorizontalAlign.Center)
 
       Column() {
         Blank()
-        Row({ space: '100vp' }) {
+        Row({ space: this.isCompactViewport() ? '70vp' : '100vp' }) {
           this.IncomingActionButton(
             $r('app.media.rtc_call_hangup'),
             call.direction === RtcCallDirection.INCOMING ? '拒接' : '挂断',
@@ -920,7 +998,7 @@ export struct RtcReferenceCallLayout {
       }
       .width('100%')
       .height('100%')
-      .padding({ bottom: '100vp' })
+      .padding({ bottom: this.overlayActionBottomPadding() })
     }
     .width('100%')
     .height('100%')

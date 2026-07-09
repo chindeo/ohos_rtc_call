@@ -4,6 +4,7 @@ export enum RtcDeviceVendor {
   DNAKE = 'dnake',
   SHIMETA = 'shimeta',
   AURINE = 'aurine',
+  JHC = 'jhc',
   UNKNOWN = 'unknown'
 }
 
@@ -34,7 +35,8 @@ function collectDeviceInfo(): string {
     deviceInfo.productModel,
     deviceInfo.hardwareModel,
     deviceInfo.osFullName,
-    deviceInfo.displayVersion
+    deviceInfo.displayVersion,
+    deviceInfo.sdkApiVersion !== undefined ? '' + deviceInfo.sdkApiVersion : ''
   ].map((item: string | undefined) => item || '').join(' ')
 }
 
@@ -47,6 +49,9 @@ function getVendorLabel(vendor: RtcDeviceVendor): string {
   }
   if (vendor === RtcDeviceVendor.AURINE) {
     return 'Aurine'
+  }
+  if (vendor === RtcDeviceVendor.JHC) {
+    return '金海创'
   }
   return '未知厂家'
 }
@@ -64,6 +69,12 @@ export class RtcDeviceVendorResolver {
     if (includesAny(info, ['aurine', '奥瑞那', 'mhmh0216', 'medical'])) {
       return RtcDeviceVendor.AURINE
     }
+    if (includesAny(info, ['jhc', 'jinhai', 'jin hai', '金海创'])) {
+      return RtcDeviceVendor.JHC
+    }
+    if (Number(deviceInfo.sdkApiVersion || 0) >= 23 && includesAny(info, ['openharmony 6'])) {
+      return RtcDeviceVendor.JHC
+    }
     if (includesAny(info, ['dnake', '狄耐克'])) {
       return RtcDeviceVendor.DNAKE
     }
@@ -79,7 +90,8 @@ export class RtcDeviceVendorResolver {
 
   static getStoredVendor(): RtcDeviceVendor {
     const vendor = AppStorage.get<string>(RTC_DEVICE_VENDOR_KEY) || RtcDeviceVendor.UNKNOWN
-    if (vendor === RtcDeviceVendor.DNAKE || vendor === RtcDeviceVendor.SHIMETA || vendor === RtcDeviceVendor.AURINE) {
+    if (vendor === RtcDeviceVendor.DNAKE || vendor === RtcDeviceVendor.SHIMETA ||
+      vendor === RtcDeviceVendor.AURINE || vendor === RtcDeviceVendor.JHC) {
       return vendor as RtcDeviceVendor
     }
     return RtcDeviceVendor.UNKNOWN
@@ -95,6 +107,10 @@ export class RtcDeviceVendorResolver {
 
   static isAurine(vendor: string = RtcDeviceVendorResolver.getStoredVendor()): boolean {
     return vendor === RtcDeviceVendor.AURINE
+  }
+
+  static isJhc(vendor: string = RtcDeviceVendorResolver.getStoredVendor()): boolean {
+    return vendor === RtcDeviceVendor.JHC
   }
 
   static shouldUseDnakeSdk(vendor: string = RtcDeviceVendorResolver.getStoredVendor()): boolean {
