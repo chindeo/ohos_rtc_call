@@ -518,21 +518,31 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private prepareLocalMedia(videoRequested: boolean): void {
     const audioTrack = this.audioController.getLocalAudioTrack()
     if (!audioTrack || audioTrack.readyState !== 'live') {
-      this.audioController.prepareLocalAudio({
+      const nextAudioTrack = this.audioController.prepareLocalAudio({
         trackId: RtcWebRtcTrackIdentityCodec.buildTrackId(this.local, this.appVersion)
       })
+      this.log('local_audio_track readyState=' + (nextAudioTrack?.readyState || '') +
+        ' enabled=' + (nextAudioTrack?.enabled === true))
     }
     if (videoRequested) {
       const videoTrack = this.audioController.getLocalVideoTrack()
       if (!videoTrack || videoTrack.readyState !== 'live') {
-        this.audioController.prepareLocalVideo({
+        const nextVideoTrack = this.audioController.prepareLocalVideo({
           trackId: RtcWebRtcTrackIdentityCodec.buildTrackId(this.local, this.appVersion),
           width: this.videoSource.width,
           height: this.videoSource.height,
           frameRate: this.videoSource.frameRate,
           facingMode: this.videoSource.facingMode
         })
+        this.log('local_video_track requested=true readyState=' + (nextVideoTrack?.readyState || '') +
+          ' enabled=' + (nextVideoTrack?.enabled === true) +
+          ' width=' + this.videoSource.width +
+          ' height=' + this.videoSource.height +
+          ' frameRate=' + this.videoSource.frameRate +
+          ' facingMode=' + this.videoSource.facingMode)
       }
+    } else {
+      this.log('local_video_track requested=false')
     }
   }
 
@@ -612,13 +622,18 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       return
     }
     const identity = this.resolveTrackIdentity(event)
+    let matchedBySessionFallback = false
     if (!identity || !identity.number) {
+      if (!this.canUseVideoSessionFallback(record, event)) {
+        this.log(`rtc_ontrack channelType=${record.role} kind=${event.track.kind}` +
+          ` matched=false reason=missing_identity`)
+        this.error(`ignore unmatched track kind=${event.track.kind}`)
+        return
+      }
+      matchedBySessionFallback = true
       this.log(`rtc_ontrack channelType=${record.role} kind=${event.track.kind}` +
-        ` matched=false reason=missing_identity`)
-      this.error(`ignore unmatched track kind=${event.track.kind}`)
-      return
-    }
-    if (identity.number === this.local.number || identity.number !== session.targetNumber) {
+        ` matched=true reason=session_fallback sessionHash=${this.getSessionHash(session.sessionKey)}`)
+    } else if (identity.number === this.local.number || identity.number !== session.targetNumber) {
       this.log(`rtc_ontrack channelType=${record.role} kind=${event.track.kind}` +
         ` matched=false reason=identity_mismatch`)
       this.error(`ignore mismatched track kind=${event.track.kind}`)
@@ -648,11 +663,21 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     }
     session.mediaConnected = this.isMediaConnected(session)
     this.log(`rtc_ontrack channelType=${record.role} kind=${event.track.kind}` +
-      ` matched=true mediaConnected=${session.mediaConnected}`)
+      ` matched=true mediaConnected=${session.mediaConnected}` +
+      `${matchedBySessionFallback ? ' reason=session_fallback' : ''}`)
     if (this.activeSessionKey === session.sessionKey) {
       this.selectSession(session.sessionKey)
     }
     this.emitMediaState(session)
+  }
+
+  private canUseVideoSessionFallback(record: RtcWebRtcPeerRecord, event: webrtc.RTCTrackEvent): boolean {
+    const session = record.session
+    return record.role === RTC_WEBRTC_PEER_ROLE_SUBSCRIBE &&
+      !!session &&
+      event.track.kind === 'video' &&
+      session.mode === RtcCallMode.VIDEO &&
+      !!session.sessionKey
   }
 
   private resolveTrackIdentity(event: webrtc.RTCTrackEvent): RtcWebRtcTrackIdentity | undefined {

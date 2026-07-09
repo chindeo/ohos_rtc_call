@@ -4,7 +4,7 @@ import {
   RtcCallAudioPolicyController
 } from '../audio/RtcCallAudioPolicyController'
 import { RTC_CALL_CONTROL_SOURCE_SCREEN } from './RtcCallControlCommand'
-import { RtcCallMode, RtcCallSession, RtcPeerIdentity } from '../model/RtcCallConfig'
+import { RtcCallDiagnosticsOptions, RtcCallMode, RtcCallSession, RtcPeerIdentity } from '../model/RtcCallConfig'
 import { RtcCallDirection } from '../model/RtcCallViewState'
 import { RtcCallDeviceRole } from '../ui/RtcCallUiPresenter'
 import { RtcHostCallUiModel, RtcHostCallUiModelListener } from '../model/RtcHostCallUiModel'
@@ -53,6 +53,7 @@ export interface RtcHostCallControllerOptions {
   speakerActionEnabled?: boolean
   speakerActionVisible?: boolean
   onMicSwitch?: () => boolean | void | Promise<boolean | void>
+  diagnostics?: RtcCallDiagnosticsOptions
   onError?: (message: string) => void
   onLog?: (message: string) => void
 }
@@ -76,6 +77,19 @@ export class RtcHostCallController {
       restoreVolumeOnEnd: true
     })
     const audioController = new RtcAudioController()
+    if (options.diagnostics) {
+      audioController.configureDiagnostics({
+        enableAecDump: options.diagnostics.enableAecDump,
+        enableAudioSampleStats: options.diagnostics.enableAudioSampleStats,
+        logTag: options.diagnostics.logTag,
+        onLog: (message: string) => {
+          options.onLog?.('rtc_media_diagnostics ' + message)
+        },
+        onError: (message: string) => {
+          options.onError?.('rtc_media_diagnostics ' + message)
+        }
+      })
+    }
     this.mediaController = new RtcWebRtcMediaController({
       local: options.local,
       appVersion: options.appVersion,

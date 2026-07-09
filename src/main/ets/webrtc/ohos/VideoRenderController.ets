@@ -7,9 +7,17 @@ export enum ScalingMode { Fill, AspectFill, AspectFit }
 
 export class VideoRenderController extends XComponentController {
   private renderer: NativeVideoRenderer = new NativeVideoRenderer()
+  private track: MediaStreamTrack | null = null
+  private surfaceReady: boolean = false
 
   setVideoTrack(track: MediaStreamTrack | null): void {
-    this.renderer.setVideoTrack(track)
+    this.track = track
+    Logging.d(TAG, 'setVideoTrack surfaceReady=' + this.surfaceReady +
+      ' readyState=' + (track?.readyState || '') +
+      ' id=' + (track?.id || ''))
+    if (this.surfaceReady) {
+      this.renderer.setVideoTrack(track)
+    }
   }
 
   setMirror(mirror: boolean): void {
@@ -27,6 +35,13 @@ export class VideoRenderController extends XComponentController {
   onSurfaceCreated(surfaceId: string): void {
     Logging.d(TAG, 'onSurfaceCreated surfaceId: ' + surfaceId)
     this.renderer.init(surfaceId)
+    this.surfaceReady = true
+    if (this.track) {
+      Logging.d(TAG, 'rebind cached track after surface created readyState=' +
+        (this.track.readyState || '') +
+        ' id=' + (this.track.id || ''))
+      this.renderer.setVideoTrack(this.track)
+    }
   }
 
   onSurfaceChanged(surfaceId: string, rect: SurfaceRect): void {
@@ -36,6 +51,7 @@ export class VideoRenderController extends XComponentController {
 
   onSurfaceDestroyed(surfaceId: string): void {
     Logging.d(TAG, 'onSurfaceDestroyed surfaceId: ' + surfaceId)
+    this.surfaceReady = false
     this.renderer.release()
   }
 }

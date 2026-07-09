@@ -272,7 +272,7 @@ export class RtcWebRtcCallController {
     }
     if (message.eventName === 'c__invite') {
       const payload = this.parsePayload(message.data)
-      if (!payload) {
+      if (!payload || !payload.commonRequest) {
         return
       }
       const session = this.upsertSession(payload.commonRequest, true)
@@ -282,7 +282,7 @@ export class RtcWebRtcCallController {
     }
     if (message.eventName === 'c__sdp') {
       const payload = this.parsePayload(message.data)
-      if (!payload) {
+      if (!payload || !payload.commonRequest) {
         return
       }
       const session = this.upsertSession(payload.commonRequest, true, payload.rtcUid)
@@ -319,7 +319,7 @@ export class RtcWebRtcCallController {
     }
     if (message.eventName === 'c__candidate') {
       const payload = this.parsePayload(message.data)
-      if (!payload) {
+      if (!payload || !payload.commonRequest) {
         return
       }
       const session = this.upsertSession(payload.commonRequest, true, payload.rtcUid)
@@ -344,7 +344,7 @@ export class RtcWebRtcCallController {
     }
     if (message.eventName === 'c__answer') {
       const payload = this.parsePayload(message.data)
-      const session = payload ? this.upsertSession(payload.commonRequest, true, payload.rtcUid) : undefined
+      const session = payload?.commonRequest ? this.upsertSession(payload.commonRequest, true, payload.rtcUid) : undefined
       if (session) {
         const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(payload?.rtcUid || '')
         this.clearAnswerApplyRetry(session.sessionKey, 'answer notice')
@@ -583,6 +583,9 @@ export class RtcWebRtcCallController {
     recent: RtcRecentLocalSingleHangup
   ): boolean {
     const commonRequest = payload.commonRequest
+    if (!commonRequest) {
+      return false
+    }
     const payloadSessionId = this.normalizeSessionId(commonRequest.uuid || '')
     if (payloadSessionId && (payloadSessionId === recent.sessionKey || payloadSessionId === recent.sessionId)) {
       return true
@@ -900,6 +903,9 @@ export class RtcWebRtcCallController {
   }
 
   private resolvePayloadSession(payload: RtcSignalPayload): RtcWebRtcCallSessionInfo | undefined {
+    if (!payload.commonRequest) {
+      return this.findSession(payload.rtcUid || '')
+    }
     const localNumber = this.config?.local.number || this.config?.identity.number || ''
     const targetNumber = this.resolveRemoteNumber(payload.commonRequest, localNumber)
     const resolved = this.lifecycle.resolveUidOrUniqueNumber(
@@ -958,6 +964,9 @@ export class RtcWebRtcCallController {
   }
 
   private hasPayloadSessionIdentity(payload: RtcSignalPayload): boolean {
+    if (!payload.commonRequest) {
+      return !!(payload.rtcUid || '').trim()
+    }
     const localNumber = this.config?.local.number || this.config?.identity.number || ''
     return !!((payload.commonRequest.uuid || '').trim() ||
       (payload.rtcUid || '').trim() ||
