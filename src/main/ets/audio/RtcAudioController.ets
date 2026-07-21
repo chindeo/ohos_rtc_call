@@ -163,13 +163,24 @@ export class RtcAudioController {
     if (this.localVideoTrack && this.localVideoTrack.readyState !== 'live') {
       this.releaseLocalVideo()
     }
-    this.localVideoSource = this.pcf.createVideoSource({
+    const constraints: webrtc.MediaTrackConstraints = {
       width: options.width,
       height: options.height,
-      frameRate: options.frameRate,
-      facingMode: options.facingMode
-    }, options.isScreencast === true)
+      frameRate: options.frameRate
+    }
+    if (options.facingMode) {
+      constraints.facingMode = options.facingMode
+    }
+    if (options.deviceId) {
+      constraints.deviceId = options.deviceId
+    }
+    this.log('create_video_source begin deviceId=' + (options.deviceId || '') +
+      ' width=' + options.width + ' height=' + options.height + ' frameRate=' + options.frameRate)
+    this.localVideoSource = this.pcf.createVideoSource(constraints, options.isScreencast === true)
+    this.log('create_video_source success deviceId=' + (options.deviceId || ''))
+    this.log('create_video_track begin trackId=' + options.trackId)
     this.localVideoTrack = this.pcf.createVideoTrack(options.trackId, this.localVideoSource)
+    this.log('create_video_track success readyState=' + (this.localVideoTrack.readyState || ''))
     this.localVideoTrack.enabled = true
     this.bindLocalVideoRenderer(this.localVideoRenderer)
     return this.localVideoTrack

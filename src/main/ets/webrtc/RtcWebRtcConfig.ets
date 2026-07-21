@@ -21,6 +21,7 @@ export interface RtcWebRtcVideoSourceOptions {
   height: number
   frameRate: number
   facingMode?: string
+  deviceId?: string
 }
 
 export interface RtcWebRtcStatsOptions {

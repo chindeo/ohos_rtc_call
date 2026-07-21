@@ -5,6 +5,7 @@
 - Fixed legacy WebSocket `c__hangup.data.isHangUp` handling so `false` preserves publish and the call page, while `true` or a missing field fully closes publish and the call UI.
 - Prevented stale connected media state from reviving a hidden or ended single-call UI after hangup.
 - Added focused regression coverage for single-call hangup, multi-call keep-alive, `c__offline`, and stale media-state handling.
+- Added optional local video `deviceId` forwarding so hosts can bypass incompatible automatic camera enumeration on vendor firmware.
 
 ## 0.1.4-rc3
 

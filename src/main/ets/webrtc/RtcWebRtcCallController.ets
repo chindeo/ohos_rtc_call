@@ -313,8 +313,14 @@ export class RtcWebRtcCallController {
           this.listener.onPublishReady?.(session.sessionKey, this.copySession(session))
         }
       }).catch((error: Error) => {
-          this.listener.onError?.('handle sdp failed: ' + JSON.stringify(error))
-        })
+        const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(payload.rtcUid)
+        this.listener.onError?.('handle sdp failed' +
+          ' channelType=' + scope.channelType +
+          ' rtcUid=' + scope.rtcUid +
+          ' sdpType=' + (payload.sdpType || '') +
+          ' mode=' + session.mode +
+          ' error=' + this.formatError(error))
+      })
       return
     }
     if (message.eventName === 'c__candidate') {
@@ -414,6 +420,18 @@ export class RtcWebRtcCallController {
       }
       this.listener.onBroadcast?.(message)
     }
+  }
+
+  private formatError(error: Error | string | Object | undefined): string {
+    if (!error) {
+      return 'unknown error'
+    }
+    if (typeof error === 'string') {
+      return error || 'unknown error'
+    }
+    const maybeError = error as Error
+    const details = (maybeError.name || 'Error') + ': ' + (maybeError.message || '')
+    return maybeError.stack ? details + ' stack=' + maybeError.stack : details
   }
 
   private upsertSession(

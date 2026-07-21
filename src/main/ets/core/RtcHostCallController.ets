@@ -32,6 +32,7 @@ import {
   RtcWebRtcMediaState,
   RtcVideoSurfaceController
 } from '../webrtc/RtcWebRtcMediaController'
+import { RtcWebRtcVideoSourceOptions } from '../webrtc/RtcWebRtcConfig'
 import { RtcCallStatusNotifier } from '../model/RtcCallStatusMessage'
 
 export interface RtcHostCallControllerOptions {
@@ -41,6 +42,7 @@ export interface RtcHostCallControllerOptions {
   systemType?: string
   autoAnswer?: boolean
   localVideoEnabled?: boolean
+  videoSource?: RtcWebRtcVideoSourceOptions
   onRegistered?: () => void
   onIncoming?: (session: RtcWebRtcCallSessionInfo) => void
   onConnected?: (sessionKey: string) => void
@@ -94,6 +96,7 @@ export class RtcHostCallController {
       local: options.local,
       appVersion: options.appVersion,
       localVideoEnabled: options.localVideoEnabled,
+      videoSource: options.videoSource,
       audioController,
       onMediaStateChange: (state: RtcWebRtcMediaState) => this.handleMediaStateChange(state),
       onLog: options.onLog,

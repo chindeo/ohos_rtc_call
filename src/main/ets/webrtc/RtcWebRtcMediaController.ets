@@ -532,14 +532,16 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
           width: this.videoSource.width,
           height: this.videoSource.height,
           frameRate: this.videoSource.frameRate,
-          facingMode: this.videoSource.facingMode
+          facingMode: this.videoSource.facingMode,
+          deviceId: this.videoSource.deviceId
         })
         this.log('local_video_track requested=true readyState=' + (nextVideoTrack?.readyState || '') +
           ' enabled=' + (nextVideoTrack?.enabled === true) +
           ' width=' + this.videoSource.width +
           ' height=' + this.videoSource.height +
           ' frameRate=' + this.videoSource.frameRate +
-          ' facingMode=' + this.videoSource.facingMode)
+          ' facingMode=' + this.videoSource.facingMode +
+          ' deviceId=' + (this.videoSource.deviceId || ''))
       }
     } else {
       this.log('local_video_track requested=false')
