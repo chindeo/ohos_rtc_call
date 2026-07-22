@@ -150,7 +150,7 @@ export class RtcDefaultCallService implements RtcCallService {
     this.session.visible = false
     this.viewState.phase = RtcCallViewPhase.HIDDEN
     this.viewState.visible = false
-    this.viewState.registered = true
+    this.viewState.registered = false
     this.viewState.registrationErrorMessage = ''
     this.emitState()
     if (this.config) {
@@ -164,6 +164,16 @@ export class RtcDefaultCallService implements RtcCallService {
       changed: previous !== this.viewState.phase,
       reason
     }
+  }
+
+  setRegistrationState(registered: boolean, errorMessage: string = ''): void {
+    if (this.viewState.registered === registered &&
+      this.viewState.registrationErrorMessage === errorMessage) {
+      return
+    }
+    this.viewState.registered = registered
+    this.viewState.registrationErrorMessage = registered ? '' : errorMessage
+    this.emitState()
   }
 
   async startCall(target: RtcCallTarget, mode: RtcCallMode): Promise<void> {

@@ -34,6 +34,7 @@ import {
 } from '../webrtc/RtcWebRtcMediaController'
 import { RtcWebRtcVideoSourceOptions } from '../webrtc/RtcWebRtcConfig'
 import { RtcCallStatusNotifier } from '../model/RtcCallStatusMessage'
+import { RtcWebRtcReconnectOptions } from '../signaling/RtcWebRtcReconnectPolicy'
 
 export interface RtcHostCallControllerOptions {
   serverUrl: string
@@ -56,6 +57,7 @@ export interface RtcHostCallControllerOptions {
   speakerActionVisible?: boolean
   onMicSwitch?: () => boolean | void | Promise<boolean | void>
   diagnostics?: RtcCallDiagnosticsOptions
+  reconnect?: RtcWebRtcReconnectOptions
   onError?: (message: string) => void
   onLog?: (message: string) => void
 }
@@ -182,6 +184,7 @@ export class RtcHostCallController {
     })
     this.webRtcController = new RtcWebRtcCallController(this.mediaController, {
       onRegistered: () => {
+        this.service.setRegistrationState(true)
         this.options.onLog?.('rtc host registered')
         this.options.onRegistered?.()
       },
@@ -207,6 +210,9 @@ export class RtcHostCallController {
       },
       onHoldChange: (sessionKey: string, isHold: boolean) => {
         this.handleRemoteHoldChange(sessionKey, isHold)
+      },
+      onRegistrationStateChange: (registered, state) => {
+        this.service.setRegistrationState(registered, registered ? '' : state.lastError)
       },
       onError: (message: string) => {
         this.multiCallController.setMessage(message)
@@ -237,7 +243,8 @@ export class RtcHostCallController {
       },
       local: this.options.local,
       appVersion: this.options.appVersion,
-      systemType: this.options.systemType || 'android'
+      systemType: this.options.systemType || 'android',
+      reconnect: this.options.reconnect
     }
     this.webRtcController.start(config)
   }

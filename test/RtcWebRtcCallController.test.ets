@@ -6,7 +6,8 @@ import {
   RtcWebRtcSignalConnectResult,
   RtcWebRtcSignalMessage,
   RtcWebRtcSignalSession,
-  RtcWebRtcSignalSessionListener
+  RtcWebRtcSignalSessionListener,
+  RtcWebRtcSignalState
 } from '../src/main/ets/signaling/RtcWebRtcSignalSession'
 import { RtcWebRtcCallController } from '../src/main/ets/webrtc/RtcWebRtcCallController'
 import {
@@ -53,6 +54,21 @@ class TestSignalSession extends RtcWebRtcSignalSession {
 
   emitMessage(message: RtcWebRtcSignalMessage): void {
     this.listener?.onMessage?.(message)
+  }
+
+  emitState(registered: boolean, errorMessage: string = ''): void {
+    const state: RtcWebRtcSignalState = {
+      url: 'ws://rtc.example.com/websocket',
+      connecting: false,
+      connected: registered,
+      registered,
+      reconnecting: !registered,
+      reconnectAttempt: registered ? 0 : 1,
+      nextReconnectAt: registered ? 0 : 1000,
+      lastDisconnectReason: errorMessage,
+      lastError: errorMessage
+    }
+    this.listener?.onStateChange?.(state)
   }
 }
 
@@ -264,6 +280,20 @@ export default function rtcWebRtcCallControllerTest() {
       expect(controller.resume('call-a')).assertEqual(false)
 
       expect(signalSession.sentSignals.length).assertEqual(0)
+      controller.dispose()
+    })
+
+    it('queues an outgoing call while signaling is offline and flushes after registration', 0, () => {
+      const signalSession = new TestSignalSession()
+      const controller = createController(signalSession)
+      signalSession.emitState(false, 'websocket closed')
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+
+      expect(controller.startCall('call-a')).assertEqual(true)
+      expect(signalSession.sentSignals.length).assertEqual(0)
+
+      signalSession.emitRegister()
+      expect(signalSession.sentSignals.length).assertEqual(1)
       controller.dispose()
     })
 

@@ -13,7 +13,8 @@ import {
 import {
   RtcWebRtcSignalConnectOptions,
   RtcWebRtcSignalMessage,
-  RtcWebRtcSignalSession
+  RtcWebRtcSignalSession,
+  RtcWebRtcSignalState
 } from '../signaling/RtcWebRtcSignalSession'
 import {
   RTC_WEBRTC_PEER_ROLE_PUBLISH,
@@ -49,6 +50,7 @@ export interface RtcWebRtcCallControllerListener {
   onHangup?: (sessionKey: string, all: boolean) => void
   onHoldChange?: (sessionKey: string, isHold: boolean) => void
   onBroadcast?: (message: RtcWebRtcSignalMessage) => void
+  onRegistrationStateChange?: (registered: boolean, state: RtcWebRtcSignalState) => void
   onError?: (message: string) => void
   onLog?: (message: string) => void
 }
@@ -98,6 +100,7 @@ export class RtcWebRtcCallController {
   private localSingleHangupEchoGuardMs: number = 5000
   private answerRetryDelayMs: number = 1200
   private maxAnswerRetryCount: number = 2
+  private signalRegistered: boolean = false
 
   constructor(
     mediaController: RtcWebRtcMediaController,
@@ -261,6 +264,25 @@ export class RtcWebRtcCallController {
         pendingAccepts.forEach((sessionKey: string) => {
           this.accept(sessionKey)
         })
+      },
+      onStateChange: (state: RtcWebRtcSignalState) => {
+        if (!state.registered) {
+          this.server = {
+            serveNumber: '',
+            serveIp: '',
+            serveDisplayName: ''
+          }
+        }
+        if (this.signalRegistered !== state.registered) {
+          this.signalRegistered = state.registered
+          this.listener.onRegistrationStateChange?.(state.registered, state)
+        }
+      },
+      onReconnectScheduled: (attempt: number, delayMs: number, reason: string) => {
+        this.listener.onLog?.(`rtc_signal_reconnect_scheduled attempt=${attempt} delayMs=${delayMs} reason=${reason}`)
+      },
+      onReconnectAttempt: (attempt: number, reason: string) => {
+        this.listener.onLog?.(`rtc_signal_reconnect_attempt attempt=${attempt} reason=${reason}`)
       },
       onError: (message: string) => this.listener.onError?.(message)
     })

@@ -5,7 +5,7 @@ Reusable OpenHarmony audio/video call utilities for ArkTS applications.
 ## Features
 
 - Register address routing: `ws://` and `wss://` use WebRTC, other `ip:port` addresses use SIP.
-- WebSocket signaling clients for WebRTC call flows, including shared registration URL building and connection-state tracking.
+- WebSocket signaling clients for WebRTC call flows, including shared registration URL building, connection-state tracking, and anti-thundering-herd reconnect backoff.
 - SIP config and adapter interfaces for host-provided Dnake SDK integration.
 - WebRTC audio helper for low-latency audio call setup.
 - call-gateway SDK client for uid-based call control, SDP/ICE routing, and host-injected transport adapters.
@@ -79,10 +79,17 @@ signal.setListener({
   onRegister: (_message, server) => {
     console.info(`registered to ${server?.serveNumber || ''}`)
   },
+  onReconnectScheduled: (attempt, delayMs, reason) => {
+    console.info(`rtc reconnect attempt=${attempt} delayMs=${delayMs} reason=${reason}`)
+  },
   onMessage: message => {
     console.info(`rtc signal ${message.eventName}`)
   }
 })
+
+// Reconnect is enabled by default. The balanced policy uses exponential
+// backoff, per-device cohort spreading, and random jitter. Explicit close()
+// or controller dispose() cancels all pending reconnect work.
 
 signal.connect({
   serverUrl: route.webrtcSignalUrl || '',

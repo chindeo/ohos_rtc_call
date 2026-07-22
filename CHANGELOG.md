@@ -2,6 +2,8 @@
 
 ## 0.1.4-rc3 timestamp HAR
 
+- Added WebSocket reconnect with exponential backoff, per-device cohort spreading, random jitter, connection/register timeouts, and stable-registration reset protection.
+- Made WebRTC registration state follow the live signaling connection instead of controller creation, while preserving active media sessions during signaling recovery.
 - Fixed legacy WebSocket `c__hangup.data.isHangUp` handling so `false` preserves publish and the call page, while `true` or a missing field fully closes publish and the call UI.
 - Prevented stale connected media state from reviving a hidden or ended single-call UI after hangup.
 - Added focused regression coverage for single-call hangup, multi-call keep-alive, `c__offline`, and stale media-state handling.
