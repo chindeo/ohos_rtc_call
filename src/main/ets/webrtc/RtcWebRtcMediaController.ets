@@ -100,6 +100,7 @@ class RtcWebRtcMediaSession {
 }
 
 class RtcWebRtcPeerRecord {
+  diagnosticId: number
   key: string
   role: RtcWebRtcPeerRole
   context: RtcWebRtcSignalContext
@@ -110,12 +111,14 @@ class RtcWebRtcPeerRecord {
   iceCheckingStartedAt: number = 0
 
   constructor(
+    diagnosticId: number,
     key: string,
     role: RtcWebRtcPeerRole,
     context: RtcWebRtcSignalContext,
     pc: webrtc.RTCPeerConnection,
     session?: RtcWebRtcMediaSession
   ) {
+    this.diagnosticId = diagnosticId
     this.key = key
     this.role = role
     this.context = context
@@ -144,6 +147,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private onLog?: (message: string) => void
   private onError?: (message: string) => void
   private iceCheckingWarnMs: number = 10000
+  private nextPeerDiagnosticId: number = 1
 
   constructor(options: RtcWebRtcMediaControllerOptions) {
     this.local = options.local
@@ -306,6 +310,8 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     const key = this.getPeerKey(role, context)
     const current = this.peers.get(key)
     if (current && current.pc.signalingState !== 'closed') {
+      this.log(`peer reuse id=${current.diagnosticId} role=${role}` +
+        ` session=${context.sessionId} rtcUid=${context.rtcUid}`)
       return
     }
     const session = this.findSession(context.sessionId)
@@ -326,14 +332,20 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     if (!pc) {
       throw new Error('create PeerConnection failed')
     }
-    const record = new RtcWebRtcPeerRecord(key, role, context, pc, session)
+    const record = new RtcWebRtcPeerRecord(this.nextPeerDiagnosticId, key, role, context, pc, session)
+    this.nextPeerDiagnosticId += 1
     this.peers.set(key, record)
     if (role === RTC_WEBRTC_PEER_ROLE_PUBLISH) {
-      this.audioController.addLocalTracks(pc)
+      const trackCount = this.audioController.addLocalTracks(pc)
+      this.log(`peer tracks added id=${record.diagnosticId} count=${trackCount}` +
+        ` localAudio=${this.audioController.getLocalAudioTrack()?.id || ''}` +
+        ` localVideo=${this.audioController.getLocalVideoTrack()?.id || ''}`)
     } else if (session) {
       this.peerRegistry.routeSubscribeOffer(session.uid, session.targetNumber, context.rtcUid)
     }
     this.bindPeerEvents(record)
+    this.log(`peer created id=${record.diagnosticId} role=${role}` +
+      ` session=${context.sessionId} rtcUid=${context.rtcUid} ${this.getResourceSummary()}`)
   }
 
   hasPeerConnection(role: RtcWebRtcPeerRole, context: RtcWebRtcSignalContext): boolean {
@@ -473,10 +485,12 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
         this.audioController.clearRemoteMedia()
       }
     }
+    this.log(`session closed reason=${reason} session=${session.sessionId} ${this.getResourceSummary()}`)
     return true
   }
 
   closeAll(reason: string = 'close all'): void {
+    this.log(`close all begin reason=${reason} ${this.getResourceSummary()}`)
     this.peers.forEach((record: RtcWebRtcPeerRecord) => this.closePeer(record, reason))
     this.peers.clear()
     this.audioController.releaseLocalVideo()
@@ -493,6 +507,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     this.sessionRemoteVideoRenderers.clear()
     this.activeSessionKey = ''
     this.audioController.cleanupRtcCallResources(reason)
+    this.log(`close all complete reason=${reason} ${this.getResourceSummary()}`)
   }
 
   dispose(): void {
@@ -767,7 +782,24 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       record.pc.close()
     } catch (_error) {
     }
-    this.log(`close peer reason=${reason} role=${record.role} session=${record.context.sessionId}`)
+    this.log(`close peer id=${record.diagnosticId} reason=${reason}` +
+      ` role=${record.role} session=${record.context.sessionId} rtcUid=${record.context.rtcUid}`)
+  }
+
+  private getResourceSummary(): string {
+    let publishPeers = 0
+    let subscribePeers = 0
+    this.peers.forEach((record: RtcWebRtcPeerRecord) => {
+      if (record.role === RTC_WEBRTC_PEER_ROLE_PUBLISH) {
+        publishPeers += 1
+      } else {
+        subscribePeers += 1
+      }
+    })
+    return `resources sessions=${this.sessions.size} peers=${this.peers.size}` +
+      ` publishPeers=${publishPeers} subscribePeers=${subscribePeers}` +
+      ` localAudio=${this.audioController.getLocalAudioTrack()?.readyState || 'none'}` +
+      ` localVideo=${this.audioController.getLocalVideoTrack()?.readyState || 'none'}`
   }
 
   private copyMediaState(session: RtcWebRtcMediaSession): RtcWebRtcMediaState {

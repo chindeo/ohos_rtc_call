@@ -163,6 +163,10 @@ export class RtcAudioController {
     if (this.localVideoTrack && this.localVideoTrack.readyState !== 'live') {
       this.releaseLocalVideo()
     }
+    if (this.localVideoTrack?.readyState === 'live') {
+      this.log('reuse_video_track trackId=' + (this.localVideoTrack.id || ''))
+      return this.localVideoTrack
+    }
     const constraints: webrtc.MediaTrackConstraints = {
       width: options.width,
       height: options.height,
@@ -276,6 +280,8 @@ export class RtcAudioController {
 
   releaseLocalVideo(): void {
     const track = this.localVideoTrack
+    this.log('release_video begin trackId=' + (track?.id || '') +
+      ' readyState=' + (track?.readyState || 'none'))
     if (track) {
       try {
         track.enabled = false
@@ -293,6 +299,7 @@ export class RtcAudioController {
       } catch (_error) {
       }
     }
+    this.log('release_video complete')
   }
 
   releaseLocalMedia(): void {
@@ -368,6 +375,17 @@ export class RtcAudioController {
     this.releaseLocalMedia()
     this.clearRemoteMedia()
     this.stopAecDump(reason)
+    const pcf = this.pcf
+    this.pcf = undefined
+    if (pcf) {
+      try {
+        this.log(`release peer connection factory begin reason=${reason}`)
+        pcf.release()
+        this.log(`release peer connection factory complete reason=${reason}`)
+      } catch (error) {
+        this.logError(`release peer connection factory error reason=${reason}: ${JSON.stringify(error)}`)
+      }
+    }
     if (this.adm) {
       this.clearDiagnostics()
       try {
@@ -376,7 +394,6 @@ export class RtcAudioController {
       }
       this.adm = undefined
     }
-    this.pcf = undefined
     this.audioSampleCount = 0
   }
 

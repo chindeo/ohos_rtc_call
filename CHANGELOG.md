@@ -6,6 +6,7 @@
 - Prevented stale connected media state from reviving a hidden or ended single-call UI after hangup.
 - Added focused regression coverage for single-call hangup, multi-call keep-alive, `c__offline`, and stale media-state handling.
 - Added optional local video `deviceId` forwarding so hosts can bypass incompatible automatic camera enumeration on vendor firmware.
+- Release the native PeerConnectionFactory when the host controller is disposed so WebRTC worker, network, and video-source threads do not accumulate across page lifecycles.
 
 ## 0.1.4-rc3
 

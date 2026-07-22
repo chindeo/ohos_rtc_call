@@ -1024,6 +1024,7 @@ export interface PeerConnectionFactory {
   createVideoTrack(id: string, source: VideoSource): VideoTrack;
   startAecDump(fd: number, max_size_bytes: number): boolean;
   stopAecDump(): void;
+  release(): void;
 }
 
 declare var PeerConnectionFactory: {
