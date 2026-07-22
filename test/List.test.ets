@@ -20,6 +20,7 @@ import rtcWebRtcReconnectPolicyTest from './RtcWebRtcReconnectPolicy.test'
 import rtcWebRtcSignalSessionTest from './RtcWebRtcSignalSession.test'
 import rtcWebRtcSignalStateMachineTest from './RtcWebRtcSignalStateMachine.test'
 import rtcWebRtcMediaControllerTest from './RtcWebRtcMediaController.test'
+import rtcVideoRenderControllerTest from './RtcVideoRenderController.test'
 
 export default function testsuite() {
   rtcAdminEntryControllerTest()
@@ -44,4 +45,5 @@ export default function testsuite() {
   rtcWebRtcSignalSessionTest()
   rtcWebRtcSignalStateMachineTest()
   rtcWebRtcMediaControllerTest()
+  rtcVideoRenderControllerTest()
 }

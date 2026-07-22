@@ -208,6 +208,29 @@ export default function rtcWebRtcCallControllerTest() {
       controller.dispose()
     })
 
+    it('tears down once per call generation across hangupAll and dispose', 0, () => {
+      const signalSession = new TestSignalSession()
+      const mediaController = new TrackingMediaController({
+        local: { number: '1000' },
+        appVersion: 'test'
+      })
+      const controller = createControllerWithMedia(signalSession, mediaController)
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+
+      controller.hangupAll()
+      controller.dispose()
+
+      expect(mediaController.closeAllCalls.length).assertEqual(1)
+
+      const nextSignalSession = new TestSignalSession()
+      const nextController = createControllerWithMedia(nextSignalSession, mediaController)
+      nextController.registerOutgoingSession('call-b', { number: '1111' }, RtcCallMode.AUDIO)
+      nextController.hangupAll()
+      nextController.dispose()
+
+      expect(mediaController.closeAllCalls.length).assertEqual(2)
+    })
+
     it('sends hold as a target switch apply', 0, () => {
       const signalSession = new TestSignalSession()
       const controller = createController(signalSession)
@@ -832,8 +855,9 @@ export default function rtcWebRtcCallControllerTest() {
       expect(endedAll).assertEqual(false)
       expect(controller.getSession('call-a') === undefined).assertEqual(true)
       expect(mediaController.closeSessionCalls[0].preservePublish).assertEqual(false)
-      expect(mediaController.closeAllCalls.length).assertEqual(0)
+      expect(mediaController.closeAllCalls.length).assertEqual(1)
       controller.dispose()
+      expect(mediaController.closeAllCalls.length).assertEqual(1)
     })
 
     it('hangs up the last call for a remote terminal notice without target identity', 0, () => {
@@ -984,6 +1008,7 @@ export default function rtcWebRtcCallControllerTest() {
       expect(endedAll).assertEqual(true)
       expect(mediaController.closeAllCalls.length).assertEqual(1)
       controller.dispose()
+      expect(mediaController.closeAllCalls.length).assertEqual(1)
     })
 
     it('keeps the last local call for an identityless c__hangup when backend reports other calls remain', 0, () => {

@@ -1,17 +1,36 @@
 import { describe, it, expect } from '@ohos/hypium'
 import webrtc from '../src/main/ets/webrtc/OhosWebRtc'
-import { RtcVideoRendererAdapter } from '../src/main/ets/audio/RtcAudioController'
+import { RtcAudioController, RtcVideoRendererAdapter } from '../src/main/ets/audio/RtcAudioController'
 import { RtcCallMode } from '../src/main/ets/model/RtcCallConfig'
 import { RtcWebRtcMediaController } from '../src/main/ets/webrtc/RtcWebRtcMediaController'
 import { RtcWebRtcTrackIdentityCodec } from '../src/main/ets/webrtc/RtcWebRtcTrackIdentity'
 
 class TestVideoRenderer implements RtcVideoRendererAdapter {
   bindCount: number = 0
+  deactivateCount: number = 0
   lastTrackId: string = 'unset'
+  events: string[] = []
 
   setVideoTrack(videoTrack: webrtc.MediaStreamTrack | null): void {
     this.bindCount += 1
     this.lastTrackId = videoTrack?.id || ''
+    this.events.push(videoTrack ? 'bind' : 'clear')
+  }
+
+  deactivate(): void {
+    this.deactivateCount += 1
+    this.events.push('deactivate')
+  }
+}
+
+class TrackingAudioController extends RtcAudioController {
+  cleanupCount: number = 0
+
+  releaseLocalVideo(): void {
+  }
+
+  cleanupRtcCallResources(_reason: string = 'cleanup'): void {
+    this.cleanupCount += 1
   }
 }
 
@@ -90,9 +109,36 @@ export default function rtcWebRtcMediaControllerTest() {
 
       expect(controller.closeSession('uid-a')).assertEqual(true)
       expect(rendererA.lastTrackId).assertEqual('')
+      expect(rendererA.deactivateCount).assertEqual(1)
+      expect(rendererA.events[rendererA.events.length - 2]).assertEqual('clear')
+      expect(rendererA.events[rendererA.events.length - 1]).assertEqual('deactivate')
       expect(rendererB.bindCount).assertEqual(rendererBBindCount)
+      expect(rendererB.deactivateCount).assertEqual(0)
       expect(controller.getMediaState('uid-b')?.sessionKey).assertEqual('uid-b')
       controller.dispose()
+    })
+
+    it('runs full media teardown once per resource generation', 0, () => {
+      const audioController = new TrackingAudioController()
+      const controller = new RtcWebRtcMediaController({
+        local: { number: '1000' },
+        appVersion: 'test',
+        audioController
+      })
+
+      controller.closeAll('first close')
+      controller.closeAll('duplicate close')
+      expect(audioController.cleanupCount).assertEqual(1)
+
+      controller.registerSession({
+        sessionKey: 'uid-a',
+        sessionId: 'call-a',
+        targetNumber: '1101'
+      })
+      controller.closeAll('next generation')
+      controller.dispose()
+
+      expect(audioController.cleanupCount).assertEqual(2)
     })
   })
 }

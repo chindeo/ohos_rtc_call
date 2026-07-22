@@ -81,6 +81,10 @@ export class RtcVideoSurfaceController implements RtcVideoRendererAdapter {
   setVideoTrack(videoTrack: webrtc.MediaStreamTrack | null): void {
     this.controller.setVideoTrack(videoTrack)
   }
+
+  deactivate(): void {
+    this.controller.deactivate()
+  }
 }
 
 class RtcWebRtcMediaSession {
@@ -148,6 +152,9 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private onError?: (message: string) => void
   private iceCheckingWarnMs: number = 10000
   private nextPeerDiagnosticId: number = 1
+  private resourceGeneration: number = 0
+  private closedResourceGeneration: number = -1
+  private closeAllInProgress: boolean = false
 
   constructor(options: RtcWebRtcMediaControllerOptions) {
     this.local = options.local
@@ -187,6 +194,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       session = new RtcWebRtcMediaSession()
       session.sessionKey = key
       this.sessions.set(key, session)
+      this.resourceGeneration += 1
     }
     if (!session.sessionId) {
       session.sessionId = options.sessionId
@@ -490,24 +498,34 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   }
 
   closeAll(reason: string = 'close all'): void {
+    if (this.closeAllInProgress || this.closedResourceGeneration === this.resourceGeneration) {
+      this.log(`skip duplicate close all reason=${reason} generation=${this.resourceGeneration}`)
+      return
+    }
+    this.closeAllInProgress = true
     this.log(`close all begin reason=${reason} ${this.getResourceSummary()}`)
-    this.peers.forEach((record: RtcWebRtcPeerRecord) => this.closePeer(record, reason))
-    this.peers.clear()
-    this.audioController.releaseLocalVideo()
-    this.sessions.forEach((session: RtcWebRtcMediaSession) => {
-      this.resetMediaState(session)
-      this.emitMediaState(session)
-    })
-    this.sessions.clear()
-    this.sessionIds.clear()
-    this.heldSessionKeys.clear()
-    this.sessionRemoteVideoRenderers.forEach((renderer: RtcVideoRendererAdapter) => {
-      this.clearRenderer(renderer)
-    })
-    this.sessionRemoteVideoRenderers.clear()
-    this.activeSessionKey = ''
-    this.audioController.cleanupRtcCallResources(reason)
-    this.log(`close all complete reason=${reason} ${this.getResourceSummary()}`)
+    try {
+      this.peers.forEach((record: RtcWebRtcPeerRecord) => this.closePeer(record, reason))
+      this.peers.clear()
+      this.audioController.releaseLocalVideo()
+      this.sessions.forEach((session: RtcWebRtcMediaSession) => {
+        this.resetMediaState(session)
+        this.emitMediaState(session)
+      })
+      this.sessions.clear()
+      this.sessionIds.clear()
+      this.heldSessionKeys.clear()
+      this.sessionRemoteVideoRenderers.forEach((renderer: RtcVideoRendererAdapter) => {
+        this.clearRenderer(renderer)
+      })
+      this.sessionRemoteVideoRenderers.clear()
+      this.activeSessionKey = ''
+      this.audioController.cleanupRtcCallResources(reason)
+      this.closedResourceGeneration = this.resourceGeneration
+      this.log(`close all complete reason=${reason} ${this.getResourceSummary()}`)
+    } finally {
+      this.closeAllInProgress = false
+    }
   }
 
   dispose(): void {
@@ -731,6 +749,11 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
 
   private clearRenderer(renderer: RtcVideoRendererAdapter): void {
     this.setRendererTrack(renderer, undefined)
+    try {
+      renderer.deactivate?.()
+    } catch (error) {
+      this.error('deactivate session remote video renderer error: ' + JSON.stringify(error))
+    }
   }
 
   private setRendererTrack(

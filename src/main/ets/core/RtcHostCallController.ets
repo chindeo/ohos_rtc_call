@@ -134,8 +134,10 @@ export class RtcHostCallController {
         }
         this.options.onEnded?.(key, false)
       },
-      onTerminateAllCalls: async () => {
-        this.webRtcController.hangupAll()
+      onTerminateAllCalls: async (_sessions: RtcCallSession[], reason: string) => {
+        if (reason.indexOf('remote hangup') !== 0) {
+          this.webRtcController.hangupAll()
+        }
         this.releaseAllSessionRemoteVideoSurfaces()
         await this.restoreAfterLastCall('all calls ended')
         this.options.onEnded?.('', true)

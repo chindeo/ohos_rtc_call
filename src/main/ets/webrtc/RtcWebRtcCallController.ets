@@ -101,6 +101,9 @@ export class RtcWebRtcCallController {
   private answerRetryDelayMs: number = 1200
   private maxAnswerRetryCount: number = 2
   private signalRegistered: boolean = false
+  private teardownGeneration: number = 0
+  private closedTeardownGeneration: number = -1
+  private closeAllInProgress: boolean = false
 
   constructor(
     mediaController: RtcWebRtcMediaController,
@@ -229,7 +232,6 @@ export class RtcWebRtcCallController {
 
   dispose(): void {
     this.stop()
-    this.mediaController.dispose()
     this.sessions.clear()
     this.sessionIds.clear()
     this.config = undefined
@@ -492,6 +494,7 @@ export class RtcWebRtcCallController {
         commonRequest
       }
       this.sessions.set(sessionKey, session)
+      this.teardownGeneration += 1
     } else {
       const oldSessionId = session.sessionId
       session.targetNumber = targetNumber || session.targetNumber
@@ -554,20 +557,34 @@ export class RtcWebRtcCallController {
       this.pendingAcceptSessionKeys.filter((item: string) => item !== session.sessionKey)
     this.clearAnswerApplyRetry(session.sessionKey, 'session removed')
     if (this.sessions.size === 0) {
+      if (!preservePublish) {
+        this.closeAllLocalSessions('last session ended')
+        return
+      }
       this.signalStateMachine.resetSession()
     }
   }
 
   private closeAllLocalSessions(reason: string): void {
-    this.recentLocalSingleHangup = undefined
-    this.mediaController.closeAll(reason)
-    this.sessions.clear()
-    this.sessionIds.clear()
-    this.lifecycle.clear()
-    this.pendingStartSessionKeys = []
-    this.pendingAcceptSessionKeys = []
-    this.clearAllAnswerApplyRetries('close all')
-    this.signalStateMachine.resetSession()
+    if (this.closeAllInProgress || this.closedTeardownGeneration === this.teardownGeneration) {
+      this.listener.onLog?.(`skip duplicate close all reason=${reason} generation=${this.teardownGeneration}`)
+      return
+    }
+    this.closeAllInProgress = true
+    try {
+      this.recentLocalSingleHangup = undefined
+      this.mediaController.closeAll(reason)
+      this.sessions.clear()
+      this.sessionIds.clear()
+      this.lifecycle.clear()
+      this.pendingStartSessionKeys = []
+      this.pendingAcceptSessionKeys = []
+      this.clearAllAnswerApplyRetries('close all')
+      this.signalStateMachine.resetSession()
+      this.closedTeardownGeneration = this.teardownGeneration
+    } finally {
+      this.closeAllInProgress = false
+    }
   }
 
   private rememberLocalSingleHangup(session: RtcWebRtcCallSessionInfo): void {

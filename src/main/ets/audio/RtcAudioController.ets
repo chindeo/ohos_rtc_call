@@ -22,6 +22,7 @@ export interface RtcLocalMediaOptions {
 
 export interface RtcVideoRendererAdapter {
   setVideoTrack(videoTrack: webrtc.MediaStreamTrack | null): void
+  deactivate?(): void
 }
 
 export interface RtcAudioSampleStats {
@@ -293,12 +294,7 @@ export class RtcAudioController {
     if (this.localVideoSource) {
       this.localVideoSource = undefined
     }
-    if (this.localVideoRenderer) {
-      try {
-        this.localVideoRenderer.setVideoTrack(null)
-      } catch (_error) {
-      }
-    }
+    this.clearVideoRenderer(this.localVideoRenderer)
     this.log('release_video complete')
   }
 
@@ -310,12 +306,7 @@ export class RtcAudioController {
   clearRemoteMedia(): void {
     this.remoteAudioTrack = undefined
     this.remoteVideoTrack = undefined
-    if (this.remoteVideoRenderer) {
-      try {
-        this.remoteVideoRenderer.setVideoTrack(null)
-      } catch (_error) {
-      }
-    }
+    this.clearVideoRenderer(this.remoteVideoRenderer)
   }
 
   startAecDump(reason: string = 'manual'): boolean {
@@ -375,17 +366,10 @@ export class RtcAudioController {
     this.releaseLocalMedia()
     this.clearRemoteMedia()
     this.stopAecDump(reason)
-    const pcf = this.pcf
-    this.pcf = undefined
-    if (pcf) {
-      try {
-        this.log(`release peer connection factory begin reason=${reason}`)
-        pcf.release()
-        this.log(`release peer connection factory complete reason=${reason}`)
-      } catch (error) {
-        this.logError(`release peer connection factory error reason=${reason}: ${JSON.stringify(error)}`)
-      }
+    if (this.pcf) {
+      this.log(`release peer connection factory owner deferred reason=${reason}`)
     }
+    this.pcf = undefined
     if (this.adm) {
       this.clearDiagnostics()
       try {
@@ -395,6 +379,20 @@ export class RtcAudioController {
       this.adm = undefined
     }
     this.audioSampleCount = 0
+  }
+
+  private clearVideoRenderer(renderer?: RtcVideoRendererAdapter): void {
+    if (!renderer) {
+      return
+    }
+    try {
+      renderer.setVideoTrack(null)
+    } catch (_error) {
+    }
+    try {
+      renderer.deactivate?.()
+    } catch (_error) {
+    }
   }
 
   private createAudioDeviceModule(): void {
