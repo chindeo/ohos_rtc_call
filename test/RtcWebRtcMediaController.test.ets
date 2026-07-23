@@ -25,8 +25,10 @@ class TestVideoRenderer implements RtcVideoRendererAdapter {
 
 class TrackingAudioController extends RtcAudioController {
   cleanupCount: number = 0
+  releaseLocalVideoCount: number = 0
 
   releaseLocalVideo(): void {
+    this.releaseLocalVideoCount += 1
   }
 
   cleanupRtcCallResources(_reason: string = 'cleanup'): void {
@@ -85,6 +87,41 @@ export default function rtcWebRtcMediaControllerTest() {
       expect(RtcWebRtcMediaController.isLocalVideoReady('live')).assertEqual(true)
     })
 
+    it('prefers constrained baseline h264 and keeps vp8 fallback', 0, () => {
+      const codecs: webrtc.RTCRtpCodec[] = [
+        { mimeType: 'video/VP8', clockRate: 90000 },
+        {
+          mimeType: 'video/H264',
+          clockRate: 90000,
+          sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f'
+        },
+        { mimeType: 'video/H265', clockRate: 90000 },
+        { mimeType: 'video/rtx', clockRate: 90000, sdpFmtpLine: 'apt=96' }
+      ]
+
+      const ordered = RtcWebRtcMediaController.prioritizeVideoCodecs(codecs)
+
+      expect(ordered[0].mimeType).assertEqual('video/H264')
+      expect(ordered[1].mimeType).assertEqual('video/VP8')
+      expect(ordered[2].mimeType).assertEqual('video/H265')
+      expect(ordered.length).assertEqual(4)
+    })
+
+    it('caps every video encoding at the configured frame rate', 0, () => {
+      const parameters: webrtc.RTCRtpSendParameters = {
+        codecs: [],
+        headerExtensions: [],
+        rtcp: {},
+        encodings: [{}, {}],
+        transactionId: 'test'
+      }
+
+      expect(RtcWebRtcMediaController.applyVideoMaxFrameRate(parameters, 10)).assertEqual(2)
+      expect(parameters.encodings[0].maxFramerate).assertEqual(10)
+      expect(parameters.encodings[1].maxFramerate).assertEqual(10)
+      expect(RtcWebRtcMediaController.applyVideoMaxFrameRate(parameters, 0)).assertEqual(0)
+    })
+
     it('clears only the renderer bound to the closed session', 0, () => {
       const controller = new RtcWebRtcMediaController({
         local: { number: '1000' },
@@ -129,6 +166,7 @@ export default function rtcWebRtcMediaControllerTest() {
       controller.closeAll('first close')
       controller.closeAll('duplicate close')
       expect(audioController.cleanupCount).assertEqual(1)
+      expect(audioController.releaseLocalVideoCount).assertEqual(0)
 
       controller.registerSession({
         sessionKey: 'uid-a',
@@ -139,6 +177,7 @@ export default function rtcWebRtcMediaControllerTest() {
       controller.dispose()
 
       expect(audioController.cleanupCount).assertEqual(2)
+      expect(audioController.releaseLocalVideoCount).assertEqual(0)
     })
   })
 }

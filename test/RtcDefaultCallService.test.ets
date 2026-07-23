@@ -226,7 +226,16 @@ export default function rtcDefaultCallServiceTest() {
     })
 
     it('terminates the active call by uid and switches to another pending call', 0, async () => {
-      const service = createService()
+      let callbackUid = ''
+      let callbackVisible = false
+      let callbackRemaining = 0
+      const service = createService({
+        async onTerminateCall(_session, _reason) {
+          callbackUid = service.getSession().uid
+          callbackVisible = service.getViewState().visible
+          callbackRemaining = service.getCallListItems().filter(item => item.canHangup).length
+        }
+      })
       await service.receiveIncomingCall({
         callId: 'bed-1',
         uid: 'uid-1',
@@ -248,6 +257,9 @@ export default function rtcDefaultCallServiceTest() {
       expect(service.getCallListItems().find(item => item.uid === 'uid-1')?.phase).assertEqual(RtcCallViewPhase.ENDED)
       expect(service.getCallListItems().find(item => item.uid === 'uid-2')?.phase).assertEqual(RtcCallViewPhase.INCOMING)
       expect(service.getIncomingCalls().pendingCount).assertEqual(1)
+      expect(callbackUid).assertEqual('uid-2')
+      expect(callbackVisible).assertEqual(true)
+      expect(callbackRemaining).assertEqual(1)
     })
 
     it('does not reconnect the current call after it is hidden', 0, async () => {

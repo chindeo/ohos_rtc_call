@@ -344,6 +344,10 @@ export class RtcCallGatewayClient {
     if (!rtcUID) {
       return { handled: false, reason: 'missing rtcUID', uid: signalUid }
     }
+    const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(rtcUID)
+    if (this.signalMachine?.isSessionEnded(signalUid) || this.signalMachine?.isSessionEnded(scope.rtcUid)) {
+      return { handled: false, reason: 'stale session', uid: signalUid }
+    }
     if (!this.store.get(signalUid)) {
       const remoteNumber = from === this.local.number ? to : from
       this.store.upsertOpenActivity({

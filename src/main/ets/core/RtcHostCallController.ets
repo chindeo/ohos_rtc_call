@@ -47,7 +47,7 @@ export interface RtcHostCallControllerOptions {
   onRegistered?: () => void
   onIncoming?: (session: RtcWebRtcCallSessionInfo) => void
   onConnected?: (sessionKey: string) => void
-  onEnded?: (sessionKey: string, all: boolean) => void
+  onEnded?: (sessionKey: string, all: boolean, remainingCount?: number) => void
   onHold?: (session: RtcCallSession) => void | Promise<void>
   onResume?: (session: RtcCallSession) => void | Promise<void>
   deviceRole?: RtcCallDeviceRole | string
@@ -129,10 +129,14 @@ export class RtcHostCallController {
           this.webRtcController.hangup(key)
         }
         this.releaseSessionRemoteVideoSurface(key)
-        if (this.service.getCallListItems().filter((item: RtcCallListItem) => item.canHangup).length === 0) {
+        const remainingCount = this.service.getCallListItems()
+          .filter((item: RtcCallListItem) => item.canHangup).length
+        if (remainingCount === 0) {
           await this.restoreAfterLastCall('last call ended')
         }
-        this.options.onEnded?.(key, false)
+        this.options.onLog?.('host call ended sidHash=' + this.getSessionHash(key) +
+          ' remaining=' + remainingCount)
+        this.options.onEnded?.(key, false, remainingCount)
       },
       onTerminateAllCalls: async (_sessions: RtcCallSession[], reason: string) => {
         if (reason.indexOf('remote hangup') !== 0) {
@@ -140,7 +144,7 @@ export class RtcHostCallController {
         }
         this.releaseAllSessionRemoteVideoSurfaces()
         await this.restoreAfterLastCall('all calls ended')
-        this.options.onEnded?.('', true)
+        this.options.onEnded?.('', true, 0)
       },
       onHoldCall: async (session: RtcCallSession) => {
         const key = this.resolveCallSessionKey(session)

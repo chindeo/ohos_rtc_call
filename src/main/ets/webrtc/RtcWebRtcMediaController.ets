@@ -1,5 +1,9 @@
 import webrtc, { ScalingMode, VideoRenderController } from './OhosWebRtc'
-import { RtcAudioController, RtcVideoRendererAdapter } from '../audio/RtcAudioController'
+import {
+  RtcAudioController,
+  RtcVideoCapturerFailure,
+  RtcVideoRendererAdapter
+} from '../audio/RtcAudioController'
 import {
   RTC_PEER_SESSION_CHANNEL_SUBSCRIBE,
   RtcPeerSessionRegistry
@@ -67,6 +71,24 @@ export interface RtcWebRtcCloseSessionOptions {
   preservePublish?: boolean
 }
 
+interface RtcWebRtcCodecStats extends webrtc.RTCStats {
+  mimeType?: string
+}
+
+interface RtcWebRtcVideoRtpStats extends webrtc.RTCStats {
+  kind?: string
+  mediaType?: string
+  codecId?: string
+  frameWidth?: number
+  frameHeight?: number
+  framesPerSecond?: number
+  framesEncoded?: number
+  framesDecoded?: number
+  bytesSent?: number
+  bytesReceived?: number
+  packetsLost?: number
+}
+
 export class RtcVideoSurfaceController implements RtcVideoRendererAdapter {
   private controller: VideoRenderController = new VideoRenderController()
 
@@ -113,6 +135,10 @@ class RtcWebRtcPeerRecord {
   localCandidateCount: number = 0
   iceCheckingTimer?: number
   iceCheckingStartedAt: number = 0
+  videoStatsTimer?: number
+  videoStatsInFlight: boolean = false
+  videoStatsErrorLogged: boolean = false
+  videoStatsEmptyLogged: boolean = false
 
   constructor(
     diagnosticId: number,
@@ -151,10 +177,13 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private onLog?: (message: string) => void
   private onError?: (message: string) => void
   private iceCheckingWarnMs: number = 10000
+  private videoStatsIntervalMs: number = 5000
   private nextPeerDiagnosticId: number = 1
   private resourceGeneration: number = 0
   private closedResourceGeneration: number = -1
   private closeAllInProgress: boolean = false
+  private localVideoRecoveryInFlight: boolean = false
+  private localVideoRecoveryAttempted: boolean = false
 
   constructor(options: RtcWebRtcMediaControllerOptions) {
     this.local = options.local
@@ -173,6 +202,9 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     this.onMediaStateChange = options.onMediaStateChange
     this.onLog = options.onLog
     this.onError = options.onError
+    this.audioController.setLocalVideoCapturerFailureHandler((failure: RtcVideoCapturerFailure) => {
+      this.handleLocalVideoCapturerFailure(failure)
+    })
   }
 
   setSignalSender(sender: (message: RtcSignalMessage, context: RtcWebRtcSignalContext) =>
@@ -191,6 +223,9 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     }
     let session = this.sessions.get(key)
     if (!session) {
+      if (this.sessions.size === 0) {
+        this.localVideoRecoveryAttempted = false
+      }
       session = new RtcWebRtcMediaSession()
       session.sessionKey = key
       this.sessions.set(key, session)
@@ -348,10 +383,12 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       this.log(`peer tracks added id=${record.diagnosticId} count=${trackCount}` +
         ` localAudio=${this.audioController.getLocalAudioTrack()?.id || ''}` +
         ` localVideo=${this.audioController.getLocalVideoTrack()?.id || ''}`)
+      await this.configurePublishVideoFrameRate(record, 'track_added')
     } else if (session) {
       this.peerRegistry.routeSubscribeOffer(session.uid, session.targetNumber, context.rtcUid)
     }
     this.bindPeerEvents(record)
+    this.startVideoStats(record)
     this.log(`peer created id=${record.diagnosticId} role=${role}` +
       ` session=${context.sessionId} rtcUid=${context.rtcUid} ${this.getResourceSummary()}`)
   }
@@ -371,10 +408,18 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     context: RtcWebRtcSignalContext
   ): Promise<void> {
     const record = this.requirePeer(role, context)
+    const isRemoteOffer = description.type.toLowerCase() === 'offer'
+    if (isRemoteOffer) {
+      this.configureVideoCodecPreferences(record, 'before_remote_offer')
+    }
     await record.pc.setRemoteDescription({
       type: description.type as webrtc.RTCSdpType,
       sdp: description.sdp
     })
+    if (isRemoteOffer) {
+      this.configureVideoCodecPreferences(record, 'after_remote_offer')
+    }
+    this.logVideoCodecSummary(record, 'remote', description.sdp)
     if (record.session && role === RTC_WEBRTC_PEER_ROLE_SUBSCRIBE) {
       this.peerRegistry.markRemoteDescriptionApplied(
         record.session.uid,
@@ -406,7 +451,9 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     role: RtcWebRtcPeerRole,
     context: RtcWebRtcSignalContext
   ): Promise<RtcWebRtcSessionDescription> {
-    const answer = await this.requirePeer(role, context).pc.createAnswer()
+    const record = this.requirePeer(role, context)
+    this.configureVideoCodecPreferences(record, 'before_create_answer')
+    const answer = await record.pc.createAnswer()
     return { type: answer.type, sdp: answer.sdp || '' }
   }
 
@@ -419,6 +466,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       type: description.type as webrtc.RTCSdpType,
       sdp: description.sdp
     })
+    this.logVideoCodecSummary(this.requirePeer(role, context), 'local', description.sdp)
   }
 
   async getLocalDescription(
@@ -482,6 +530,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     if (isLastSession) {
       this.resetMediaState(session)
       this.audioController.releaseLocalVideo()
+      this.localVideoRecoveryAttempted = false
       this.emitMediaState(session)
     }
     if (this.activeSessionKey === session.sessionKey) {
@@ -507,7 +556,6 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     try {
       this.peers.forEach((record: RtcWebRtcPeerRecord) => this.closePeer(record, reason))
       this.peers.clear()
-      this.audioController.releaseLocalVideo()
       this.sessions.forEach((session: RtcWebRtcMediaSession) => {
         this.resetMediaState(session)
         this.emitMediaState(session)
@@ -520,6 +568,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       })
       this.sessionRemoteVideoRenderers.clear()
       this.activeSessionKey = ''
+      this.localVideoRecoveryAttempted = false
       this.audioController.cleanupRtcCallResources(reason)
       this.closedResourceGeneration = this.resourceGeneration
       this.log(`close all complete reason=${reason} ${this.getResourceSummary()}`)
@@ -530,6 +579,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
 
   dispose(): void {
     this.closeAll('dispose')
+    this.audioController.setLocalVideoCapturerFailureHandler(undefined)
   }
 
   static isMediaConnected(
@@ -546,6 +596,35 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
 
   static isLocalVideoReady(readyState?: string): boolean {
     return readyState === 'live'
+  }
+
+  static prioritizeVideoCodecs(codecs: webrtc.RTCRtpCodec[]): webrtc.RTCRtpCodec[] {
+    const preferred: webrtc.RTCRtpCodec[] = []
+    const fallback: webrtc.RTCRtpCodec[] = []
+    codecs.forEach((codec: webrtc.RTCRtpCodec) => {
+      const mimeType = (codec.mimeType || '').toLowerCase()
+      const fmtp = (codec.sdpFmtpLine || '').toLowerCase()
+      if (mimeType === 'video/h264' && fmtp.indexOf('packetization-mode=1') >= 0 &&
+        fmtp.indexOf('profile-level-id=42e01f') >= 0) {
+        preferred.push(codec)
+      } else {
+        fallback.push(codec)
+      }
+    })
+    return preferred.concat(fallback)
+  }
+
+  static applyVideoMaxFrameRate(parameters: webrtc.RTCRtpSendParameters, maxFrameRate: number): number {
+    if (!Number.isFinite(maxFrameRate) || maxFrameRate <= 0) {
+      return 0
+    }
+    const value = Math.max(1, Math.floor(maxFrameRate))
+    let updated = 0
+    parameters.encodings.forEach((encoding: webrtc.RTCRtpEncodingParameters) => {
+      encoding.maxFramerate = value
+      updated += 1
+    })
+    return updated
   }
 
   private prepareLocalMedia(videoRequested: boolean): void {
@@ -579,6 +658,188 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     } else {
       this.log('local_video_track requested=false')
     }
+  }
+
+  private configureVideoCodecPreferences(record: RtcWebRtcPeerRecord, phase: string): void {
+    try {
+      const capabilities = record.role === RTC_WEBRTC_PEER_ROLE_PUBLISH ?
+        webrtc.RTCRtpSender.getCapabilities('video') : webrtc.RTCRtpReceiver.getCapabilities('video')
+      if (!capabilities || capabilities.codecs.length === 0) {
+        this.log('video_codec_preferences role=' + record.role +
+          ' phase=' + phase +
+          ' result=skip reason=no_capabilities')
+        return
+      }
+      const codecs = RtcWebRtcMediaController.prioritizeVideoCodecs(capabilities.codecs)
+      let applied = 0
+      record.pc.getTransceivers().forEach((transceiver: webrtc.RTCRtpTransceiver) => {
+        const senderKind = transceiver.sender.track?.kind || ''
+        const receiverKind = transceiver.receiver.track?.kind || ''
+        if (senderKind !== 'video' && receiverKind !== 'video') {
+          return
+        }
+        transceiver.setCodecPreferences(codecs)
+        applied += 1
+      })
+      this.log('video_codec_preferences role=' + record.role +
+        ' phase=' + phase +
+        ' result=' + (applied > 0 ? 'applied' : 'skip') +
+        ' transceivers=' + applied +
+        ' first=' + (codecs[0]?.mimeType || ''))
+    } catch (error) {
+      this.error('video codec preferences failed role=' + record.role +
+        ' phase=' + phase +
+        ' error=' + JSON.stringify(error))
+    }
+  }
+
+  private async configurePublishVideoFrameRate(
+    record: RtcWebRtcPeerRecord,
+    phase: string
+  ): Promise<void> {
+    if (record.role !== RTC_WEBRTC_PEER_ROLE_PUBLISH) {
+      return
+    }
+    let applied = 0
+    const senders = record.pc.getSenders()
+    for (const sender of senders) {
+      if (sender.track?.kind !== 'video') {
+        continue
+      }
+      try {
+        const parameters = sender.getParameters()
+        const updated = RtcWebRtcMediaController.applyVideoMaxFrameRate(
+          parameters, this.videoSource.frameRate)
+        if (updated === 0) {
+          this.log('video_sender_frame_rate role=' + record.role +
+            ' phase=' + phase + ' result=skip reason=no_encodings')
+          continue
+        }
+        await sender.setParameters(parameters)
+        applied += updated
+      } catch (error) {
+        this.error('video sender frame rate failed role=' + record.role +
+          ' phase=' + phase + ' error=' + JSON.stringify(error))
+      }
+    }
+    this.log('video_sender_frame_rate role=' + record.role +
+      ' phase=' + phase +
+      ' maxFramerate=' + Math.max(1, Math.floor(this.videoSource.frameRate)) +
+      ' encodings=' + applied)
+  }
+
+  private handleLocalVideoCapturerFailure(failure: RtcVideoCapturerFailure): void {
+    if (this.localVideoRecoveryInFlight || this.localVideoRecoveryAttempted ||
+      this.closeAllInProgress || this.sessions.size === 0) {
+      this.error('local video recovery skipped stage=' + failure.stage +
+        ' inFlight=' + this.localVideoRecoveryInFlight +
+        ' attempted=' + this.localVideoRecoveryAttempted +
+        ' sessions=' + this.sessions.size)
+      return
+    }
+    let hasVideoSession = false
+    this.sessions.forEach((session: RtcWebRtcMediaSession) => {
+      if (session.mode === RtcCallMode.VIDEO) {
+        hasVideoSession = true
+      }
+    })
+    if (!hasVideoSession) {
+      return
+    }
+    this.localVideoRecoveryAttempted = true
+    this.localVideoRecoveryInFlight = true
+    this.recoverLocalVideoTrack(failure)
+  }
+
+  private async recoverLocalVideoTrack(failure: RtcVideoCapturerFailure): Promise<void> {
+    const generation = this.resourceGeneration
+    const previousTrack = this.audioController.getLocalVideoTrack()
+    try {
+      this.log('local video recovery begin stage=' + failure.stage +
+        ' code=' + failure.code +
+        ' generation=' + generation)
+      this.audioController.releaseLocalVideo()
+      if (this.closeAllInProgress || this.sessions.size === 0 ||
+        this.resourceGeneration !== generation) {
+        this.log('local video recovery cancelled generation=' + generation)
+        return
+      }
+      const nextTrack = this.audioController.prepareLocalVideo({
+        trackId: RtcWebRtcTrackIdentityCodec.buildTrackId(this.local, this.appVersion),
+        width: this.videoSource.width,
+        height: this.videoSource.height,
+        frameRate: this.videoSource.frameRate,
+        facingMode: this.videoSource.facingMode,
+        deviceId: this.videoSource.deviceId
+      })
+      if (!nextTrack || nextTrack.readyState !== 'live') {
+        throw new Error('replacement local video track is not live')
+      }
+      let replaced = 0
+      const records: RtcWebRtcPeerRecord[] = []
+      this.peers.forEach((record: RtcWebRtcPeerRecord) => records.push(record))
+      for (const record of records) {
+        if (record.role !== RTC_WEBRTC_PEER_ROLE_PUBLISH ||
+          record.pc.signalingState === 'closed') {
+          continue
+        }
+        for (const sender of record.pc.getSenders()) {
+          if (sender.track?.kind !== 'video' && sender.track !== previousTrack) {
+            continue
+          }
+          await sender.replaceTrack(nextTrack)
+          replaced += 1
+        }
+        await this.configurePublishVideoFrameRate(record, 'replace_track')
+      }
+      this.log('local video recovery complete generation=' + generation +
+        ' replacedSenders=' + replaced)
+    } catch (error) {
+      this.error('local video recovery failed generation=' + generation +
+        ' stage=' + failure.stage +
+        ' error=' + JSON.stringify(error))
+    } finally {
+      this.localVideoRecoveryInFlight = false
+    }
+  }
+
+  private logVideoCodecSummary(record: RtcWebRtcPeerRecord, direction: string, sdp: string): void {
+    const codecs = RtcWebRtcMediaController.videoCodecSummary(sdp)
+    if (!codecs) {
+      return
+    }
+    this.log('video_codec_sdp role=' + record.role +
+      ' direction=' + direction +
+      ' codecs=' + codecs)
+  }
+
+  private static videoCodecSummary(sdp: string): string {
+    const codecByPayload: Map<string, string> = new Map()
+    let videoPayloads: string[] = []
+    const lines = (sdp || '').replace(/\r\n/g, '\n').split('\n')
+    lines.forEach((line: string) => {
+      const value = line.trim()
+      if (value.indexOf('m=video ') === 0) {
+        videoPayloads = value.split(/\s+/).slice(3)
+        return
+      }
+      if (value.indexOf('a=rtpmap:') !== 0) {
+        return
+      }
+      const parts = value.substring('a=rtpmap:'.length).split(/\s+/, 2)
+      if (parts.length !== 2) {
+        return
+      }
+      codecByPayload.set(parts[0], parts[1].split('/', 1)[0])
+    })
+    const names: string[] = []
+    videoPayloads.forEach((payload: string) => {
+      const name = codecByPayload.get(payload)
+      if (name && names.indexOf(name) < 0) {
+        names.push(name)
+      }
+    })
+    return names.join(',')
   }
 
   private applyLocalAudioState(): void {
@@ -801,12 +1062,102 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
 
   private closePeer(record: RtcWebRtcPeerRecord, reason: string): void {
     this.clearIceCheckingTimer(record)
+    this.stopVideoStats(record)
     try {
       record.pc.close()
     } catch (_error) {
     }
     this.log(`close peer id=${record.diagnosticId} reason=${reason}` +
       ` role=${record.role} session=${record.context.sessionId} rtcUid=${record.context.rtcUid}`)
+  }
+
+  private startVideoStats(record: RtcWebRtcPeerRecord): void {
+    if (record.videoStatsTimer !== undefined || record.session?.mode !== RtcCallMode.VIDEO) {
+      return
+    }
+    record.videoStatsTimer = setInterval(() => {
+      this.collectVideoStats(record)
+    }, this.videoStatsIntervalMs)
+    this.log('rtc_video_stats_start id=' + record.diagnosticId +
+      ' role=' + record.role +
+      ' sessionHash=' + this.getSessionHash(record.context.sessionId) +
+      ' intervalMs=' + this.videoStatsIntervalMs)
+  }
+
+  private stopVideoStats(record: RtcWebRtcPeerRecord): void {
+    if (record.videoStatsTimer !== undefined) {
+      clearInterval(record.videoStatsTimer)
+      record.videoStatsTimer = undefined
+    }
+    record.videoStatsInFlight = false
+  }
+
+  private collectVideoStats(record: RtcWebRtcPeerRecord): void {
+    if (record.videoStatsInFlight || this.peers.get(record.key)?.pc !== record.pc ||
+      record.pc.signalingState === 'closed') {
+      return
+    }
+    record.videoStatsInFlight = true
+    record.pc.getStats().then((report: webrtc.RTCStatsReport) => {
+      record.videoStatsInFlight = false
+      if (this.peers.get(record.key)?.pc !== record.pc) {
+        return
+      }
+      const codecById: Map<string, string> = new Map()
+      report.stats.forEach((value: webrtc.RTCStats, id: string) => {
+        if (value.type !== 'codec') {
+          return
+        }
+        const codec = value as RtcWebRtcCodecStats
+        codecById.set(id, codec.mimeType || '')
+      })
+
+      let videoRows = 0
+      report.stats.forEach((value: webrtc.RTCStats) => {
+        if (value.type !== 'inbound-rtp' && value.type !== 'outbound-rtp') {
+          return
+        }
+        const stat = value as RtcWebRtcVideoRtpStats
+        const codec = stat.codecId ? (codecById.get(stat.codecId) || '') : ''
+        const kind = (stat.kind || stat.mediaType || '').toLowerCase()
+        if (kind !== 'video' && codec.toLowerCase().indexOf('video/') !== 0) {
+          return
+        }
+        videoRows += 1
+        const outbound = value.type === 'outbound-rtp'
+        const width = stat.frameWidth !== undefined ? stat.frameWidth.toString() : ''
+        const height = stat.frameHeight !== undefined ? stat.frameHeight.toString() : ''
+        const resolution = width && height ? width + 'x' + height : ''
+        const frames = outbound ? stat.framesEncoded : stat.framesDecoded
+        const bytes = outbound ? stat.bytesSent : stat.bytesReceived
+        this.log('rtc_video_stats id=' + record.diagnosticId +
+          ' role=' + record.role +
+          ' sessionHash=' + this.getSessionHash(record.context.sessionId) +
+          ' direction=' + (outbound ? 'send' : 'recv') +
+          ' codec=' + codec +
+          ' resolution=' + resolution +
+          ' fps=' + (stat.framesPerSecond ?? '') +
+          ' frames=' + (frames ?? '') +
+          ' bytes=' + (bytes ?? '') +
+          ' packetsLost=' + (stat.packetsLost ?? ''))
+      })
+      if (videoRows === 0 && !record.videoStatsEmptyLogged) {
+        record.videoStatsEmptyLogged = true
+        this.log('rtc_video_stats_empty id=' + record.diagnosticId +
+          ' role=' + record.role +
+          ' sessionHash=' + this.getSessionHash(record.context.sessionId))
+      }
+    }).catch((error: Error) => {
+      record.videoStatsInFlight = false
+      if (record.videoStatsErrorLogged || this.peers.get(record.key)?.pc !== record.pc) {
+        return
+      }
+      record.videoStatsErrorLogged = true
+      this.error('rtc_video_stats_failed id=' + record.diagnosticId +
+        ' role=' + record.role +
+        ' sessionHash=' + this.getSessionHash(record.context.sessionId) +
+        ' error=' + JSON.stringify(error))
+    })
   }
 
   private getResourceSummary(): string {

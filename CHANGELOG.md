@@ -4,11 +4,19 @@
 
 - Added WebSocket reconnect with exponential backoff, per-device cohort spreading, random jitter, connection/register timeouts, and stable-registration reset protection.
 - Made WebRTC registration state follow the live signaling connection instead of controller creation, while preserving active media sessions during signaling recovery.
-- Fixed legacy WebSocket `c__hangup.data.isHangUp` handling so `false` preserves publish and the call page, while `true` or a missing field fully closes publish and the call UI.
+- Fixed legacy WebSocket `c__hangup.data.isHangUp` handling so `false` preserves publish only when another local call remains, while the last session, `true`, or a missing field fully closes publish and the call UI.
 - Prevented stale connected media state from reviving a hidden or ended single-call UI after hangup.
 - Added focused regression coverage for single-call hangup, multi-call keep-alive, `c__offline`, and stale media-state handling.
 - Added optional local video `deviceId` forwarding so hosts can bypass incompatible automatic camera enumeration on vendor firmware.
 - Release the native PeerConnectionFactory when the host controller is disposed so WebRTC worker, network, and video-source threads do not accumulate across page lifecycles.
+- Reject late SDP, ICE, and answer signals after a call session reaches its terminal state, preventing closed calls from recreating subscribe peers during teardown.
+- Preserve the shared publish peer only while another call remains; the last local hangup now releases all WebRTC media resources immediately.
+- Prefer H.264 constrained baseline through transceiver codec preferences while retaining VP8 fallback, and log negotiated video codec summaries without logging full SDP.
+- Send host multi-call answers immediately for the selected UID instead of waiting for media readiness, while preserving targeted hangup isolation for remaining calls.
+- Publish the remaining call state before single-call termination callbacks so host pages stay visible while another call is active.
+- Bind side-call video tracks to session-specific renderers and limit live side previews to one by default, keeping additional video calls as placeholders.
+- Emit low-frequency per-video-peer RTC stats for negotiated codec, direction, resolution, FPS, frame count, bytes, and packet loss, with timers tied to peer teardown.
+- Enforce exact camera and sender frame-rate limits, recover a stalled native camera stream without rebuilding the call, and replace the local publish track once when native recovery is exhausted.
 
 ## 0.1.4-rc3
 

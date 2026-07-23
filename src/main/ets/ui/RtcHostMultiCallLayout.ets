@@ -7,6 +7,7 @@ export struct RtcHostMultiCallLayout {
   @BuilderParam localVideoBuilder?: () => void
   @BuilderParam remoteVideoBuilder?: () => void
   @BuilderParam sessionRemoteVideoBuilder?: (sessionKey: string) => void
+  @Prop sideVideoPreviewLimit: number = 1
 
   onAccept?: (sessionKey: string) => void
   onHangup?: (sessionKey: string) => void
@@ -81,6 +82,7 @@ export struct RtcHostMultiCallLayout {
           localVideoBuilder: this.localVideoBuilder,
           remoteVideoBuilder: this.remoteVideoBuilder,
           sessionRemoteVideoBuilder: this.sessionRemoteVideoBuilder,
+          sideVideoPreviewLimit: this.sideVideoPreviewLimit,
           onAccept: (sessionKey: string) => {
             this.logCallback('accept', sessionKey)
             this.onAccept?.(sessionKey)

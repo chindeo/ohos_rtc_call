@@ -115,10 +115,17 @@ export class VideoRenderController extends XComponentController {
     this.activeSurfaceId = ''
     try {
       renderer?.setVideoTrack(null)
-    } finally {
-      renderer?.release()
-      Logging.d(TAG, 'deactivate renderer generation=' + generation)
+    } catch (error) {
+      Logging.w(TAG, 'deactivate detach track failed generation=' + generation +
+        ' error=' + JSON.stringify(error))
     }
+    try {
+      renderer?.release()
+    } catch (error) {
+      Logging.w(TAG, 'deactivate release failed generation=' + generation +
+        ' error=' + JSON.stringify(error))
+    }
+    Logging.d(TAG, 'deactivate renderer generation=' + generation)
   }
 
   private applyRendererSettings(): void {

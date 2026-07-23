@@ -341,6 +341,11 @@ export class RtcWebRtcSignalStateMachine {
     }
   }
 
+  isSessionEnded(sessionId: string): boolean {
+    const id = RtcWebRtcSignalStateMachine.normalizeSignalSessionId(sessionId)
+    return !!id && this.endedSessionIds.indexOf(id) >= 0
+  }
+
   async handleSdp(data: RtcSdpSignalData, options?: RtcWebRtcHandleSdpOptions): Promise<RtcWebRtcSignalHandleResult> {
     const sessionId = RtcWebRtcSignalStateMachine.getSignalSessionId(data, this.activeUuid)
     const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(data.rtcUid)
@@ -897,7 +902,7 @@ export class RtcWebRtcSignalStateMachine {
     if (!sessionId) {
       return true
     }
-    if (this.endedSessionIds.indexOf(sessionId) >= 0) {
+    if (this.isSessionEnded(sessionId)) {
       return true
     }
     if (this.registeredSessionIds.indexOf(sessionId) >= 0) {

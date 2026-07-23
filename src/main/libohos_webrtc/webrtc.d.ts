@@ -170,6 +170,9 @@ export interface MediaStreamTrackEvent extends Event {
 
 export interface VideoCapturerStartedEvent extends Event {
   readonly success: boolean;
+  readonly code?: number;
+  readonly stage?: string;
+  readonly message?: string;
 }
 
 // https://www.w3.org/TR/WebCryptoAPI/#algorithm

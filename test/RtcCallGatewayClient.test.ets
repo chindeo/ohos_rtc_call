@@ -231,6 +231,30 @@ export default function rtcCallGatewayClientTest() {
       expect(snapshot.calls[0].uid).assertEqual('uid-a')
     })
 
+    it('rejects late sdp after target session ended', 0, async () => {
+      const adapter = new MemoryGatewayAdapter()
+      const peerAdapter = new MemoryPeerConnectionAdapter()
+      const client = createClient(adapter, peerAdapter)
+
+      client.handleOpenActivity('bed-1', 'Bed 1', 'uid-ended', false)
+      await client.handleHangUp({ uid: 'uid-ended' })
+      const result = await client.handleReceiverSdp({
+        from: 'bed-1',
+        to: 'host-1001',
+        uid: 'uid-ended',
+        rtcUID: 'rtc-ended',
+        channelType: 'subscribe',
+        sdp: VALID_OFFER_SDP,
+        sdpType: 'offer'
+      })
+
+      expect(result.handled).assertEqual(false)
+      expect(result.reason).assertEqual('stale session')
+      expect(client.getSnapshot().calls.length).assertEqual(0)
+      expect(client.getSnapshot().peers.length).assertEqual(0)
+      expect(peerAdapter.remoteDescriptions.length).assertEqual(0)
+    })
+
     it('sends local candidate with original gateway route fields', 0, async () => {
       const adapter = new MemoryGatewayAdapter()
       const client = createClient(adapter)

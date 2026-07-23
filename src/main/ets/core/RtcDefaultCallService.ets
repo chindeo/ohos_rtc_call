@@ -796,17 +796,6 @@ export class RtcDefaultCallService implements RtcCallService {
     } else if (previousSession.calleeNumber) {
       this.sessionStore.removePeer(previousSession.calleeNumber)
     }
-    this.session.state = RtcCallState.ENDED
-    this.session.hostPhase = RtcHostPhase.TEARING_DOWN
-    this.session.active = false
-    this.session.pendingTrigger = false
-    this.session.visible = false
-    this.viewState.visible = false
-    this.viewState.phase = RtcCallViewPhase.ENDED
-    this.viewState.canAccept = false
-    this.viewState.canHangup = false
-    this.emitState()
-    await this.handlers?.onTerminateCall?.(previousSession, reason)
     const next = this.findNextVisibleCall(previousSession.requestId)
     if (next) {
       this.activateIncomingCall(next)
@@ -819,6 +808,7 @@ export class RtcDefaultCallService implements RtcCallService {
         this.viewState.canHangup = true
       }
       this.emitState()
+      await this.handlers?.onTerminateCall?.(previousSession, reason)
       return
     }
     this.session.state = RtcCallState.ENDED
@@ -832,6 +822,7 @@ export class RtcDefaultCallService implements RtcCallService {
     this.viewState.canAccept = false
     this.viewState.canHangup = false
     this.emitState()
+    await this.handlers?.onTerminateCall?.(previousSession, reason)
   }
 
   private findNextVisibleCall(excludeCallId: string): RtcIncomingCallRecord | undefined {

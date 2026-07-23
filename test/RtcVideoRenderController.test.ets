@@ -30,6 +30,12 @@ class MemoryNativeVideoRenderer implements VideoRendererAdapter {
   }
 }
 
+class FailingDetachVideoRenderer extends MemoryNativeVideoRenderer {
+  setVideoTrack(_track: webrtc.MediaStreamTrack | null): void {
+    throw new Error('detach failed')
+  }
+}
+
 export default function rtcVideoRenderControllerTest() {
   describe('RtcVideoRenderController', () => {
     it('ignores stale surface destroy and releases each renderer once', 0, () => {
@@ -53,6 +59,16 @@ export default function rtcVideoRenderControllerTest() {
       controller.onSurfaceDestroyed('surface-b')
       controller.deactivate()
       expect(renderers[1].releaseCount).assertEqual(1)
+    })
+
+    it('releases renderer after detach failure', 0, () => {
+      const renderer = new FailingDetachVideoRenderer()
+      const controller = new VideoRenderController(() => renderer)
+
+      controller.onSurfaceCreated('surface-a')
+      controller.deactivate()
+
+      expect(renderer.releaseCount).assertEqual(1)
     })
   })
 }

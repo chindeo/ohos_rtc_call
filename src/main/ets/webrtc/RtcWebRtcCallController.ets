@@ -187,7 +187,7 @@ export class RtcWebRtcCallController {
       this.sendApply(RTC_APPLY_HANGUP, session, false)
     }
     this.rememberLocalSingleHangup(session)
-    this.removeSession(session.sessionKey, true)
+    this.removeSession(session.sessionKey, this.sessions.size > 1)
     return true
   }
 
@@ -309,6 +309,9 @@ export class RtcWebRtcCallController {
       if (!payload || !payload.commonRequest) {
         return
       }
+      if (this.shouldIgnoreEndedSignal(message.eventName, payload.commonRequest, payload.rtcUid)) {
+        return
+      }
       const session = this.upsertSession(payload.commonRequest, true, payload.rtcUid)
       this.registerSignalAliases(payload.commonRequest, payload.rtcUid)
       const sdpData: RtcSdpSignalData = {
@@ -352,6 +355,9 @@ export class RtcWebRtcCallController {
       if (!payload || !payload.commonRequest) {
         return
       }
+      if (this.shouldIgnoreEndedSignal(message.eventName, payload.commonRequest, payload.rtcUid)) {
+        return
+      }
       const session = this.upsertSession(payload.commonRequest, true, payload.rtcUid)
       this.registerSignalAliases(payload.commonRequest, payload.rtcUid)
       const candidateData: RtcCandidateSignalData = {
@@ -374,6 +380,10 @@ export class RtcWebRtcCallController {
     }
     if (message.eventName === 'c__answer') {
       const payload = this.parsePayload(message.data)
+      if (payload?.commonRequest &&
+        this.shouldIgnoreEndedSignal(message.eventName, payload.commonRequest, payload.rtcUid)) {
+        return
+      }
       const session = payload?.commonRequest ? this.upsertSession(payload.commonRequest, true, payload.rtcUid) : undefined
       if (session) {
         const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(payload?.rtcUid || '')
@@ -393,9 +403,9 @@ export class RtcWebRtcCallController {
         this.listener.onLog?.('ignore terminal echo after local single hangup')
       } else if (session) {
         const key = session.sessionKey
-        const preservePublish = keepAlive || this.sessions.size > 1
+        const preservePublish = this.sessions.size > 1
         if (keepAlive) {
-          this.removeSession(key, true)
+          this.removeSession(key, preservePublish)
           this.listener.onHangup?.(key, false)
         } else if (message.eventName === 'c__hangup') {
           this.removeSession(key, preservePublish)
@@ -1040,6 +1050,29 @@ export class RtcWebRtcCallController {
     if (rtcSessionId && rtcSessionId !== sessionId) {
       this.signalStateMachine.registerSession(rtcSessionId)
     }
+  }
+
+  private shouldIgnoreEndedSignal(
+    eventName: string,
+    commonRequest: RtcCommonRequest,
+    rawRtcUid: string = ''
+  ): boolean {
+    const sessionId = this.normalizeSessionId(commonRequest.uuid)
+    const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(rawRtcUid)
+    const rtcSessionId = this.normalizeSessionId(scope.rtcUid)
+    let endedId = ''
+    if (sessionId && this.signalStateMachine.isSessionEnded(sessionId)) {
+      endedId = sessionId
+    } else if (rtcSessionId && this.signalStateMachine.isSessionEnded(rtcSessionId)) {
+      endedId = rtcSessionId
+    }
+    if (!endedId) {
+      return false
+    }
+    this.listener.onLog?.('ignore ended signal event=' + eventName +
+      ' sidHash=' + this.getSessionHash(endedId) +
+      ' channelType=' + scope.channelType)
+    return true
   }
 
   private parsePayload(data: string): RtcSignalPayload | undefined {

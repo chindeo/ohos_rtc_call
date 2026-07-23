@@ -34,6 +34,12 @@ export interface RtcAudioSampleStats {
   nonZeroBytes: number
 }
 
+export interface RtcVideoCapturerFailure {
+  code: number
+  stage: string
+  message: string
+}
+
 export interface RtcMediaDiagnosticsOptions extends RtcCallDiagnosticsOptions {
   aecDumpDirectory?: string
   aecDumpFilePrefix?: string
@@ -76,6 +82,7 @@ export class RtcAudioController {
   private aecDumpFile?: fs.File
   private aecDumpPath: string = ''
   private audioSampleCount: number = 0
+  private localVideoCapturerFailureHandler?: (failure: RtcVideoCapturerFailure) => void
 
   configureDiagnostics(options: RtcMediaDiagnosticsOptions): void {
     this.diagnostics = options
@@ -113,6 +120,12 @@ export class RtcAudioController {
 
   getAudioDeviceModule(): webrtc.AudioDeviceModule | undefined {
     return this.adm
+  }
+
+  setLocalVideoCapturerFailureHandler(
+    handler?: (failure: RtcVideoCapturerFailure) => void
+  ): void {
+    this.localVideoCapturerFailureHandler = handler
   }
 
   getSnapshot(): RtcMediaResourceSnapshot {
@@ -171,7 +184,7 @@ export class RtcAudioController {
     const constraints: webrtc.MediaTrackConstraints = {
       width: options.width,
       height: options.height,
-      frameRate: options.frameRate
+      frameRate: { exact: options.frameRate }
     }
     if (options.facingMode) {
       constraints.facingMode = options.facingMode
@@ -182,6 +195,20 @@ export class RtcAudioController {
     this.log('create_video_source begin deviceId=' + (options.deviceId || '') +
       ' width=' + options.width + ' height=' + options.height + ' frameRate=' + options.frameRate)
     this.localVideoSource = this.pcf.createVideoSource(constraints, options.isScreencast === true)
+    this.localVideoSource.oncapturerstarted = (event: webrtc.VideoCapturerStartedEvent) => {
+      if (event.success) {
+        this.log('video_capturer_started success=true')
+        return
+      }
+      const failure: RtcVideoCapturerFailure = {
+        code: event.code ?? -1,
+        stage: event.stage || 'unknown',
+        message: event.message || 'Video capturer failed'
+      }
+      this.logError('video_capturer_started success=false code=' + failure.code +
+        ' stage=' + failure.stage + ' message=' + failure.message)
+      this.localVideoCapturerFailureHandler?.(failure)
+    }
     this.log('create_video_source success deviceId=' + (options.deviceId || ''))
     this.log('create_video_track begin trackId=' + options.trackId)
     this.localVideoTrack = this.pcf.createVideoTrack(options.trackId, this.localVideoSource)
@@ -292,6 +319,8 @@ export class RtcAudioController {
     }
     this.localVideoTrack = undefined
     if (this.localVideoSource) {
+      this.localVideoSource.oncapturerstarted = null
+      this.localVideoSource.oncapturerstopped = null
       this.localVideoSource = undefined
     }
     this.clearVideoRenderer(this.localVideoRenderer)

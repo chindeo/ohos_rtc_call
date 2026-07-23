@@ -145,6 +145,56 @@ function parseApply(message: RtcSignalMessage): RtcApplySignalData {
 
 export default function rtcWebRtcCallControllerTest() {
   describe('RtcWebRtcCallController', () => {
+    it('answers and hangs up the selected uid while another incoming call remains', 0, () => {
+      const signalSession = new TestSignalSession()
+      const mediaController = new TrackingMediaController({
+        local: { number: '1000' },
+        appVersion: 'test'
+      })
+      const controller = createControllerWithMedia(signalSession, mediaController)
+      const emitInvite = (uid: string, number: string): void => {
+        signalSession.emitMessage({
+          eventName: 'c__invite',
+          data: JSON.stringify({
+            commonRequest: {
+              uuid: uid,
+              number,
+              from: number,
+              fromName: number,
+              to: '1000',
+              toName: '护士站',
+              clientType: 'bed',
+              isVideo: false
+            }
+          })
+        })
+      }
+      emitInvite('uid-a', '1101')
+      emitInvite('uid-b', '1111')
+
+      expect(controller.accept('uid-a')).assertEqual(true)
+      expect(controller.accept('uid-b')).assertEqual(true)
+
+      expect(signalSession.sentSignals.length).assertEqual(2)
+      expect(parseApply(signalSession.sentSignals[0]).applyType).assertEqual(2)
+      expect(parseApply(signalSession.sentSignals[0]).commonRequest.uuid).assertEqual('uid-a')
+      expect(parseApply(signalSession.sentSignals[1]).applyType).assertEqual(2)
+      expect(parseApply(signalSession.sentSignals[1]).commonRequest.uuid).assertEqual('uid-b')
+
+      expect(controller.hangup('uid-b')).assertEqual(true)
+
+      const hangup = parseApply(signalSession.sentSignals[2])
+      expect(hangup.applyType).assertEqual(3)
+      expect(hangup.isAll).assertEqual(false)
+      expect(hangup.commonRequest.uuid).assertEqual('uid-b')
+      expect(controller.getSession('uid-a')?.sessionKey).assertEqual('uid-a')
+      expect(controller.getSession('uid-b') === undefined).assertEqual(true)
+      expect(mediaController.closeSessionCalls[0].sessionKey).assertEqual('uid-b')
+      expect(mediaController.closeSessionCalls[0].preservePublish).assertEqual(true)
+      expect(mediaController.closeAllCalls.length).assertEqual(0)
+      controller.dispose()
+    })
+
     it('sends a single hangup apply for one session', 0, () => {
       const signalSession = new TestSignalSession()
       const controller = createController(signalSession)
@@ -164,7 +214,7 @@ export default function rtcWebRtcCallControllerTest() {
       controller.dispose()
     })
 
-    it('preserves shared publish for single hangup until explicit all hangup', 0, () => {
+    it('preserves shared publish only while another call remains', 0, () => {
       const signalSession = new TestSignalSession()
       const mediaController = new TrackingMediaController({
         local: { number: '1000' },
@@ -186,8 +236,64 @@ export default function rtcWebRtcCallControllerTest() {
 
       expect(mediaController.closeSessionCalls.length).assertEqual(2)
       expect(mediaController.closeSessionCalls[1].sessionKey).assertEqual('call-b')
-      expect(mediaController.closeSessionCalls[1].preservePublish).assertEqual(true)
+      expect(mediaController.closeSessionCalls[1].preservePublish).assertEqual(false)
       expect(controller.getSession('call-b') === undefined).assertEqual(true)
+      expect(mediaController.closeAllCalls.length).assertEqual(1)
+      controller.dispose()
+    })
+
+    it('ignores late sdp and candidate after the last local hangup', 0, () => {
+      const logs: string[] = []
+      const signalSession = new TestSignalSession()
+      const mediaController = new TrackingMediaController({
+        local: { number: '1000' },
+        appVersion: 'test'
+      })
+      const controller = new RtcWebRtcCallController(mediaController, {
+        onLog: (message: string) => logs.push(message)
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.VIDEO)
+
+      expect(controller.hangup('call-a')).assertEqual(true)
+      expect(mediaController.closeSessionCalls[0].preservePublish).assertEqual(false)
+
+      const commonRequest = {
+        uuid: 'call-a',
+        number: '1101',
+        from: '1101',
+        to: '1000',
+        isVideo: true
+      }
+      signalSession.emitMessage({
+        eventName: 'c__sdp',
+        data: JSON.stringify({
+          commonRequest,
+          rtcUid: 'subscribe|rtc-a',
+          sdpType: 'offer',
+          sdp: 'v=0\r\n'
+        })
+      })
+      signalSession.emitMessage({
+        eventName: 'c__candidate',
+        data: JSON.stringify({
+          commonRequest,
+          rtcUid: 'subscribe|rtc-a',
+          candidate: 'candidate:1 1 udp 1 192.0.2.10 10000 typ host',
+          sdpMLineIndex: 0,
+          sdpMid: '0'
+        })
+      })
+
+      expect(controller.getSession('call-a') === undefined).assertEqual(true)
+      expect(mediaController.getMediaState('call-a') === undefined).assertEqual(true)
+      expect(logs.filter((message: string) => message.indexOf('ignore ended signal') >= 0).length).assertEqual(2)
       controller.dispose()
     })
 
@@ -860,6 +966,34 @@ export default function rtcWebRtcCallControllerTest() {
       expect(mediaController.closeAllCalls.length).assertEqual(1)
     })
 
+    it('releases publish when keep-alive hangup removes the last matched session', 0, () => {
+      const signalSession = new TestSignalSession()
+      const mediaController = new TrackingMediaController({
+        local: { number: '1000' },
+        appVersion: 'test'
+      })
+      const controller = createControllerWithMedia(signalSession, mediaController)
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__hangup',
+        data: JSON.stringify({
+          isHangUp: false,
+          commonRequest: {
+            uuid: 'call-a',
+            number: '1101',
+            from: '1101',
+            to: '1000'
+          }
+        })
+      })
+
+      expect(controller.getSession('call-a') === undefined).assertEqual(true)
+      expect(mediaController.closeSessionCalls[0].preservePublish).assertEqual(false)
+      expect(mediaController.closeAllCalls.length).assertEqual(1)
+      controller.dispose()
+    })
+
     it('hangs up the last call for a remote terminal notice without target identity', 0, () => {
       let endedAll = false
       const signalSession = new TestSignalSession()
@@ -970,7 +1104,7 @@ export default function rtcWebRtcCallControllerTest() {
       controller.dispose()
     })
 
-    it('closes preserved publish after local hangup echo says no other call remains', 0, () => {
+    it('closes publish immediately after the last local hangup', 0, () => {
       let endedAll = false
       const signalSession = new TestSignalSession()
       const mediaController = new TrackingMediaController({
@@ -992,7 +1126,8 @@ export default function rtcWebRtcCallControllerTest() {
       controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
 
       expect(controller.hangup('call-a')).assertEqual(true)
-      expect(mediaController.closeSessionCalls[0].preservePublish).assertEqual(true)
+      expect(mediaController.closeSessionCalls[0].preservePublish).assertEqual(false)
+      expect(mediaController.closeAllCalls.length).assertEqual(1)
 
       signalSession.emitMessage({
         eventName: 'c__hangup',

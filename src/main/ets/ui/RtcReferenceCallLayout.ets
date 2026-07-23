@@ -11,6 +11,7 @@ export struct RtcReferenceCallLayout {
   @BuilderParam localVideoBuilder?: () => void
   @BuilderParam remoteVideoBuilder?: () => void
   @BuilderParam sessionRemoteVideoBuilder?: (sessionKey: string) => void
+  @Prop sideVideoPreviewLimit: number = 1
 
   onAccept?: (sessionKey: string) => void
   onHangup?: (sessionKey: string) => void
@@ -183,6 +184,26 @@ export struct RtcReferenceCallLayout {
     return call.phase !== RtcCallViewPhase.HELD &&
       call.mode === RtcCallMode.VIDEO &&
       call.hasRemoteVideo
+  }
+
+  private showSideVideoPreview(call: RtcHostCallUiItem): boolean {
+    const limit = Math.max(0, this.sideVideoPreviewLimit)
+    if (limit === 0 || !this.showRemoteVideo(call)) {
+      return false
+    }
+    const sideCalls = this.getSideCalls()
+    let previewIndex = 0
+    for (let i = 0; i < sideCalls.length; i += 1) {
+      const item = sideCalls[i]
+      if (!this.showRemoteVideo(item)) {
+        continue
+      }
+      if (item.sessionKey === call.sessionKey) {
+        return previewIndex < limit
+      }
+      previewIndex += 1
+    }
+    return false
   }
 
   private getSpeakerActionLabel(): string {
@@ -677,7 +698,7 @@ export struct RtcReferenceCallLayout {
             .height('100%')
             .objectFit(ImageFit.Cover)
 
-          if (this.showRemoteVideo(call) && this.sessionRemoteVideoBuilder) {
+          if (this.showSideVideoPreview(call) && this.sessionRemoteVideoBuilder) {
             this.sessionRemoteVideoBuilder(call.sessionKey)
           } else {
             this.AudioPlaceholder(call, true)

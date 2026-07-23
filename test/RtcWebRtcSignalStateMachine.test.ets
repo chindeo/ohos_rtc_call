@@ -195,6 +195,17 @@ export default function rtcWebRtcSignalStateMachineTest() {
       expect(adapter.candidates.length).assertEqual(0)
     })
 
+    it('keeps ended session tombstone until a new call registers it', 0, () => {
+      const machine = new RtcWebRtcSignalStateMachine({ adapter: new MemoryPeerConnectionAdapter() })
+      machine.registerSession('call-ended')
+      machine.unregisterSession('call-ended')
+
+      expect(machine.isSessionEnded('call-ended')).assertEqual(true)
+
+      machine.registerSession('call-ended')
+      expect(machine.isSessionEnded('call-ended')).assertEqual(false)
+    })
+
     it('queues candidate until descriptions are ready and then flushes', 0, async () => {
       const adapter = new MemoryPeerConnectionAdapter()
       const machine = new RtcWebRtcSignalStateMachine({ adapter })
