@@ -145,6 +145,36 @@ function parseApply(message: RtcSignalMessage): RtcApplySignalData {
 
 export default function rtcWebRtcCallControllerTest() {
   describe('RtcWebRtcCallController', () => {
+    it('answers a video call before remote media is available', 0, () => {
+      const signalSession = new TestSignalSession()
+      const controller = createController(signalSession)
+      signalSession.emitMessage({
+        eventName: 'c__invite',
+        data: JSON.stringify({
+          commonRequest: {
+            uuid: 'video-call',
+            number: '1101',
+            from: '1101',
+            fromName: 'bed-1',
+            to: '1000',
+            toName: 'nurse',
+            clientType: 'bed',
+            isVideo: true
+          }
+        })
+      })
+
+      expect(controller.accept('video-call')).assertEqual(true)
+      expect(signalSession.sentSignals.length).assertEqual(1)
+      const apply = parseApply(signalSession.sentSignals[0])
+      expect(signalSession.sentSignals[0].eventName).assertEqual('s__apply')
+      expect(apply.applyType).assertEqual(2)
+      expect(apply.isAll).assertEqual(false)
+      expect(apply.commonRequest.uuid).assertEqual('video-call')
+      expect(apply.commonRequest.isVideo).assertEqual(true)
+      controller.dispose()
+    })
+
     it('answers and hangs up the selected uid while another incoming call remains', 0, () => {
       const signalSession = new TestSignalSession()
       const mediaController = new TrackingMediaController({
