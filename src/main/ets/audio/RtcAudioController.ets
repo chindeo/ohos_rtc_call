@@ -184,7 +184,7 @@ export class RtcAudioController {
     const constraints: webrtc.MediaTrackConstraints = {
       width: options.width,
       height: options.height,
-      frameRate: { exact: options.frameRate }
+      frameRate: options.frameRate
     }
     if (options.facingMode) {
       constraints.facingMode = options.facingMode
