@@ -31,6 +31,11 @@ export interface RtcDeviceKeepAliveOptions {
   reason?: string
 }
 
+export interface RtcDeviceKeepAliveReleaseOptions {
+  bundleName: string
+  reason?: string
+}
+
 export interface RtcAutoPowerOnOffConfig {
   enable: number
   week: string
@@ -72,6 +77,7 @@ export interface RtcDeviceCapabilityAdapter {
   getAutoPowerOnOff?(): Promise<string>
   silentInstallApp?(options: RtcSilentInstallOptions): Promise<RtcDeviceCapabilityResult<number>>
   startKeepAlive?(options: RtcDeviceKeepAliveOptions): Promise<RtcDeviceCapabilityResult<boolean>>
+  releaseKeepAlive?(options: RtcDeviceKeepAliveReleaseOptions): Promise<RtcDeviceCapabilityResult<boolean>>
   stopKeepAlive?(): void
   subscribeKeyEvent?(listener: RtcDeviceKeyEventListener): RtcDeviceCapabilityResult<boolean>
   unsubscribeKeyEvent?(listener: RtcDeviceKeyEventListener): RtcDeviceCapabilityResult<boolean>

@@ -10,6 +10,7 @@ import {
   RtcDeviceKeyEventListener,
   RtcDeviceLedOptions,
   RtcDeviceKeepAliveOptions,
+  RtcDeviceKeepAliveReleaseOptions,
   RtcDeviceMacOptions,
   RtcMacAddressUtils,
   RtcSilentInstallOptions
@@ -193,6 +194,17 @@ export class RtcDeviceCapabilityManager {
   static stopKeepAlive(vendor: string = RtcDeviceVendorResolver.getStoredVendor()): void {
     const adapter = RtcDeviceCapabilityManager.getAdapter(vendor)
     adapter?.stopKeepAlive?.()
+  }
+
+  static async releaseKeepAlive(
+    options: RtcDeviceKeepAliveReleaseOptions,
+    vendor: string = RtcDeviceVendorResolver.getStoredVendor()
+  ): Promise<RtcDeviceCapabilityResult<boolean>> {
+    const adapter = RtcDeviceCapabilityManager.getAdapter(vendor)
+    if (!adapter?.releaseKeepAlive) {
+      return createUnsupportedResult<boolean>(`vendor ${vendor} keep alive release is unsupported`)
+    }
+    return adapter.releaseKeepAlive(options)
   }
 
   static subscribeKeyEvent(

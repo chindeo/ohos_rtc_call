@@ -10,6 +10,9 @@
 ## Dnake
 
 - Dnake 可使用 Dnake SIP、DMsg、SIP 铃声、手柄、按键、IO 和设备 SDK 能力。
+- Dnake 看门狗的正常停止只结束进程内屏幕唤醒定时器，不能在后台、窗口销毁或普通退出时自动移除生产看门狗。
+- 卸载受看门狗保护的宿主前，必须通过 `RtcDeviceCapabilityManager.releaseKeepAlive` 显式调用厂家 `removeDog`，确认成功后才能继续卸载。
+- 卸载前解除属于维护动作；远程控制服务不能冒充业务 bundle 调用 `feedDog`，也不能静默改变设备的生产重启策略。
 - WebRTC 模式必须关闭 Dnake SIP 铃声和 DMsg 干扰。
 - SIP 模式下由公共 SIP runtime/controller 统一注册、拨号、接听、挂断、禁用和铃声开关语义。
 - Dnake 按键和手柄事件只作为业务入口来源，最终仍调用公共通话接口。
@@ -34,3 +37,11 @@
 - Shimeta 原始文档：`docs/archive/vendor/shimeta-openharmony-device-api.md`。
 - Aurine 原始文档：`docs/archive/vendor/aurine-hardware-services-ohos/`。
 - 原始文档只作为能力查证来源；实现和协作规则以本项目顶层 docs 与 `AGENTS.md` 为准。
+
+## Dnake 卸载前手工验收
+
+1. 正常启动床旁应用，确认日志中 `keepAlive.success=true`。
+2. 通过宿主维护入口请求 `prepareUninstall`，并使用唯一 `runId` 关联结果。
+3. 只有日志出现同一 `runId` 的 `PREPARE_UNINSTALL_RESULT success=true` 后才卸载。
+4. 卸载后等待超过设备原看门狗超时时间，设备不得因已移除的床旁 dog 重启。
+5. 重新安装并启动床旁应用，确认看门狗重新注册，普通后台/窗口销毁没有调用 `removeDog`。

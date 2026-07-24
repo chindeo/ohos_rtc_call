@@ -6,6 +6,7 @@ import rtcCallLifecycleStoreTest from './RtcCallLifecycleStore.test'
 import rtcCallSessionStoreTest from './RtcCallSessionStore.test'
 import rtcCallUiPresenterTest from './RtcCallUiPresenter.test'
 import rtcDefaultCallServiceTest from './RtcDefaultCallService.test'
+import rtcDeviceCapabilityManagerTest from './RtcDeviceCapabilityManager.test'
 import rtcHardwareCallControllerTest from './RtcHardwareCallController.test'
 import rtcHostCallControllerTest from './RtcHostCallController.test'
 import rtcHostMultiCallControllerTest from './RtcHostMultiCallController.test'
@@ -31,6 +32,7 @@ export default function testsuite() {
   rtcCallSessionStoreTest()
   rtcCallUiPresenterTest()
   rtcDefaultCallServiceTest()
+  rtcDeviceCapabilityManagerTest()
   rtcHardwareCallControllerTest()
   rtcHostCallControllerTest()
   rtcHostMultiCallControllerTest()
