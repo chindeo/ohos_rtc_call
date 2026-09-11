@@ -19,7 +19,8 @@
     "call"
   ],
   "dependencies": {
-    "libohos_webrtc.so": "file:./src/main/libohos_webrtc"
+    "libohos_webrtc.so": "file:./src/main/libohos_webrtc",
+    "libcurl_http.so": "file:./src/main/cpp/types/libcurl_http"
   },
   "dynamicDependencies": {},
   "devDependencies": {

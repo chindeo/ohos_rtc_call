@@ -3,6 +3,7 @@ build/
 .hvigor/
 .idea/
 dist/
+.native-curl-build/
 BuildProfile.ets
 oh-package-lock.json5
 *.har

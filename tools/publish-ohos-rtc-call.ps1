@@ -239,7 +239,7 @@ $SensitivePatterns = @(
   "secret[_-]?key",
   "dgzyh\.server\.chindeo\.test",
   "@company/device_sdk",
-  '"file:(?!\./src/main/libohos_webrtc")'
+  '"file:(?!\./src/main/(?:libohos_webrtc|cpp/types/libcurl_http)")'
 )
 
 $ScanFiles = Get-ChildItem -Path $PackageRoot -Recurse -File -Include *.ets,*.ts,*.json,*.json5,*.md,*.txt

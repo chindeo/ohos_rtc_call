@@ -2,6 +2,7 @@
 
 ## 0.1.4-rc3 timestamp HAR
 
+- Added a native libcurl/OpenSSL HTTP compatibility client with Axios-style instances and interceptors for OpenHarmony firmware affected by Network Kit hostname-resolution error `2300006`.
 - Added WebSocket reconnect with exponential backoff, per-device cohort spreading, random jitter, connection/register timeouts, and stable-registration reset protection.
 - Made WebRTC registration state follow the live signaling connection instead of controller creation, while preserving active media sessions during signaling recovery.
 - Fixed legacy WebSocket `c__hangup.data.isHangUp` handling so `false` preserves publish only when another local call remains, while the last session, `true`, or a missing field fully closes publish and the call UI.

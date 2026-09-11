@@ -20,6 +20,7 @@ Reusable OpenHarmony audio/video call utilities for ArkTS applications.
 - UI helpers for RTC status hints, admin-entry countdowns, API endpoint settings, and host/bed call view presentation models.
 - Process-local system navigation-bar visibility and window application helpers.
 - Shared call state and signal models.
+- Native libcurl HTTP compatibility client for firmware where Network Kit hostname resolution fails.
 
 ## Ringtone Policy
 
@@ -37,6 +38,27 @@ ohpm install @chindeo/ohos-rtc-call
 ```
 
 The host application must also provide a compatible `@ohos/webrtc` dependency and request the required runtime permissions. Vendor SDK implementations such as Dnake or Shimeta are injected by the host application through adapters and are not bundled in this package.
+
+## Native curl HTTP compatibility
+
+`CurlAxios` covers the Axios surface used by the bedside and nurse-host applications: instances, request/response interceptors, GET/POST/PUT/DELETE, query parameters, JSON bodies, headers, redirects, and timeouts. It always uses libcurl HTTP/1.1 without an environment proxy. libcurl and OpenSSL are linked statically into `libcurl_http.so`; the HAR carries both `armeabi-v7a` and `arm64-v8a` libraries.
+
+```ts
+import { CurlAxios } from '@chindeo/ohos-rtc-call'
+
+const service = CurlAxios.create({
+  baseURL: 'http://server.example',
+  timeout: 10000,
+  proxy: false
+})
+const response = await service.get('/license')
+```
+
+Rebuild the native libraries with PowerShell 7 after preparing the sibling `third_party_curl` HTTPS static libraries:
+
+```powershell
+pwsh -File tools/build-native-curl.ps1
+```
 
 ## Host WebRTC UI Policies
 
