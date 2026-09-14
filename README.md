@@ -165,6 +165,10 @@ controller.pushLocalVideoNv21Frame(frame, width, height)
 
 The callback becomes inactive when the final video session closes and during controller disposal.
 The host must stop preview, detach callbacks, and close its UVC device in the inactive callback.
+Select `externalNv21` only after the host has confirmed that a UVC device is actually present; an
+API version alone is not a camera capability check. Keep proven CameraKit constraints for legacy
+devices, throttle forwarded frames to the configured frame rate, and treat UVC startup or detach as
+a local-video failure rather than hanging up unrelated active calls.
 
 ## call-gateway SDK
 

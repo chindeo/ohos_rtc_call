@@ -179,5 +179,41 @@ export default function rtcWebRtcMediaControllerTest() {
       expect(audioController.cleanupCount).assertEqual(2)
       expect(audioController.releaseLocalVideoCount).assertEqual(0)
     })
+
+    it('releases local video only after the final video session closes', 0, () => {
+      const audioController = new TrackingAudioController()
+      const controller = new RtcWebRtcMediaController({
+        local: { number: '1000' },
+        appVersion: 'test',
+        audioController
+      })
+      controller.registerSession({
+        sessionKey: 'video-a',
+        sessionId: 'call-video-a',
+        targetNumber: '1101',
+        mode: RtcCallMode.VIDEO
+      })
+      controller.registerSession({
+        sessionKey: 'video-b',
+        sessionId: 'call-video-b',
+        targetNumber: '1102',
+        mode: RtcCallMode.VIDEO
+      })
+      controller.registerSession({
+        sessionKey: 'audio-a',
+        sessionId: 'call-audio-a',
+        targetNumber: '1103',
+        mode: RtcCallMode.AUDIO
+      })
+
+      expect(controller.closeSession('video-a')).assertEqual(true)
+      expect(audioController.releaseLocalVideoCount).assertEqual(0)
+      expect(controller.closeSession('video-b')).assertEqual(true)
+      expect(audioController.releaseLocalVideoCount).assertEqual(1)
+      expect(controller.getMediaState('audio-a')?.sessionKey).assertEqual('audio-a')
+
+      controller.dispose()
+      expect(audioController.cleanupCount).assertEqual(1)
+    })
   })
 }
