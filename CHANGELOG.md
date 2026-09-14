@@ -2,6 +2,8 @@
 
 ## 0.1.4-rc3 timestamp HAR
 
+- Added opt-in external NV21 video sources so a host can feed vendor UVC frames into WebRTC without invoking CameraKit.
+- Added host-controller external video lifecycle callbacks and frame forwarding so applications can open UVC only for video calls and close it during teardown.
 - Added a native libcurl/OpenSSL HTTP compatibility client with Axios-style instances and interceptors for OpenHarmony firmware affected by Network Kit hostname-resolution error `2300006`.
 - Added WebSocket reconnect with exponential backoff, per-device cohort spreading, random jitter, connection/register timeouts, and stable-registration reset protection.
 - Made WebRTC registration state follow the live signaling connection instead of controller creation, while preserving active media sessions during signaling recovery.

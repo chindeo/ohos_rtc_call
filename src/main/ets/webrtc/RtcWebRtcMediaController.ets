@@ -61,6 +61,7 @@ export interface RtcWebRtcMediaControllerOptions {
   peerRegistry?: RtcPeerSessionRegistry
   iceServers?: webrtc.RTCIceServer[]
   videoSource?: RtcWebRtcVideoSourceOptions
+  onExternalVideoCaptureStateChange?: (active: boolean) => void
   onSendSignal?: (message: RtcSignalMessage, context: RtcWebRtcSignalContext) => void | Promise<void>
   onMediaStateChange?: (state: RtcWebRtcMediaState) => void
   onLog?: (message: string) => void
@@ -174,6 +175,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private sessionRemoteVideoRenderers: Map<string, RtcVideoRendererAdapter> = new Map()
   private onSendSignal?: (message: RtcSignalMessage, context: RtcWebRtcSignalContext) => void | Promise<void>
   private onMediaStateChange?: (state: RtcWebRtcMediaState) => void
+  private onExternalVideoCaptureStateChange?: (active: boolean) => void
   private onLog?: (message: string) => void
   private onError?: (message: string) => void
   private iceCheckingWarnMs: number = 10000
@@ -184,6 +186,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private closeAllInProgress: boolean = false
   private localVideoRecoveryInFlight: boolean = false
   private localVideoRecoveryAttempted: boolean = false
+  private externalVideoCaptureActive: boolean = false
 
   constructor(options: RtcWebRtcMediaControllerOptions) {
     this.local = options.local
@@ -200,6 +203,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     }
     this.onSendSignal = options.onSendSignal
     this.onMediaStateChange = options.onMediaStateChange
+    this.onExternalVideoCaptureStateChange = options.onExternalVideoCaptureStateChange
     this.onLog = options.onLog
     this.onError = options.onError
     this.audioController.setLocalVideoCapturerFailureHandler((failure: RtcVideoCapturerFailure) => {
@@ -214,6 +218,11 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
 
   setIceServers(iceServers: webrtc.RTCIceServer[]): void {
     this.pcConfig = { iceServers }
+  }
+
+  pushLocalVideoNv21Frame(data: Uint8Array, width: number, height: number,
+    timestampUs?: number, rotation?: 0 | 90 | 180 | 270): boolean {
+    return this.audioController.pushLocalVideoNv21Frame(data, width, height, timestampUs, rotation)
   }
 
   registerSession(options: RtcWebRtcMediaSessionOptions): void {
@@ -527,10 +536,19 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     this.sessions.delete(session.sessionKey)
     this.heldSessionKeys.delete(session.sessionKey)
     this.clearSessionRemoteVideoRenderer(session.sessionKey)
-    if (isLastSession) {
-      this.resetMediaState(session)
+    let hasVideoSession = false
+    this.sessions.forEach((remainingSession: RtcWebRtcMediaSession) => {
+      if (remainingSession.mode === RtcCallMode.VIDEO) {
+        hasVideoSession = true
+      }
+    })
+    if (!hasVideoSession) {
+      this.setExternalVideoCaptureActive(false)
       this.audioController.releaseLocalVideo()
       this.localVideoRecoveryAttempted = false
+    }
+    if (isLastSession) {
+      this.resetMediaState(session)
       this.emitMediaState(session)
     }
     if (this.activeSessionKey === session.sessionKey) {
@@ -569,6 +587,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       this.sessionRemoteVideoRenderers.clear()
       this.activeSessionKey = ''
       this.localVideoRecoveryAttempted = false
+      this.setExternalVideoCaptureActive(false)
       this.audioController.cleanupRtcCallResources(reason)
       this.closedResourceGeneration = this.resourceGeneration
       this.log(`close all complete reason=${reason} ${this.getResourceSummary()}`)
@@ -645,8 +664,12 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
           height: this.videoSource.height,
           frameRate: this.videoSource.frameRate,
           facingMode: this.videoSource.facingMode,
-          deviceId: this.videoSource.deviceId
+          deviceId: this.videoSource.deviceId,
+          externalNv21: this.videoSource.externalNv21
         })
+        if (nextVideoTrack && this.videoSource.externalNv21 === true) {
+          this.setExternalVideoCaptureActive(true)
+        }
         this.log('local_video_track requested=true readyState=' + (nextVideoTrack?.readyState || '') +
           ' enabled=' + (nextVideoTrack?.enabled === true) +
           ' width=' + this.videoSource.width +
@@ -770,7 +793,8 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
         height: this.videoSource.height,
         frameRate: this.videoSource.frameRate,
         facingMode: this.videoSource.facingMode,
-        deviceId: this.videoSource.deviceId
+        deviceId: this.videoSource.deviceId,
+        externalNv21: this.videoSource.externalNv21
       })
       if (!nextTrack || nextTrack.readyState !== 'live') {
         throw new Error('replacement local video track is not live')
@@ -800,6 +824,19 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
         ' error=' + JSON.stringify(error))
     } finally {
       this.localVideoRecoveryInFlight = false
+    }
+  }
+
+  private setExternalVideoCaptureActive(active: boolean): void {
+    if (this.videoSource.externalNv21 !== true || this.externalVideoCaptureActive === active) {
+      return
+    }
+    this.externalVideoCaptureActive = active
+    try {
+      this.onExternalVideoCaptureStateChange?.(active)
+    } catch (error) {
+      this.error('external video capture state callback failed active=' + active +
+        ' error=' + JSON.stringify(error))
     }
   }
 

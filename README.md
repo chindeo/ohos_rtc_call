@@ -8,6 +8,7 @@ Reusable OpenHarmony audio/video call utilities for ArkTS applications.
 - WebSocket signaling clients for WebRTC call flows, including shared registration URL building, connection-state tracking, and anti-thundering-herd reconnect backoff.
 - SIP config and adapter interfaces for host-provided Dnake SDK integration.
 - WebRTC audio helper for low-latency audio call setup.
+- Opt-in external NV21 video input for hosts that capture frames through a vendor UVC library instead of CameraKit.
 - call-gateway SDK client for uid-based call control, SDP/ICE routing, and host-injected transport adapters.
 - SDP utilities for Opus low-latency audio parameters.
 - Audio output routing helper for speaker/default routes.
@@ -126,6 +127,44 @@ signal.connect({
 const audio = new RtcAudioController()
 audio.ensureReady()
 ```
+
+For a host-owned UVC capture pipeline, prepare an external source and forward each tightly packed
+NV21 frame. The package does not open or own the UVC device, so camera lifecycle remains in the host:
+
+```ts
+audio.prepareLocalVideo({
+  trackId: 'local-video',
+  width: 640,
+  height: 480,
+  frameRate: 15,
+  externalNv21: true
+})
+
+// Call from the host UVC frame listener.
+audio.pushLocalVideoNv21Frame(frame, width, height)
+```
+
+`RtcHostCallController` can drive the same host-owned pipeline for complete call-scoped cleanup:
+
+```ts
+const controller = new RtcHostCallController({
+  // Other registration and identity options omitted.
+  serverUrl,
+  local,
+  appVersion: 'host',
+  localVideoEnabled: true,
+  videoSource: { width: 640, height: 480, frameRate: 15, externalNv21: true },
+  onExternalVideoCaptureStateChange: (active: boolean) => {
+    active ? startUvcCapture() : stopAndCloseUvcCapture()
+  }
+})
+
+// Forward each NV21 frame from the UVC listener.
+controller.pushLocalVideoNv21Frame(frame, width, height)
+```
+
+The callback becomes inactive when the final video session closes and during controller disposal.
+The host must stop preview, detach callbacks, and close its UVC device in the inactive callback.
 
 ## call-gateway SDK
 

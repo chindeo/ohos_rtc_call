@@ -791,6 +791,9 @@ export interface AudioSource extends MediaSource {
 export interface VideoSource extends MediaSource {
   oncapturerstarted: ((this: VideoSource, ev: VideoCapturerStartedEvent) => any) | null;
   oncapturerstopped: ((this: VideoSource, ev: Event) => any) | null;
+  /** Pushes one tightly packed NV21 frame into an external video source. */
+  pushNv21Frame(data: Uint8Array, width: number, height: number, timestampUs?: number,
+    rotation?: 0 | 90 | 180 | 270): boolean;
 }
 
 // https://www.w3.org/TR/mediacapture-streams/#mediastreamtrack
@@ -1024,6 +1027,8 @@ export interface PeerConnectionFactory {
   createAudioSource(constraints?: MediaTrackConstraints): AudioSource;
   createAudioTrack(id: string, source: AudioSource): AudioTrack;
   createVideoSource(constraints?: MediaTrackConstraints, isScreencast?: boolean): VideoSource;
+  /** Creates a source fed by application-provided frames instead of CameraKit. */
+  createExternalVideoSource(maxFrameRate?: number): VideoSource;
   createVideoTrack(id: string, source: VideoSource): VideoTrack;
   startAecDump(fd: number, max_size_bytes: number): boolean;
   stopAecDump(): void;

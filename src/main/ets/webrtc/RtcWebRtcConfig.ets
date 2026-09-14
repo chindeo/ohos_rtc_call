@@ -22,6 +22,7 @@ export interface RtcWebRtcVideoSourceOptions {
   frameRate: number
   facingMode?: string
   deviceId?: string
+  externalNv21?: boolean
 }
 
 export interface RtcWebRtcStatsOptions {

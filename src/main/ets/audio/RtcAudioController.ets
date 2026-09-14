@@ -13,6 +13,7 @@ export interface RtcLocalAudioOptions {
 export interface RtcLocalVideoOptions extends RtcWebRtcVideoSourceOptions {
   trackId: string
   isScreencast?: boolean
+  externalNv21?: boolean
 }
 
 export interface RtcLocalMediaOptions {
@@ -72,6 +73,7 @@ export class RtcAudioController {
   private localAudioSource?: webrtc.AudioSource
   private localAudioTrack?: webrtc.MediaStreamTrack
   private localVideoSource?: webrtc.VideoSource
+  private localVideoUsesExternalFrames: boolean = false
   private localVideoTrack?: webrtc.MediaStreamTrack
   private remoteAudioTrack?: webrtc.MediaStreamTrack
   private remoteVideoTrack?: webrtc.MediaStreamTrack
@@ -181,20 +183,28 @@ export class RtcAudioController {
       this.log('reuse_video_track trackId=' + (this.localVideoTrack.id || ''))
       return this.localVideoTrack
     }
-    const constraints: webrtc.MediaTrackConstraints = {
-      width: options.width,
-      height: options.height,
-      frameRate: options.frameRate
+    const sourceType = options.externalNv21 === true ? 'external-nv21' : 'camera-kit'
+    this.log('create_video_source begin sourceType=' + sourceType +
+      ' deviceId=' + (options.deviceId || '') + ' width=' + options.width +
+      ' height=' + options.height + ' frameRate=' + options.frameRate)
+    if (options.externalNv21 === true) {
+      this.localVideoSource = this.pcf.createExternalVideoSource(options.frameRate)
+      this.localVideoUsesExternalFrames = true
+    } else {
+      const constraints: webrtc.MediaTrackConstraints = {
+        width: options.width,
+        height: options.height,
+        frameRate: options.frameRate
+      }
+      if (options.facingMode) {
+        constraints.facingMode = options.facingMode
+      }
+      if (options.deviceId) {
+        constraints.deviceId = options.deviceId
+      }
+      this.localVideoSource = this.pcf.createVideoSource(constraints, options.isScreencast === true)
+      this.localVideoUsesExternalFrames = false
     }
-    if (options.facingMode) {
-      constraints.facingMode = options.facingMode
-    }
-    if (options.deviceId) {
-      constraints.deviceId = options.deviceId
-    }
-    this.log('create_video_source begin deviceId=' + (options.deviceId || '') +
-      ' width=' + options.width + ' height=' + options.height + ' frameRate=' + options.frameRate)
-    this.localVideoSource = this.pcf.createVideoSource(constraints, options.isScreencast === true)
     this.localVideoSource.oncapturerstarted = (event: webrtc.VideoCapturerStartedEvent) => {
       if (event.success) {
         this.log('video_capturer_started success=true')
@@ -209,13 +219,27 @@ export class RtcAudioController {
         ' stage=' + failure.stage + ' message=' + failure.message)
       this.localVideoCapturerFailureHandler?.(failure)
     }
-    this.log('create_video_source success deviceId=' + (options.deviceId || ''))
+    this.log('create_video_source success sourceType=' + sourceType +
+      ' deviceId=' + (options.deviceId || ''))
     this.log('create_video_track begin trackId=' + options.trackId)
     this.localVideoTrack = this.pcf.createVideoTrack(options.trackId, this.localVideoSource)
     this.log('create_video_track success readyState=' + (this.localVideoTrack.readyState || ''))
     this.localVideoTrack.enabled = true
     this.bindLocalVideoRenderer(this.localVideoRenderer)
     return this.localVideoTrack
+  }
+
+  pushLocalVideoNv21Frame(data: Uint8Array, width: number, height: number,
+    timestampUs?: number, rotation?: 0 | 90 | 180 | 270): boolean {
+    if (!this.localVideoSource || !this.localVideoUsesExternalFrames) {
+      return false
+    }
+    try {
+      return this.localVideoSource.pushNv21Frame(data, width, height, timestampUs, rotation)
+    } catch (error) {
+      this.logError('push external NV21 frame error: ' + JSON.stringify(error))
+      return false
+    }
   }
 
   prepareLocalMedia(options: RtcLocalMediaOptions): boolean {
@@ -323,6 +347,7 @@ export class RtcAudioController {
       this.localVideoSource.oncapturerstopped = null
       this.localVideoSource = undefined
     }
+    this.localVideoUsesExternalFrames = false
     this.clearVideoRenderer(this.localVideoRenderer)
     this.log('release_video complete')
   }

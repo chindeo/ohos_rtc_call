@@ -44,6 +44,7 @@ export interface RtcHostCallControllerOptions {
   autoAnswer?: boolean
   localVideoEnabled?: boolean
   videoSource?: RtcWebRtcVideoSourceOptions
+  onExternalVideoCaptureStateChange?: (active: boolean) => void
   onRegistered?: () => void
   onIncoming?: (session: RtcWebRtcCallSessionInfo) => void
   onConnected?: (sessionKey: string) => void
@@ -99,6 +100,7 @@ export class RtcHostCallController {
       appVersion: options.appVersion,
       localVideoEnabled: options.localVideoEnabled,
       videoSource: options.videoSource,
+      onExternalVideoCaptureStateChange: options.onExternalVideoCaptureStateChange,
       audioController,
       onMediaStateChange: (state: RtcWebRtcMediaState) => this.handleMediaStateChange(state),
       onLog: options.onLog,
@@ -394,6 +396,11 @@ export class RtcHostCallController {
 
   getUiModel(): RtcHostCallUiModel {
     return this.multiCallController.getUiModel()
+  }
+
+  pushLocalVideoNv21Frame(data: Uint8Array, width: number, height: number,
+    timestampUs?: number, rotation?: 0 | 90 | 180 | 270): boolean {
+    return this.mediaController.pushLocalVideoNv21Frame(data, width, height, timestampUs, rotation)
   }
 
   onUiModelChange(listener: RtcHostCallUiModelListener): RtcCallUnsubscribe {

@@ -67,10 +67,20 @@ export default function rtcAudioControllerTest() {
       const snapshot = controller.getSnapshot()
 
       expect(snapshot.ready).assertEqual(false)
+      expect(snapshot.hasAudioDeviceModule).assertEqual(false)
+      expect(snapshot.hasPeerConnectionFactory).assertEqual(false)
       expect(snapshot.hasLocalAudioTrack).assertEqual(false)
       expect(snapshot.hasLocalVideoTrack).assertEqual(false)
       expect(snapshot.hasRemoteAudioTrack).assertEqual(false)
       expect(snapshot.hasRemoteVideoTrack).assertEqual(false)
+    })
+
+    it('rejects external video frames before an external source is prepared', 0, () => {
+      const controller = new RtcAudioController()
+
+      const accepted = controller.pushLocalVideoNv21Frame(new Uint8Array(6), 2, 2)
+
+      expect(accepted).assertEqual(false)
     })
   })
 }
