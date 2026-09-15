@@ -85,6 +85,7 @@ export class RtcAudioController {
   private aecDumpPath: string = ''
   private audioSampleCount: number = 0
   private localVideoCapturerFailureHandler?: (failure: RtcVideoCapturerFailure) => void
+  private localVideoCapturerReadyHandler?: () => void
 
   configureDiagnostics(options: RtcMediaDiagnosticsOptions): void {
     this.diagnostics = options
@@ -128,6 +129,10 @@ export class RtcAudioController {
     handler?: (failure: RtcVideoCapturerFailure) => void
   ): void {
     this.localVideoCapturerFailureHandler = handler
+  }
+
+  setLocalVideoCapturerReadyHandler(handler?: () => void): void {
+    this.localVideoCapturerReadyHandler = handler
   }
 
   getSnapshot(): RtcMediaResourceSnapshot {
@@ -208,6 +213,7 @@ export class RtcAudioController {
     this.localVideoSource.oncapturerstarted = (event: webrtc.VideoCapturerStartedEvent) => {
       if (event.success) {
         this.log('video_capturer_started success=true')
+        this.localVideoCapturerReadyHandler?.()
         return
       }
       const failure: RtcVideoCapturerFailure = {

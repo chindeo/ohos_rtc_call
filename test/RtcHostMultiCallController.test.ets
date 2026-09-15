@@ -217,6 +217,52 @@ export default function rtcHostMultiCallControllerTest() {
       controller.dispose()
     })
 
+    it('advances only the video call whose subscribe audio is ready', 0, async () => {
+      const service = new RtcDefaultCallService()
+      const controller = new RtcHostMultiCallController({ service })
+      await controller.receiveIncomingCall({
+        callId: 'call-a',
+        uid: 'uid-a',
+        target: { number: '1101' },
+        mode: RtcCallMode.VIDEO
+      })
+      await controller.receiveIncomingCall({
+        callId: 'call-b',
+        uid: 'uid-b',
+        target: { number: '1102' },
+        mode: RtcCallMode.VIDEO
+      })
+      await controller.accept('uid-a')
+      await controller.accept('uid-b')
+      const mediaState = {
+        sessionKey: 'subscribe-a',
+        sessionId: 'call-a',
+        uid: 'uid-a',
+        targetNumber: '1101',
+        mode: RtcCallMode.VIDEO,
+        hasRemoteAudio: true,
+        hasRemoteVideo: false,
+        mediaConnected: true
+      }
+
+      controller.setCallMediaState(mediaState)
+      const result = controller.markConnectedByMediaState(mediaState)
+      const model = controller.getUiModel()
+      const callA = model.activeCall?.sessionKey === 'uid-a' ? model.activeCall :
+        model.sideCalls.find(item => item.sessionKey === 'uid-a')
+      const callB = model.activeCall?.sessionKey === 'uid-b' ? model.activeCall :
+        model.sideCalls.find(item => item.sessionKey === 'uid-b')
+
+      expect(result.handled).assertEqual(true)
+      expect(result.sessionKey).assertEqual('uid-a')
+      expect(callA?.phase).assertEqual('connected')
+      expect(callA?.hasRemoteAudio).assertEqual(true)
+      expect(callA?.hasRemoteVideo).assertEqual(false)
+      expect(callB?.phase).assertEqual('connecting')
+      expect(callB?.mediaConnected).assertEqual(false)
+      controller.dispose()
+    })
+
     it('holds only the selected connecting session', 0, async () => {
       const service = new RtcDefaultCallService()
       const controller = new RtcHostMultiCallController({ service })

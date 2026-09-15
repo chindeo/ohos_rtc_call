@@ -165,6 +165,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private audioController: RtcAudioController
   private peerRegistry: RtcPeerSessionRegistry
   private pcConfig: webrtc.RTCConfiguration
+  private preferredVideoSource: RtcWebRtcVideoSourceOptions
   private videoSource: RtcWebRtcVideoSourceOptions
   private sessions: Map<string, RtcWebRtcMediaSession> = new Map()
   private sessionIds: Map<string, string> = new Map()
@@ -187,6 +188,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private localVideoRecoveryInFlight: boolean = false
   private localVideoRecoveryAttempted: boolean = false
   private externalVideoCaptureActive: boolean = false
+  private localVideoHasFrame: boolean = false
 
   constructor(options: RtcWebRtcMediaControllerOptions) {
     this.local = options.local
@@ -195,12 +197,14 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     this.audioController = options.audioController || new RtcAudioController()
     this.peerRegistry = options.peerRegistry || new RtcPeerSessionRegistry()
     this.pcConfig = { iceServers: options.iceServers || [] }
-    this.videoSource = options.videoSource || {
+    const configuredVideoSource = options.videoSource || {
       width: 640,
       height: 480,
       frameRate: 15,
       facingMode: 'user'
     }
+    this.preferredVideoSource = RtcWebRtcMediaController.copyVideoSource(configuredVideoSource)
+    this.videoSource = RtcWebRtcMediaController.copyVideoSource(configuredVideoSource)
     this.onSendSignal = options.onSendSignal
     this.onMediaStateChange = options.onMediaStateChange
     this.onExternalVideoCaptureStateChange = options.onExternalVideoCaptureStateChange
@@ -208,6 +212,9 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     this.onError = options.onError
     this.audioController.setLocalVideoCapturerFailureHandler((failure: RtcVideoCapturerFailure) => {
       this.handleLocalVideoCapturerFailure(failure)
+    })
+    this.audioController.setLocalVideoCapturerReadyHandler(() => {
+      this.markLocalVideoFrameReady('camera-kit')
     })
   }
 
@@ -222,7 +229,34 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
 
   pushLocalVideoNv21Frame(data: Uint8Array, width: number, height: number,
     timestampUs?: number, rotation?: 0 | 90 | 180 | 270): boolean {
-    return this.audioController.pushLocalVideoNv21Frame(data, width, height, timestampUs, rotation)
+    const accepted = this.audioController.pushLocalVideoNv21Frame(
+      data, width, height, timestampUs, rotation)
+    if (accepted) {
+      this.markLocalVideoFrameReady('external-nv21')
+    }
+    return accepted
+  }
+
+  async fallbackExternalVideoToCameraKit(): Promise<boolean> {
+    if (this.videoSource.externalNv21 !== true) {
+      this.log('local video fallback skipped reason=not_external')
+      return true
+    }
+    this.log('local video fallback begin source=external-nv21 target=camera-kit')
+    this.setExternalVideoCaptureActive(false)
+    this.videoSource = {
+      width: this.videoSource.width,
+      height: this.videoSource.height,
+      frameRate: this.videoSource.frameRate,
+      facingMode: this.videoSource.facingMode,
+      deviceId: this.videoSource.deviceId,
+      externalNv21: false
+    }
+    this.localVideoHasFrame = false
+    this.localVideoRecoveryAttempted = false
+    const replaced = await this.replaceLocalVideoTrack('external_fallback')
+    this.log('local video fallback complete success=' + replaced)
+    return replaced
   }
 
   registerSession(options: RtcWebRtcMediaSessionOptions): void {
@@ -234,6 +268,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     if (!session) {
       if (this.sessions.size === 0) {
         this.localVideoRecoveryAttempted = false
+        this.restorePreferredVideoSource()
       }
       session = new RtcWebRtcMediaSession()
       session.sessionKey = key
@@ -546,6 +581,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       this.setExternalVideoCaptureActive(false)
       this.audioController.releaseLocalVideo()
       this.localVideoRecoveryAttempted = false
+      this.localVideoHasFrame = false
     }
     if (isLastSession) {
       this.resetMediaState(session)
@@ -589,6 +625,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       this.localVideoRecoveryAttempted = false
       this.setExternalVideoCaptureActive(false)
       this.audioController.cleanupRtcCallResources(reason)
+      this.localVideoHasFrame = false
       this.closedResourceGeneration = this.resourceGeneration
       this.log(`close all complete reason=${reason} ${this.getResourceSummary()}`)
     } finally {
@@ -599,6 +636,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   dispose(): void {
     this.closeAll('dispose')
     this.audioController.setLocalVideoCapturerFailureHandler(undefined)
+    this.audioController.setLocalVideoCapturerReadyHandler(undefined)
   }
 
   static isMediaConnected(
@@ -607,14 +645,14 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     hasRemoteAudio: boolean,
     hasRemoteVideo: boolean
   ): boolean {
-    if (mode === RtcCallMode.AUDIO || RtcWebRtcMediaController.isAudioOnlyDevice(remoteClientType)) {
+    if (mode === RtcCallMode.AUDIO) {
       return hasRemoteAudio
     }
-    return hasRemoteVideo
+    return hasRemoteAudio || hasRemoteVideo
   }
 
-  static isLocalVideoReady(readyState?: string): boolean {
-    return readyState === 'live'
+  static isLocalVideoReady(readyState?: string, hasFrame: boolean = false): boolean {
+    return readyState === 'live' && hasFrame
   }
 
   static prioritizeVideoCodecs(codecs: webrtc.RTCRtpCodec[]): webrtc.RTCRtpCodec[] {
@@ -658,6 +696,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     if (videoRequested) {
       const videoTrack = this.audioController.getLocalVideoTrack()
       if (!videoTrack || videoTrack.readyState !== 'live') {
+        this.localVideoHasFrame = false
         const nextVideoTrack = this.audioController.prepareLocalVideo({
           trackId: RtcWebRtcTrackIdentityCodec.buildTrackId(this.local, this.appVersion),
           width: this.videoSource.width,
@@ -752,8 +791,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   }
 
   private handleLocalVideoCapturerFailure(failure: RtcVideoCapturerFailure): void {
-    if (this.localVideoRecoveryInFlight || this.localVideoRecoveryAttempted ||
-      this.closeAllInProgress || this.sessions.size === 0) {
+    if (this.localVideoRecoveryInFlight || this.closeAllInProgress || this.sessions.size === 0) {
       this.error('local video recovery skipped stage=' + failure.stage +
         ' inFlight=' + this.localVideoRecoveryInFlight +
         ' attempted=' + this.localVideoRecoveryAttempted +
@@ -769,61 +807,130 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     if (!hasVideoSession) {
       return
     }
+    if (this.localVideoRecoveryAttempted) {
+      this.error('local video disabled after recovery failure stage=' + failure.stage +
+        ' code=' + failure.code)
+      this.localVideoRecoveryInFlight = true
+      this.disableFailedLocalVideoTrack(failure)
+      return
+    }
     this.localVideoRecoveryAttempted = true
     this.localVideoRecoveryInFlight = true
     this.recoverLocalVideoTrack(failure)
   }
 
   private async recoverLocalVideoTrack(failure: RtcVideoCapturerFailure): Promise<void> {
+    try {
+      await this.replaceLocalVideoTrack('capturer_failure_' + failure.stage)
+    } catch (error) {
+      this.error('local video recovery failed stage=' + failure.stage + ' error=' + JSON.stringify(error))
+    } finally {
+      this.localVideoRecoveryInFlight = false
+    }
+  }
+
+  private async replaceLocalVideoTrack(reason: string): Promise<boolean> {
     const generation = this.resourceGeneration
     const previousTrack = this.audioController.getLocalVideoTrack()
+    this.log('local video replace begin reason=' + reason + ' generation=' + generation)
+    this.localVideoHasFrame = false
+    this.audioController.releaseLocalVideo()
+    if (this.closeAllInProgress || this.sessions.size === 0 || this.resourceGeneration !== generation) {
+      this.log('local video replace cancelled reason=' + reason + ' generation=' + generation)
+      return false
+    }
+    const nextTrack = this.audioController.prepareLocalVideo({
+      trackId: RtcWebRtcTrackIdentityCodec.buildTrackId(this.local, this.appVersion),
+      width: this.videoSource.width,
+      height: this.videoSource.height,
+      frameRate: this.videoSource.frameRate,
+      facingMode: this.videoSource.facingMode,
+      deviceId: this.videoSource.deviceId,
+      externalNv21: this.videoSource.externalNv21
+    })
+    if (!nextTrack || nextTrack.readyState !== 'live') {
+      throw new Error('replacement local video track is not live')
+    }
+    let replaced = 0
+    const records: RtcWebRtcPeerRecord[] = []
+    this.peers.forEach((record: RtcWebRtcPeerRecord) => records.push(record))
+    for (const record of records) {
+      if (record.role !== RTC_WEBRTC_PEER_ROLE_PUBLISH || record.pc.signalingState === 'closed') {
+        continue
+      }
+      for (const sender of record.pc.getSenders()) {
+        if (sender.track?.kind !== 'video' && sender.track !== previousTrack) {
+          continue
+        }
+        await sender.replaceTrack(nextTrack)
+        replaced += 1
+      }
+      await this.configurePublishVideoFrameRate(record, 'replace_track')
+    }
+    this.emitAllMediaStates()
+    this.log('local video replace complete reason=' + reason + ' generation=' + generation +
+      ' replacedSenders=' + replaced)
+    return true
+  }
+
+  private async disableFailedLocalVideoTrack(failure: RtcVideoCapturerFailure): Promise<void> {
+    const failedTrack = this.audioController.getLocalVideoTrack()
     try {
-      this.log('local video recovery begin stage=' + failure.stage +
-        ' code=' + failure.code +
-        ' generation=' + generation)
       this.audioController.releaseLocalVideo()
-      if (this.closeAllInProgress || this.sessions.size === 0 ||
-        this.resourceGeneration !== generation) {
-        this.log('local video recovery cancelled generation=' + generation)
-        return
-      }
-      const nextTrack = this.audioController.prepareLocalVideo({
-        trackId: RtcWebRtcTrackIdentityCodec.buildTrackId(this.local, this.appVersion),
-        width: this.videoSource.width,
-        height: this.videoSource.height,
-        frameRate: this.videoSource.frameRate,
-        facingMode: this.videoSource.facingMode,
-        deviceId: this.videoSource.deviceId,
-        externalNv21: this.videoSource.externalNv21
-      })
-      if (!nextTrack || nextTrack.readyState !== 'live') {
-        throw new Error('replacement local video track is not live')
-      }
-      let replaced = 0
+      this.localVideoHasFrame = false
       const records: RtcWebRtcPeerRecord[] = []
       this.peers.forEach((record: RtcWebRtcPeerRecord) => records.push(record))
       for (const record of records) {
-        if (record.role !== RTC_WEBRTC_PEER_ROLE_PUBLISH ||
-          record.pc.signalingState === 'closed') {
+        if (record.role !== RTC_WEBRTC_PEER_ROLE_PUBLISH || record.pc.signalingState === 'closed') {
           continue
         }
         for (const sender of record.pc.getSenders()) {
-          if (sender.track?.kind !== 'video' && sender.track !== previousTrack) {
+          if (sender.track?.kind !== 'video' && sender.track !== failedTrack) {
             continue
           }
-          await sender.replaceTrack(nextTrack)
-          replaced += 1
+          await sender.replaceTrack(null)
         }
-        await this.configurePublishVideoFrameRate(record, 'replace_track')
       }
-      this.log('local video recovery complete generation=' + generation +
-        ' replacedSenders=' + replaced)
+      this.emitAllMediaStates()
+      this.error('local video track removed stage=' + failure.stage + ' code=' + failure.code)
     } catch (error) {
-      this.error('local video recovery failed generation=' + generation +
-        ' stage=' + failure.stage +
-        ' error=' + JSON.stringify(error))
+      this.error('remove failed local video track error=' + JSON.stringify(error))
     } finally {
       this.localVideoRecoveryInFlight = false
+    }
+  }
+
+  private emitAllMediaStates(): void {
+    this.sessions.forEach((session: RtcWebRtcMediaSession) => this.emitMediaState(session))
+  }
+
+  private markLocalVideoFrameReady(source: string): void {
+    const track = this.audioController.getLocalVideoTrack()
+    if (this.localVideoHasFrame || !track || track.readyState !== 'live') {
+      return
+    }
+    this.localVideoHasFrame = true
+    this.log('local video first frame source=' + source + ' trackId=' + (track.id || ''))
+    this.emitAllMediaStates()
+  }
+
+  private restorePreferredVideoSource(): void {
+    const wasExternal = this.videoSource.externalNv21 === true
+    this.videoSource = RtcWebRtcMediaController.copyVideoSource(this.preferredVideoSource)
+    this.localVideoHasFrame = false
+    this.log('local video source restored for new call source=' +
+      (this.videoSource.externalNv21 === true ? 'external-nv21' : 'camera-kit') +
+      ' previousExternal=' + wasExternal)
+  }
+
+  private static copyVideoSource(source: RtcWebRtcVideoSourceOptions): RtcWebRtcVideoSourceOptions {
+    return {
+      width: source.width,
+      height: source.height,
+      frameRate: source.frameRate,
+      facingMode: source.facingMode,
+      deviceId: source.deviceId,
+      externalNv21: source.externalNv21
     }
   }
 
@@ -1223,7 +1330,8 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       channelType: RTC_PEER_SESSION_CHANNEL_SUBSCRIBE,
       mode: session.mode,
       localVideoReady: RtcWebRtcMediaController.isLocalVideoReady(
-        this.audioController.getLocalVideoTrack()?.readyState
+        this.audioController.getLocalVideoTrack()?.readyState,
+        this.localVideoHasFrame
       ),
       hasRemoteAudio: session.hasRemoteAudio,
       hasRemoteVideo: session.hasRemoteVideo,

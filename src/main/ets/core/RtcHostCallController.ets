@@ -73,6 +73,7 @@ export class RtcHostCallController {
   private localVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController()
   private remoteVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController()
   private sessionRemoteVideoSurfaces: Map<string, RtcVideoSurfaceController> = new Map()
+  private connectedMediaNotifications: Map<string, boolean> = new Map()
   private started: boolean = false
 
   constructor(options: RtcHostCallControllerOptions) {
@@ -127,6 +128,7 @@ export class RtcHostCallController {
       },
       onTerminateCall: async (session: RtcCallSession, reason: string) => {
         const key = session.uid || session.requestId
+        this.connectedMediaNotifications.delete(key)
         if (reason.indexOf('remote hangup') !== 0) {
           this.webRtcController.hangup(key)
         }
@@ -141,6 +143,7 @@ export class RtcHostCallController {
         this.options.onEnded?.(key, false, remainingCount)
       },
       onTerminateAllCalls: async (_sessions: RtcCallSession[], reason: string) => {
+        this.connectedMediaNotifications.clear()
         if (reason.indexOf('remote hangup') !== 0) {
           this.webRtcController.hangupAll()
         }
@@ -403,12 +406,17 @@ export class RtcHostCallController {
     return this.mediaController.pushLocalVideoNv21Frame(data, width, height, timestampUs, rotation)
   }
 
+  async fallbackExternalVideoToCameraKit(): Promise<boolean> {
+    return this.mediaController.fallbackExternalVideoToCameraKit()
+  }
+
   onUiModelChange(listener: RtcHostCallUiModelListener): RtcCallUnsubscribe {
     return this.multiCallController.onUiModelChange(listener)
   }
 
   dispose(): void {
     this.started = false
+    this.connectedMediaNotifications.clear()
     this.multiCallController.dispose()
     this.service.dispose()
     this.webRtcController.dispose()
@@ -451,16 +459,21 @@ export class RtcHostCallController {
     this.options.onLog?.('rtc_answer_mark handled=' + result.handled + ' reason=' + result.reason)
     if (result.handled) {
       this.webRtcController.markMediaConnected(result.sessionKey)
-      this.options.onConnected?.(result.sessionKey)
+      if (this.connectedMediaNotifications.get(result.sessionKey) !== true) {
+        this.connectedMediaNotifications.set(result.sessionKey, true)
+        this.options.onConnected?.(result.sessionKey)
+      }
     }
   }
 
   private handleRemoteHangup(sessionKey: string, all: boolean): void {
     if (all) {
+      this.connectedMediaNotifications.clear()
       this.releaseAllSessionRemoteVideoSurfaces()
       this.multiCallController.hangupAll('remote hangup all')
       return
     }
+    this.connectedMediaNotifications.delete(sessionKey)
     this.releaseSessionRemoteVideoSurface(sessionKey)
     this.multiCallController.hangup(sessionKey, 'remote hangup')
   }

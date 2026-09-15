@@ -198,12 +198,10 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 - 点击主机列表中的床旁条目时，选中样式立即切换；仅选择条目不应把待接听来电改成已接听。
 - 主机来电默认保持手动接听；即使配置中带自动接听标记，床旁拨入后也应先停留在待接听页面。
 - 主机通话 UI 可通过临时版本标记和日志确认实际进入的是 WebRTC 主机组件，而不是 SIP 组件或旧页面。
-- 主机收到 WebSocket `c__answer`、call-gateway answer 通知或 `publish connected` 后不能直接进入通话中；业务接听以 gateway 接听接口成功为准，媒体接通以目标 `subscribe` track 匹配为准。
-- 主机只有在对应 `uid + rtcUID + subscribe` 路收到对端音 / 视频 track，且从 `track.id` / `stream.id` 解析出的号码匹配当前床旁后，才显示通话中和保持按钮。
-- 点击接听后应先进入接听中 / 等待媒体状态，不能直接标记为通话中。
-- 音频通话接听后，匹配到对应 `subscribe` 音频 track 即可进入通话中。
-- 普通视频设备的视频通话接听后，必须匹配到对应 `subscribe` 视频 track 后才进入通话中；只收到音频 track 时保持连接中 / 等待视频，但控制栏仍完整显示。
-- 手表等仅音频设备的视频通话接听后，匹配到对应 `subscribe` 音频 track 即可进入通话中，不等待视频 track。
+- 主机和床旁的视频通话在对应 `uid + rtcUID + subscribe` 收到真实音频或视频任一 track 后进入“通话中”，不能继续强制等待视频 track。
+- 视频暂未到达但音频已到达时，`mediaConnected=true`、`hasRemoteAudio=true`、`hasRemoteVideo=false`；通话控制保持可用，后续真实视频 track 到达后必须更新 `hasRemoteVideo` 并正常显示画面。
+- 本地 `publish connected`、ICE connected、call-gateway `c__answer` 或其它会话的 track 不能代替目标 `subscribe` 的真实媒体。
+- 媒体回调必须按 callId、uid、sessionKey 或唯一目标号码归一；归一失败时不得把其它通话推进为已接听。不能注入黑帧或保留无输入的假 live 轨道冒充媒体正常。
 - 多床旁通话时，每接听一路床旁只建立并绑定该床旁的一路独立 `subscribe`，不能把其它床旁来电串成已接听状态。
 - 多床旁通话时，左侧主界面、右侧远端卡片、`SessionPeer`、`SessionState`、`subscribe` 通道和普通挂断都必须绑定同一个业务 `uid/sessionId`。
 - 收到 call-gateway SDP / ICE / answer / hangup 回调或 WebSocket `c__*` 信令时，不能因为缺少 `uid` 就随意绑定到当前 active；多通话和 `subscribe` 信令缺少 `uid` 必须阻断，单通话兼容路径只允许按唯一号码映射兜底。
@@ -213,7 +211,7 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 - 主机左侧当前床旁详情按状态显示操作按钮：待接听显示接听，通话中显示保持，保持中显示恢复，并始终保留当前通话挂断。
 - 主机来电时必须立即显示可点击的接听按钮；点击后立即按目标 `uid` 发送 `APPLY_ANSWER`，不得等待 `publish ready`、SDP / ICE 就绪或远端 track。
 - `publish` 应答、SDP / ICE 和远端 track 回调必须按 callId、uid 或已登记的 sessionKey 归一到同一路会话，但只用于推进媒体状态，不能决定业务接听是否发送。
-- 主机点击接听后，在对应 `subscribe` track 匹配成功前显示连接中 / 等待媒体状态，可以显示挂断、保持、静音 / 禁音、免提 / 切麦等控制，但不能提前标记为通话中。
+- 主机点击接听后先显示连接中；收到对应 `subscribe` 音频或视频任一真实 track 后显示通话中。只有音频时视频区域保持无画面，后续视频到达后继续绑定 renderer。
 - 主机床旁列表使用统一中性背景；待接听、通话中、保持中使用状态色标识，当前选中项使用明显边框和焦点样式，不能用多块高饱和背景拼接页面。
 - 接听、挂断、保持、恢复、静音、免提和挂断全部必须显示公共图片图标和文字，不能依赖 `✓`、`×`、`Ⅱ` 等字体字符。
 - 主机右侧床旁列表中的挂断按钮使用红色小图标按钮，图标和主操作区挂断图标保持一致但尺寸缩小。
@@ -250,6 +248,8 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 - API12 视频通话必须使用 640x360、10fps：摄像头日志中的 applied frame rate、publish sender 的 `maxFramerate` 以及 `rtc_video_stats` 实际发送 FPS 应相互一致，实际发送 FPS 稳定在 8-12。
 - 摄像头首帧后连续 2 秒没有新帧时，native 层必须记录 `frame_stall` 并只重启本地采集链；恢复期间音频、subscribe peer 和远端画面不得中断。
 - native 两次恢复仍失败时，公共媒体控制器只允许重建一次本地 VideoSource/Track，并对现有 publish sender 执行 `replaceTrack`；不得重建 PeerConnection 或影响其它会话。
+- API23 UVC 打开前必须检查临时 USB 权限，缺少权限时调用 `requestRight`；日志必须包含失败阶段及 error name/code/message，不能只输出 `{}`。
+- API23 UVC 打开失败时执行有限次数重试；全部失败或运行中拔出设备后，必须停止并关闭 UVC、用 CameraKit track 替换现有 publish sender。CameraKit 再失败时移除失败 video track，不能保留“假 live”的空视频轨道；音频和其它 subscribe 会话不得中断。
 - 护士端和床旁端 HAP 内的 `libohos_webrtc.so` build-id 与 SHA256 必须一致；二进制不一致时不能用两台设备的表现判断硬件差异。
 - 双向视频预热 30 秒后连续采集 5 分钟，两端应用进程平均 CPU 均应低于 40%（设备 `top` 的 400% 总刻度），且发送帧数和 bytes 每个统计周期持续增长。
 - 多路视频默认仅保持左侧主路和右侧第一路实时预览，其余视频会话显示占位；切换主路后 renderer 必须跟随目标 session，不能复用上一通话画面。

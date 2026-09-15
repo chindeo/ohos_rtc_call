@@ -51,22 +51,40 @@ export default function rtcWebRtcMediaControllerTest() {
       expect(identity?.client_type).assertEqual('bed')
     })
 
-    it('requires video track for normal video device', 0, () => {
+    it('accepts a real audio track without waiting for video', 0, () => {
       expect(RtcWebRtcMediaController.isMediaConnected(
         RtcCallMode.VIDEO,
         'bed',
         true,
         false
-      )).assertEqual(false)
+      )).assertEqual(true)
       expect(RtcWebRtcMediaController.isMediaConnected(
         RtcCallMode.VIDEO,
         'bed',
         true,
         true
       )).assertEqual(true)
+      expect(RtcWebRtcMediaController.isMediaConnected(
+        RtcCallMode.VIDEO,
+        'bed',
+        false,
+        true
+      )).assertEqual(true)
+      expect(RtcWebRtcMediaController.isMediaConnected(
+        RtcCallMode.VIDEO,
+        'bed',
+        false,
+        false
+      )).assertEqual(false)
     })
 
     it('accepts audio track for audio call and watch device', 0, () => {
+      expect(RtcWebRtcMediaController.isMediaConnected(
+        RtcCallMode.AUDIO,
+        'bed',
+        false,
+        true
+      )).assertEqual(false)
       expect(RtcWebRtcMediaController.isMediaConnected(
         RtcCallMode.AUDIO,
         'bed',
@@ -81,10 +99,11 @@ export default function rtcWebRtcMediaControllerTest() {
       )).assertEqual(true)
     })
 
-    it('reports local video ready only for a live track', 0, () => {
+    it('reports local video ready only after a live track has a real frame', 0, () => {
       expect(RtcWebRtcMediaController.isLocalVideoReady()).assertEqual(false)
-      expect(RtcWebRtcMediaController.isLocalVideoReady('ended')).assertEqual(false)
-      expect(RtcWebRtcMediaController.isLocalVideoReady('live')).assertEqual(true)
+      expect(RtcWebRtcMediaController.isLocalVideoReady('ended', true)).assertEqual(false)
+      expect(RtcWebRtcMediaController.isLocalVideoReady('live')).assertEqual(false)
+      expect(RtcWebRtcMediaController.isLocalVideoReady('live', true)).assertEqual(true)
     })
 
     it('prefers constrained baseline h264 and keeps vp8 fallback', 0, () => {

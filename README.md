@@ -161,6 +161,10 @@ const controller = new RtcHostCallController({
 
 // Forward each NV21 frame from the UVC listener.
 controller.pushLocalVideoNv21Frame(frame, width, height)
+
+// After the host has exhausted its UVC open retries, remove the external track
+// and replace existing publish senders with a CameraKit-backed track.
+await controller.fallbackExternalVideoToCameraKit()
 ```
 
 The callback becomes inactive when the final video session closes and during controller disposal.
@@ -168,7 +172,10 @@ The host must stop preview, detach callbacks, and close its UVC device in the in
 Select `externalNv21` only after the host has confirmed that a UVC device is actually present; an
 API version alone is not a camera capability check. Keep proven CameraKit constraints for legacy
 devices, throttle forwarded frames to the configured frame rate, and treat UVC startup or detach as
-a local-video failure rather than hanging up unrelated active calls.
+a local-video failure rather than hanging up unrelated active calls. A host must not keep an external
+track live after UVC open has failed; retry the real UVC device for a bounded number of attempts, then
+call `fallbackExternalVideoToCameraKit()`. If CameraKit recovery also fails, the package removes the
+failed video track from active publish senders instead of advertising an empty live source.
 
 ## call-gateway SDK
 
