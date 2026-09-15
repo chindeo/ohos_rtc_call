@@ -1,5 +1,11 @@
 # ohos-rtc-call Release Notes
 
+## 0.1.4-rc3 CameraKit 生命周期修复
+
+- 床旁 CameraKit 视频源在挂断和失败恢复时显式调用 native `VideoSource.release()`，等待采集线程和摄像头资源释放后再允许下一次创建。
+- 视频采集回调增加 generation 校验，旧通话迟到的 started/error 回调不能更新新通话状态。
+- 主机外部 NV21/UVC 视频源保留现有释放策略，不改变已经验证的 API23 采集、权限和 CameraKit 回退路径。
+
 ## 0.1.4-rc3 时间戳联调包
 
 修复床旁项目单人通话点击挂断后通话已结束但 UI 未关闭的问题，统一 call-gateway WebSocket 通话协议中 `c__hangup.data.isHangUp` 的终态语义：

@@ -791,6 +791,8 @@ export interface AudioSource extends MediaSource {
 export interface VideoSource extends MediaSource {
   oncapturerstarted: ((this: VideoSource, ev: VideoCapturerStartedEvent) => any) | null;
   oncapturerstopped: ((this: VideoSource, ev: Event) => any) | null;
+  /** Stops capture and synchronously releases the native video source. */
+  release(): void;
   /** Pushes one tightly packed NV21 frame into an external video source. */
   pushNv21Frame(data: Uint8Array, width: number, height: number, timestampUs?: number,
     rotation?: 0 | 90 | 180 | 270): boolean;

@@ -86,6 +86,7 @@ export class RtcAudioController {
   private audioSampleCount: number = 0
   private localVideoCapturerFailureHandler?: (failure: RtcVideoCapturerFailure) => void
   private localVideoCapturerReadyHandler?: () => void
+  private localVideoGeneration: number = 0
 
   configureDiagnostics(options: RtcMediaDiagnosticsOptions): void {
     this.diagnostics = options
@@ -189,7 +190,10 @@ export class RtcAudioController {
       return this.localVideoTrack
     }
     const sourceType = options.externalNv21 === true ? 'external-nv21' : 'camera-kit'
+    const generation = this.localVideoGeneration + 1
+    this.localVideoGeneration = generation
     this.log('create_video_source begin sourceType=' + sourceType +
+      ' generation=' + generation +
       ' deviceId=' + (options.deviceId || '') + ' width=' + options.width +
       ' height=' + options.height + ' frameRate=' + options.frameRate)
     if (options.externalNv21 === true) {
@@ -210,9 +214,15 @@ export class RtcAudioController {
       this.localVideoSource = this.pcf.createVideoSource(constraints, options.isScreencast === true)
       this.localVideoUsesExternalFrames = false
     }
-    this.localVideoSource.oncapturerstarted = (event: webrtc.VideoCapturerStartedEvent) => {
+    const source = this.localVideoSource
+    source.oncapturerstarted = (event: webrtc.VideoCapturerStartedEvent) => {
+      if (this.localVideoSource !== source || this.localVideoGeneration !== generation) {
+        this.log('ignore stale video_capturer_started generation=' + generation +
+          ' currentGeneration=' + this.localVideoGeneration)
+        return
+      }
       if (event.success) {
-        this.log('video_capturer_started success=true')
+        this.log('video_capturer_started success=true generation=' + generation)
         this.localVideoCapturerReadyHandler?.()
         return
       }
@@ -222,11 +232,18 @@ export class RtcAudioController {
         message: event.message || 'Video capturer failed'
       }
       this.logError('video_capturer_started success=false code=' + failure.code +
-        ' stage=' + failure.stage + ' message=' + failure.message)
-      this.localVideoCapturerFailureHandler?.(failure)
+        ' stage=' + failure.stage + ' generation=' + generation + ' message=' + failure.message)
+      setTimeout(() => {
+        if (this.localVideoSource !== source || this.localVideoGeneration !== generation) {
+          this.log('ignore deferred stale video_capturer_failure generation=' + generation +
+            ' currentGeneration=' + this.localVideoGeneration)
+          return
+        }
+        this.localVideoCapturerFailureHandler?.(failure)
+      }, 0)
     }
     this.log('create_video_source success sourceType=' + sourceType +
-      ' deviceId=' + (options.deviceId || ''))
+      ' generation=' + generation + ' deviceId=' + (options.deviceId || ''))
     this.log('create_video_track begin trackId=' + options.trackId)
     this.localVideoTrack = this.pcf.createVideoTrack(options.trackId, this.localVideoSource)
     this.log('create_video_track success readyState=' + (this.localVideoTrack.readyState || ''))
@@ -338,24 +355,44 @@ export class RtcAudioController {
 
   releaseLocalVideo(): void {
     const track = this.localVideoTrack
+    const source = this.localVideoSource
+    const usesExternalFrames = this.localVideoUsesExternalFrames
+    const generation = this.localVideoGeneration
+    this.localVideoGeneration += 1
     this.log('release_video begin trackId=' + (track?.id || '') +
-      ' readyState=' + (track?.readyState || 'none'))
+      ' readyState=' + (track?.readyState || 'none') +
+      ' sourceType=' + (usesExternalFrames ? 'external-nv21' : 'camera-kit') +
+      ' generation=' + generation)
+    if (source) {
+      source.oncapturerstarted = null
+      source.oncapturerstopped = null
+    }
     if (track) {
       try {
         track.enabled = false
         track.stop()
-      } catch (_error) {
+      } catch (error) {
+        this.logError('release_video track stop failed generation=' + generation +
+          ' error=' + JSON.stringify(error))
       }
     }
     this.localVideoTrack = undefined
-    if (this.localVideoSource) {
-      this.localVideoSource.oncapturerstarted = null
-      this.localVideoSource.oncapturerstopped = null
-      this.localVideoSource = undefined
+    let nativeReleased = false
+    if (source && !usesExternalFrames) {
+      try {
+        source.release()
+        nativeReleased = true
+      } catch (error) {
+        this.logError('release_video native release failed generation=' + generation +
+          ' error=' + JSON.stringify(error))
+      }
     }
+    this.localVideoSource = undefined
     this.localVideoUsesExternalFrames = false
     this.clearVideoRenderer(this.localVideoRenderer)
-    this.log('release_video complete')
+    this.log('release_video complete sourceType=' +
+      (usesExternalFrames ? 'external-nv21' : 'camera-kit') +
+      ' generation=' + generation + ' nativeReleased=' + nativeReleased)
   }
 
   releaseLocalMedia(): void {
