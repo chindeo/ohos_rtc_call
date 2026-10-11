@@ -22,6 +22,7 @@ import rtcWebRtcSignalSessionTest from './RtcWebRtcSignalSession.test'
 import rtcWebRtcSignalStateMachineTest from './RtcWebRtcSignalStateMachine.test'
 import rtcWebRtcMediaControllerTest from './RtcWebRtcMediaController.test'
 import rtcVideoRenderControllerTest from './RtcVideoRenderController.test'
+import rtcVideoCaptureStopGateTest from './RtcVideoCaptureStopGate.test'
 
 export default function testsuite() {
   rtcAdminEntryControllerTest()
@@ -48,4 +49,5 @@ export default function testsuite() {
   rtcWebRtcSignalStateMachineTest()
   rtcWebRtcMediaControllerTest()
   rtcVideoRenderControllerTest()
+  rtcVideoCaptureStopGateTest()
 }
