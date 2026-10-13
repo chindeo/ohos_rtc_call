@@ -4,6 +4,8 @@ import rtcCallAudioPolicyControllerTest from './RtcCallAudioPolicyController.tes
 import rtcCallGatewayClientTest from './RtcCallGatewayClient.test'
 import rtcCallLifecycleStoreTest from './RtcCallLifecycleStore.test'
 import rtcCallSessionStoreTest from './RtcCallSessionStore.test'
+import rtcCallSettingControllerTest from './RtcCallSettingController.test'
+import rtcCallSettingPolicyTest from './RtcCallSettingPolicy.test'
 import rtcCallUiPresenterTest from './RtcCallUiPresenter.test'
 import rtcDefaultCallServiceTest from './RtcDefaultCallService.test'
 import rtcDeviceCapabilityManagerTest from './RtcDeviceCapabilityManager.test'
@@ -30,6 +32,8 @@ export default function testsuite() {
   rtcCallGatewayClientTest()
   rtcCallLifecycleStoreTest()
   rtcCallSessionStoreTest()
+  rtcCallSettingControllerTest()
+  rtcCallSettingPolicyTest()
   rtcCallUiPresenterTest()
   rtcDefaultCallServiceTest()
   rtcDeviceCapabilityManagerTest()
