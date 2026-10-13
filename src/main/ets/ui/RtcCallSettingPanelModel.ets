@@ -13,12 +13,10 @@ export class RtcCallSettingToggleItem {
 export class RtcCallSettingOptionItem {
   label: string = ''
   summary: string = ''
-  selectable: boolean = true
 
-  constructor(label: string, summary: string, selectable: boolean = true) {
+  constructor(label: string, summary: string) {
     this.label = label
     this.summary = summary
-    this.selectable = selectable
   }
 }
 
@@ -29,12 +27,12 @@ export class RtcCallSettingOptionItem {
 export interface RtcCallSettingOptionRowParam {
   option: RtcCallSettingOptionItem
   selected: boolean
-  onSelect: (label: string) => void
 }
 
 /**
- * 音视频设置面板的数据快照。UI 只负责渲染，数据来源与持久化留给宿主 App，
- * 这样两台设备共用一份界面，各自决定哪些控件真正可用。
+ * 音视频设置面板的数据快照。界面只读：分辨率、音量一律以服务器为准，
+ * 本机唯一能改的是"清除本机覆盖"。数据来源与持久化留给宿主 App，
+ * 这样两台设备共用一份界面。
  */
 export class RtcCallSettingPanelData {
   toggles: RtcCallSettingToggleItem[] = []
@@ -45,8 +43,6 @@ export class RtcCallSettingPanelData {
   answerPercent: number = 90
   overrideVolume: boolean = false
   statusLines: string[] = []
-  resolutionEditable: boolean = true
-  volumeEditable: boolean = true
   cacheClearable: boolean = true
   recordingClearable: boolean = false
   notImplementedTip: string = '当前版本未开放'
@@ -54,12 +50,6 @@ export class RtcCallSettingPanelData {
 }
 
 export interface RtcCallSettingPanelActions {
-  onToggle(index: number): void
-  onSelectSampleRate(label: string): void
-  onSelectResolution(label: string): void
-  onAnswerPercentChange(percent: number): void
-  onOverrideVolumeToggled(enabled: boolean): void
   onClearCache(): void
   onClearRecording(): void
-  onSave(): void
 }

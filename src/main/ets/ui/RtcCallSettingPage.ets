@@ -2,7 +2,7 @@ import { RtcCallSettingPanel } from './RtcCallSettingPanel'
 import { RtcCallSettingPanelActions, RtcCallSettingPanelData } from './RtcCallSettingPanelModel'
 
 /**
- * 音视频设置页外壳：标题栏 + 面板 + 底部保存。两端只提供数据与动作，
+ * 音视频设置页外壳：标题栏 + 只读面板。两端只提供数据与运维动作，
  * 颜色和返回行为通过入参注入，避免再各维护一份布局。
  */
 @Component
@@ -44,17 +44,6 @@ export struct RtcCallSettingPage {
       .layoutWeight(1)
       .width('100%')
       .align(Alignment.TopStart)
-
-      Button('保存')
-        .width('calc(100% - 60lpx)')
-        .height('70lpx')
-        .fontSize('26lpx')
-        .backgroundColor('#5A4FCF')
-        .borderRadius('35lpx')
-        .margin({ left: '30lpx', right: '30lpx', bottom: '20lpx' })
-        .onClick(() => {
-          this.actions?.onSave()
-        })
     }
     .width('100%')
     .height('100%')
