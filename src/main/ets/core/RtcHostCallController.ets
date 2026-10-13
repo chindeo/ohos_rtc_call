@@ -44,6 +44,8 @@ export interface RtcHostCallControllerOptions {
   autoAnswer?: boolean
   localVideoEnabled?: boolean
   videoSource?: RtcWebRtcVideoSourceOptions
+  screenAnswerVolumePercent?: number
+  handsetAnswerVolumePercent?: number
   onExternalVideoCaptureStateChange?: (active: boolean) => void
   onRegistered?: () => void
   onIncoming?: (session: RtcWebRtcCallSessionInfo) => void
@@ -80,6 +82,8 @@ export class RtcHostCallController {
     this.options = options
     this.audioPolicyController = new RtcCallAudioPolicyController({
       deviceRole: RTC_DEVICE_ROLE_NURSE_HOST,
+      screenAnswerVolumePercent: options.screenAnswerVolumePercent,
+      handsetAnswerVolumePercent: options.handsetAnswerVolumePercent,
       restoreVolumeOnEnd: true
     })
     const audioController = new RtcAudioController()
@@ -412,6 +416,16 @@ export class RtcHostCallController {
 
   onUiModelChange(listener: RtcHostCallUiModelListener): RtcCallUnsubscribe {
     return this.multiCallController.onUiModelChange(listener)
+  }
+
+  setScreenAnswerVolumePercent(percent?: number): void {
+    this.options.screenAnswerVolumePercent = percent
+    this.audioPolicyController.setScreenAnswerVolumePercent(percent)
+  }
+
+  setVideoSource(videoSource: RtcWebRtcVideoSourceOptions): void {
+    this.options.videoSource = videoSource
+    this.mediaController.setVideoSource(videoSource)
   }
 
   dispose(): void {

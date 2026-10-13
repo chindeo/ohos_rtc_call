@@ -89,6 +89,10 @@ export class RtcCallAudioPolicyController {
     this.state.deviceRole = options.deviceRole || RTC_DEVICE_ROLE_BEDSIDE
   }
 
+  setScreenAnswerVolumePercent(percent?: number): void {
+    this.options.screenAnswerVolumePercent = percent
+  }
+
   captureOriginalVolume(): RtcCallVolumeSnapshot {
     const snapshot = this.driver.readVoiceCallVolumeSnapshot()
     this.state.hasOriginalVolume = true
