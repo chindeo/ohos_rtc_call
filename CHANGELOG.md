@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.4-rc3 timestamp HAR (2026-10-13)
+
+- Added the `callsetting` module as the single source of truth for server-driven audio/video parameters: bean matching, sanitizing, video-profile and audio-setting resolution, local override storage, change detection, and 5-minute auto refresh. Host applications now inject a fetcher, a logger and the device identity instead of re-implementing parsing.
+- Treated `audio.deviceVolume` as a percentage (`-1..100`), matching the Android `call-lib` source, and kept `streamVolume` and `startKbps` documented as not implementable on this WebRTC SDK.
+- Added the shared audio/video settings panel and page shell (`RtcCallSettingPanel`, `RtcCallSettingPage`, `RtcCallSettingPanelModel`) so both devices render one implementation; controls that are not implemented render greyed out with a visible reason and swallow the tap instead of pretending to take effect.
+- Added `RtcCallControllerKey` so a host can decide whether a device-identity change really requires rebuilding the controller.
+- Added live `setVideoSource` on the WebRTC media controller and `setVideoSource` / `setScreenAnswerVolumePercent` on the host controller, so an updated `call_setting` takes effect on the next track without re-registering.
+- Fixed the resolution list behaving as multi-select: `@Builder` value parameters do not re-render, so the row now takes a single object literal and the row key carries the selected state.
+- Fixed saving only a volume override also pinning the currently effective resolution as a local override.
+- Added focused unit coverage for the merged policy and for the controller's fallback, override and change-detection paths using injected fetcher and override doubles.
+
 ## 0.1.4-rc3 timestamp HAR
 
 - Added opt-in external NV21 video sources so a host can feed vendor UVC frames into WebRTC without invoking CameraKit.
