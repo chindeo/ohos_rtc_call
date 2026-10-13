@@ -91,9 +91,10 @@ interface RtcWebRtcVideoRtpStats extends webrtc.RTCStats {
 }
 
 export class RtcVideoSurfaceController implements RtcVideoRendererAdapter {
-  private controller: VideoRenderController = new VideoRenderController()
+  private controller: VideoRenderController
 
-  constructor() {
+  constructor(label: string = 'surface') {
+    this.controller = new VideoRenderController(undefined, label)
     this.controller.setScalingMode(ScalingMode.AspectFit)
   }
 
@@ -1130,6 +1131,14 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       if (renderer) {
         this.setRendererTrack(renderer, event.track)
       }
+      // 远端轨可能早于"谁是当前会话"被确定。没有活动会话时先接管，
+      // 否则共享渲染器永远收不到这条轨，大格会一直停在占位画面。
+      if (!this.activeSessionKey) {
+        this.activeSessionKey = session.sessionKey
+      }
+      this.log(`remote_video_track sidHash=${this.getSessionHash(session.sessionKey)}` +
+        ` activeHash=${this.getSessionHash(this.activeSessionKey)}` +
+        ` sessionRenderer=${renderer ? 'bound' : 'none'}`)
     } else {
       return
     }

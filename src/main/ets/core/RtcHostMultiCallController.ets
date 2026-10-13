@@ -112,11 +112,16 @@ export class RtcHostMultiCallController {
   }
 
   setCallMediaState(state: RtcWebRtcMediaState): void {
-    const key = this.resolveRegisteredSessionKey(
-      state.sessionKey,
-      [state.sessionId],
-      state.targetNumber
-    ) || state.sessionKey
+    const resolved = this.resolveMediaStateSessionKey(state)
+    const key = resolved || (state.sessionKey || '').trim()
+    if (!resolved) {
+      // 解析不到登记会话时仍要存下来，但必须留下痕迹：静默降级会让
+      // toUiItem 查不到媒体状态，界面从此以为这路通话没有远端视频。
+      console.warn('RtcHostMultiCallController media_state unresolved sidHash=' +
+        this.getSessionHash(state.sessionKey) +
+        ' target=' + (state.targetNumber || '') +
+        ' hasRemoteVideo=' + state.hasRemoteVideo)
+    }
     this.mediaStates.set(key, state)
     this.emit()
   }
@@ -569,6 +574,8 @@ export class RtcHostMultiCallController {
     const key = 'visible=' + model.visible +
       '|activeHash=' + this.getSessionHash(active?.sessionKey || '') +
       '|activePhase=' + (active?.phase || '') +
+      '|activeHasRemoteVideo=' + (active?.hasRemoteVideo === true) +
+      '|activeMediaState=' + (active ? (this.mediaStates.has(active.sessionKey) ? 'found' : 'missing') : 'none') +
       '|activeCanAccept=' + (active?.canAccept === true) +
       '|activeCanHangup=' + (active?.canHangup === true) +
       '|activeCanHold=' + (active?.canHold === true) +

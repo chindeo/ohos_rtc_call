@@ -72,8 +72,8 @@ export class RtcHostCallController {
   private mediaController: RtcWebRtcMediaController
   private webRtcController: RtcWebRtcCallController
   private audioPolicyController: RtcCallAudioPolicyController
-  private localVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController()
-  private remoteVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController()
+  private localVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController('host-local')
+  private remoteVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController('host-remote-shared')
   private sessionRemoteVideoSurfaces: Map<string, RtcVideoSurfaceController> = new Map()
   private connectedMediaNotifications: Map<string, boolean> = new Map()
   private started: boolean = false
@@ -394,7 +394,7 @@ export class RtcHostCallController {
     const key = (sessionKey || '').trim()
     let surface = this.sessionRemoteVideoSurfaces.get(key)
     if (!surface) {
-      surface = new RtcVideoSurfaceController()
+      surface = new RtcVideoSurfaceController('host-remote-session')
       this.sessionRemoteVideoSurfaces.set(key, surface)
     }
     this.bindSessionRemoteVideoRenderer(key, surface)
