@@ -13,6 +13,19 @@ export interface RtcCallVolumeSnapshot {
   percent: number
 }
 
+/**
+ * 一次通话音量写入的实测结果。SDK 23 的 AudioVolumeGroupManager 只有 getter，
+ * 唯一可写的 AudioManager.setVolume 自 API 9 就标记废弃，所以"没有抛错"并不等于
+ * 设备真的改了档——必须写前写后各读一次。
+ */
+export interface RtcCallVolumeWriteResult {
+  requestedLevel: number
+  beforeLevel: number
+  afterLevel: number
+  maxLevel: number
+  errorText: string
+}
+
 export class RtcCallVolumeMonitor {
   private static hasCachedSnapshot: boolean = false
   private static cachedSnapshot: RtcCallVolumeSnapshot = {
@@ -83,7 +96,31 @@ export class RtcCallVolumeMonitor {
     return Math.round(minVolume + (boundedPercent / 100) * (maxVolume - minVolume))
   }
 
-  static async setVoiceCallVolume(volume: number): Promise<void> {
-    await audio.getAudioManager().setVolume(audio.AudioVolumeType.VOICE_CALL, volume)
+  static async setVoiceCallVolume(volume: number, reason: string = 'volume write'): Promise<RtcCallVolumeWriteResult> {
+    let beforeLevel = -1
+    let afterLevel = -1
+    let maxLevel = -1
+    try {
+      const before = RtcCallVolumeMonitor.readVoiceCallVolumeSnapshot()
+      beforeLevel = before.currentLevel
+      maxLevel = before.maxLevel
+    } catch (error) {
+      console.warn(`RtcCallVolumeMonitor read before write failed: ${JSON.stringify(error)}`)
+    }
+    let errorText = ''
+    try {
+      await audio.getAudioManager().setVolume(audio.AudioVolumeType.VOICE_CALL, volume)
+    } catch (error) {
+      errorText = JSON.stringify(error)
+    }
+    try {
+      afterLevel = RtcCallVolumeMonitor.readVoiceCallVolumeSnapshot().currentLevel
+    } catch (error) {
+      console.warn(`RtcCallVolumeMonitor read after write failed: ${JSON.stringify(error)}`)
+    }
+    console.info(`RtcCallVolumeMonitor voice_call_volume_write reason=${reason} requested=${volume} ` +
+      `before=${beforeLevel} after=${afterLevel} max=${maxLevel} ` +
+      `applied=${afterLevel === volume} error=${errorText || 'none'}`)
+    return { requestedLevel: volume, beforeLevel, afterLevel, maxLevel, errorText }
   }
 }

@@ -24,9 +24,10 @@
 ## 音视频参数（call_setting）接入
 
 - 解析、匹配、本机覆盖存储与 5 分钟自动重拉全部在本项目 `src/main/ets/callsetting/`；两个业务项目各留一层薄门面 `utils/rtc/RtcCallSettingStore.ets`，只负责注入取数实现（`RequestAxios` + `resourceManager`）、设备身份和 AppStorage 镜像。业务侧不再各自复制一份解析。
-- 音视频设置页的界面在本项目 `src/main/ets/ui/RtcCallSettingPanel.ets` 与 `RtcCallSettingPage.ets`；业务项目只提供数据快照、持久化调用和标题栏颜色。未实现的控件必须灰显并给出原因，不接受点击后假装生效。
-- `audio.deviceVolume` 是百分比（`-1..100`），不是绝对音量档；`streamVolume` 与 `startKbps` 因本 WebRTC 无对应接口而不实现，界面上要写清原因。
-- 参数变化通过 `setVideoSource` / `setScreenAnswerVolumePercent` 作用到下一次建轨，不重新注册；只有 `RtcCallControllerKey` 变化才重建 controller。
+- 音视频设置页的界面在本项目 `src/main/ets/ui/RtcCallSettingPanel.ets` 与 `RtcCallSettingPage.ets`；业务项目只提供数据快照和标题栏颜色。页面只读：未实现的控件灰显并给出原因，不接受点击后假装生效，也不提供保存。
+- `audio.deviceVolume` 是百分比（`-1..100`），换算成设备的 `VOICE_CALL` 档位后**常驻生效**：SDK 23 的 `AudioVolumeGroupManager` 只有 getter，唯一可写的是已废弃的 `AudioManager.setVolume`，它要求 `ohos.permission.ACCESS_NOTIFICATION_POLICY`（availableLevel 是 normal，normal APL 装上即授予，不需要 ACL）。床旁 2026-10-13 实测 `requested=14 before=7 after=14 applied=true`。每次写入都紧跟一次回读并一起打日志——"没抛异常"不等于"档位真的变了"。挂断不还原：床旁是公共设备，没有属于某个用户的通话音量需要保护。
+- `streamVolume`（webrtc 播放音量）与 `startKbps` 本端没有对应接口，只展示不生效。播放本身通过默认 `rendererUsage = STREAM_USAGE_VOICE_COMMUNICATION` 落在 `VOICE_CALL` 流上，已经被 deviceVolume 控制；`AudioSource.setVolume` 只能作用于 `createAudioSource()` 造出的本地麦，`AudioDeviceModule` 只有 `setSpeakerMute/setMicrophoneMute`，远端轨只有布尔 `enabled`。不要把两个值相乘去"近似"它——那会让档位不再等于服务器值。
+- 音量没有本机覆盖通道（`applyAudioOverride` 已删），本机覆盖只剩分辨率一项，"清除缓存"一并清掉。参数变化通过 `setVideoSource` / `setScreenAnswerVolumePercent` 立即作用，不重新注册；只有 `RtcCallControllerKey` 变化才重建 controller。
 
 ## 主机差异
 

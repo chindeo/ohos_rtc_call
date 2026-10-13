@@ -131,22 +131,36 @@ export struct RtcCallSettingPanel {
 
       this.sectionTitle('音视频音量设置')
       Row() {
-        Text('生效应答音量')
+        Text('服务器通话音量')
           .fontSize('22lpx')
           .fontColor('#333')
           .layoutWeight(1)
-        Text(`${this.data.answerPercent}%`)
+        Text(this.data.serverVolumePercent >= 0 ?
+          `${this.data.serverVolumePercent}%（来源 ${this.data.serverVolumeSource}）` : '服务器未下发')
           .fontSize('24lpx')
           .fontColor('#E24A6F')
       }
       .width('100%')
 
       Row() {
-        Text('本机音量覆盖')
+        Text('服务器播放音量')
           .fontSize('22lpx')
           .fontColor('#333')
           .layoutWeight(1)
-        Text(this.data.overrideVolume ? '启用中，清除缓存可恢复服务器值' : '未启用')
+        Text(this.data.serverStreamVolumePercent >= 0 ?
+          `${this.data.serverStreamVolumePercent}%（本端无独立增益通道）` : '服务器未下发')
+          .fontSize('20lpx')
+          .fontColor('#999')
+      }
+      .width('100%')
+      .margin({ top: '8lpx' })
+
+      Row() {
+        Text('设备通话档位')
+          .fontSize('22lpx')
+          .fontColor('#333')
+          .layoutWeight(1)
+        Text(this.data.deviceVoiceCallLevel || '未知')
           .fontSize('20lpx')
           .fontColor('#999')
       }

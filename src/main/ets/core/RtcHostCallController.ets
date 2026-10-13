@@ -84,8 +84,9 @@ export class RtcHostCallController {
       deviceRole: RTC_DEVICE_ROLE_NURSE_HOST,
       screenAnswerVolumePercent: options.screenAnswerVolumePercent,
       handsetAnswerVolumePercent: options.handsetAnswerVolumePercent,
-      restoreVolumeOnEnd: true
+      restoreVolumeOnEnd: false
     })
+    this.applyServerVolume('controller created')
     const audioController = new RtcAudioController()
     if (options.diagnostics) {
       audioController.configureDiagnostics({
@@ -421,6 +422,17 @@ export class RtcHostCallController {
   setScreenAnswerVolumePercent(percent?: number): void {
     this.options.screenAnswerVolumePercent = percent
     this.audioPolicyController.setScreenAnswerVolumePercent(percent)
+    this.applyServerVolume('call setting applied')
+  }
+
+  private applyServerVolume(reason: string): void {
+    const percent = this.options.screenAnswerVolumePercent
+    if (percent === undefined) {
+      return
+    }
+    this.audioPolicyController.applyVolumePercent(percent, reason).catch((error: Error) => {
+      this.options.onError?.(`apply server volume failed reason=${reason} percent=${percent}: ${error.message}`)
+    })
   }
 
   setVideoSource(videoSource: RtcWebRtcVideoSourceOptions): void {

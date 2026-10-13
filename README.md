@@ -40,11 +40,13 @@ Reusable OpenHarmony audio/video call utilities for ArkTS applications.
 
 - `RtcCallSettingPolicy` — pure matching and sanitizing. Beans are matched by `mac`, then `packageName`, then `deviceType`; `deviceVolume` is a **percentage** in `-1..100`, not an absolute stream level.
 - `RtcCallSettingPorts` — the host injects `fetcher` (remote + bundled), `logger` and `identity`. The default override store uses `dataPreferences`; tests can substitute both.
-- `RtcCallSettingController` — `load(reason)` is single-flight and falls back remote → bundled → code default, then applies the local override. `onChange` fires only on a real diff. `startAutoRefresh()` re-fetches every 5 minutes by default and keeps the previous snapshot when the fetch fails.
+- `RtcCallSettingController` — `load(reason)` is single-flight and falls back remote → bundled → code default, then applies the local **resolution** override; audio has no override path, the server value is what applies. `onChange` fires only on a real diff. `startAutoRefresh()` re-fetches every 5 minutes by default and keeps the previous snapshot when the fetch fails.
 
-`RtcWebRtcMediaController.setVideoSource` and `RtcHostCallController.setVideoSource` / `setScreenAnswerVolumePercent` apply an updated profile to the next track without re-registering. `RtcCallControllerKey` tells a host whether the device identity really changed and the controller must be rebuilt.
+`RtcWebRtcMediaController.setVideoSource` and `RtcHostCallController.setVideoSource` apply an updated profile to the next track without re-registering. `setScreenAnswerVolumePercent` additionally writes the device level straight away, so a server change lands without waiting for the next call. `RtcCallControllerKey` tells a host whether the device identity really changed and the controller must be rebuilt.
 
-Two fields are intentionally not implemented because this WebRTC build exposes no API for them: `audio.streamVolume` (no remote-track gain) and `startKbps` (no start bitrate).
+`audio.deviceVolume` is a percentage written to the device's `VOICE_CALL` level, and it stays applied: the only working setter on this SDK is the deprecated `AudioManager.setVolume`, which needs `ohos.permission.ACCESS_NOTIFICATION_POLICY` (availableLevel `normal`, so a normal-APL app gets it at install). Every write is followed by a read-back and both are logged, because "no exception" does not prove the level moved. There is no revert on hangup — a bedside panel is shared equipment with no user-tuned call volume to protect.
+
+Two fields are intentionally not implemented because this WebRTC build exposes no API for them: `audio.streamVolume` (playback already runs on the `VOICE_CALL` stream through the default `rendererUsage`, so there is no separate remote-track gain to set — the settings page shows the value and says so) and `startKbps` (no start bitrate).
 
 ## Install
 

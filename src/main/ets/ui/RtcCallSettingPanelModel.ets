@@ -40,8 +40,10 @@ export class RtcCallSettingPanelData {
   selectedSampleRate: string = ''
   resolutionOptions: RtcCallSettingOptionItem[] = []
   selectedResolutionLabel: string = ''
-  answerPercent: number = 90
-  overrideVolume: boolean = false
+  serverVolumePercent: number = -1
+  serverStreamVolumePercent: number = -1
+  serverVolumeSource: string = ''
+  deviceVoiceCallLevel: string = ''
   statusLines: string[] = []
   cacheClearable: boolean = true
   recordingClearable: boolean = false

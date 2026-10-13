@@ -128,7 +128,6 @@ export class RtcCallSettingController {
       profile = overrideProfile
       matchedBy = 'localOverride'
     }
-    this.applyAudioOverride(audio)
     const snapshot: RtcCallSettingSnapshot = {
       profile: profile,
       audio: audio,
@@ -162,14 +161,8 @@ export class RtcCallSettingController {
     return snapshot
   }
 
-  private applyAudioOverride(audio: RtcCallAudioSetting): void {
-    const percent = this.overrides.answerVolumePercent()
-    if (percent >= 0) {
-      audio.deviceVolume = percent
-      audio.source = CALL_SETTING_SOURCE_OVERRIDE
-    }
-  }
-
+  // 通话音量没有本机覆盖这条通道：deviceVolume 只认服务器下发值，
+  // 本机覆盖只保留分辨率一项（历史遗留，清除缓存一并清掉）。
   private hasChanged(previous: RtcCallSettingSnapshot, current: RtcCallSettingSnapshot): boolean {
     return previous.profile.label !== current.profile.label ||
       previous.profile.width !== current.profile.width ||
