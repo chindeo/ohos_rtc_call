@@ -14,7 +14,7 @@ import {
 } from './RtcCallSettingTypes'
 import { RtcCallSettingPolicy } from './RtcCallSettingPolicy'
 
-const DEFAULT_REFRESH_INTERVAL_MS: number = 5 * 60 * 1000
+const DEFAULT_REFRESH_INTERVAL_MS: number = 3 * 60 * 1000
 
 export type RtcCallSettingListener = (diff: RtcCallSettingDiff) => void
 

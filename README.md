@@ -40,7 +40,7 @@ Reusable OpenHarmony audio/video call utilities for ArkTS applications.
 
 - `RtcCallSettingPolicy` — pure matching and sanitizing. Beans are matched by `mac`, then `packageName`, then `deviceType`; `deviceVolume` is a **percentage** in `-1..100`, not an absolute stream level.
 - `RtcCallSettingPorts` — the host injects `fetcher` (remote + bundled), `logger` and `identity`. The default override store uses `dataPreferences`; tests can substitute both.
-- `RtcCallSettingController` — `load(reason)` is single-flight and falls back remote → bundled → code default, then applies the local **resolution** override; audio has no override path, the server value is what applies. `onChange` fires only on a real diff. `startAutoRefresh()` re-fetches every 5 minutes by default and keeps the previous snapshot when the fetch fails.
+- `RtcCallSettingController` — `load(reason)` is single-flight and falls back remote → bundled → code default, then applies the local **resolution** override; audio has no override path, the server value is what applies. `onChange` fires only on a real diff. `startAutoRefresh()` re-fetches every 3 minutes by default and keeps the previous snapshot when the fetch fails. Hosts may also call `load()` right before a call so the per-call volume tracks the server.
 
 `RtcWebRtcMediaController.setVideoSource` and `RtcHostCallController.setVideoSource` apply an updated profile to the next track without re-registering. `setScreenAnswerVolumePercent` additionally writes the device level straight away, so a server change lands without waiting for the next call. `RtcCallControllerKey` tells a host whether the device identity really changed and the controller must be rebuilt.
 
