@@ -141,6 +141,22 @@ export default function rtcWebRtcMediaControllerTest() {
       expect(RtcWebRtcMediaController.applyVideoMaxFrameRate(parameters, 0)).assertEqual(0)
     })
 
+    it('caps every video encoding at the configured bitrate', 0, () => {
+      const parameters: webrtc.RTCRtpSendParameters = {
+        codecs: [],
+        headerExtensions: [],
+        rtcp: {},
+        encodings: [{}, {}],
+        transactionId: 'test'
+      }
+
+      expect(RtcWebRtcMediaController.applyVideoMaxBitrate(parameters, 1500)).assertEqual(2)
+      expect(parameters.encodings[0].maxBitrate).assertEqual(1500000)
+      expect(parameters.encodings[1].maxBitrate).assertEqual(1500000)
+      expect(RtcWebRtcMediaController.applyVideoMaxBitrate(parameters, 0)).assertEqual(0)
+      expect(RtcWebRtcMediaController.applyVideoMaxBitrate(parameters, -800)).assertEqual(0)
+    })
+
     it('clears only the renderer bound to the closed session', 0, () => {
       const controller = new RtcWebRtcMediaController({
         local: { number: '1000' },

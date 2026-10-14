@@ -91,9 +91,10 @@ interface RtcWebRtcVideoRtpStats extends webrtc.RTCStats {
 }
 
 export class RtcVideoSurfaceController implements RtcVideoRendererAdapter {
-  private controller: VideoRenderController = new VideoRenderController()
+  private controller: VideoRenderController
 
-  constructor() {
+  constructor(label: string = 'surface') {
+    this.controller = new VideoRenderController(undefined, label)
     this.controller.setScalingMode(ScalingMode.AspectFit)
   }
 
@@ -227,6 +228,13 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     this.pcConfig = { iceServers }
   }
 
+  // 下一次建轨生效，不需要重建 peer 或重新注册。
+  setVideoSource(videoSource: RtcWebRtcVideoSourceOptions): void {
+    this.videoSource = RtcWebRtcMediaController.copyVideoSource(videoSource)
+    this.log(`video_source_updated ${videoSource.width}x${videoSource.height}@${videoSource.frameRate} ` +
+      `maxBitrateKbps=${videoSource.maxBitrateKbps || 0}`)
+  }
+
   pushLocalVideoNv21Frame(data: Uint8Array, width: number, height: number,
     timestampUs?: number, rotation?: 0 | 90 | 180 | 270): boolean {
     const accepted = this.audioController.pushLocalVideoNv21Frame(
@@ -248,6 +256,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       width: this.videoSource.width,
       height: this.videoSource.height,
       frameRate: this.videoSource.frameRate,
+      maxBitrateKbps: this.videoSource.maxBitrateKbps,
       facingMode: this.videoSource.facingMode,
       deviceId: this.videoSource.deviceId,
       externalNv21: false
@@ -427,7 +436,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       this.log(`peer tracks added id=${record.diagnosticId} count=${trackCount}` +
         ` localAudio=${this.audioController.getLocalAudioTrack()?.id || ''}` +
         ` localVideo=${this.audioController.getLocalVideoTrack()?.id || ''}`)
-      await this.configurePublishVideoFrameRate(record, 'track_added')
+      await this.configurePublishVideoEncoding(record, 'track_added')
     } else if (session) {
       this.peerRegistry.routeSubscribeOffer(session.uid, session.targetNumber, context.rtcUid)
     }
@@ -684,6 +693,19 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     return updated
   }
 
+  static applyVideoMaxBitrate(parameters: webrtc.RTCRtpSendParameters, maxBitrateKbps: number): number {
+    if (!Number.isFinite(maxBitrateKbps) || maxBitrateKbps <= 0) {
+      return 0
+    }
+    const value = Math.max(1, Math.floor(maxBitrateKbps)) * 1000
+    let updated = 0
+    parameters.encodings.forEach((encoding: webrtc.RTCRtpEncodingParameters) => {
+      encoding.maxBitrate = value
+      updated += 1
+    })
+    return updated
+  }
+
   private prepareLocalMedia(videoRequested: boolean): void {
     const audioTrack = this.audioController.getLocalAudioTrack()
     if (!audioTrack || audioTrack.readyState !== 'live') {
@@ -755,14 +777,18 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     }
   }
 
-  private async configurePublishVideoFrameRate(
+  private async configurePublishVideoEncoding(
     record: RtcWebRtcPeerRecord,
     phase: string
   ): Promise<void> {
     if (record.role !== RTC_WEBRTC_PEER_ROLE_PUBLISH) {
       return
     }
-    let applied = 0
+    const maxFrameRate: number = Math.max(1, Math.floor(this.videoSource.frameRate))
+    const maxBitrateKbps: number =
+      this.videoSource.maxBitrateKbps === undefined ? 0 : this.videoSource.maxBitrateKbps
+    let frameRateEncodings = 0
+    let bitrateEncodings = 0
     const senders = record.pc.getSenders()
     for (const sender of senders) {
       if (sender.track?.kind !== 'video') {
@@ -770,24 +796,30 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       }
       try {
         const parameters = sender.getParameters()
-        const updated = RtcWebRtcMediaController.applyVideoMaxFrameRate(
-          parameters, this.videoSource.frameRate)
-        if (updated === 0) {
+        const updatedFrameRate = RtcWebRtcMediaController.applyVideoMaxFrameRate(parameters, maxFrameRate)
+        if (updatedFrameRate === 0) {
           this.log('video_sender_frame_rate role=' + record.role +
             ' phase=' + phase + ' result=skip reason=no_encodings')
           continue
         }
+        const updatedBitrate = RtcWebRtcMediaController.applyVideoMaxBitrate(parameters, maxBitrateKbps)
         await sender.setParameters(parameters)
-        applied += updated
+        frameRateEncodings += updatedFrameRate
+        bitrateEncodings += updatedBitrate
       } catch (error) {
-        this.error('video sender frame rate failed role=' + record.role +
+        this.error('video sender encoding failed role=' + record.role +
           ' phase=' + phase + ' error=' + JSON.stringify(error))
       }
     }
     this.log('video_sender_frame_rate role=' + record.role +
       ' phase=' + phase +
-      ' maxFramerate=' + Math.max(1, Math.floor(this.videoSource.frameRate)) +
-      ' encodings=' + applied)
+      ' maxFramerate=' + maxFrameRate +
+      ' encodings=' + frameRateEncodings)
+    this.log('video_sender_bitrate role=' + record.role +
+      ' phase=' + phase +
+      ' maxBitrateKbps=' + maxBitrateKbps +
+      ' result=' + (bitrateEncodings > 0 ? 'applied' : 'skip') +
+      ' encodings=' + bitrateEncodings)
   }
 
   private handleLocalVideoCapturerFailure(failure: RtcVideoCapturerFailure): void {
@@ -865,7 +897,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
         await sender.replaceTrack(nextTrack)
         replaced += 1
       }
-      await this.configurePublishVideoFrameRate(record, 'replace_track')
+      await this.configurePublishVideoEncoding(record, 'replace_track')
     }
     this.emitAllMediaStates()
     this.log('local video replace complete reason=' + reason + ' generation=' + generation +
@@ -928,6 +960,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       width: source.width,
       height: source.height,
       frameRate: source.frameRate,
+      maxBitrateKbps: source.maxBitrateKbps,
       facingMode: source.facingMode,
       deviceId: source.deviceId,
       externalNv21: source.externalNv21
@@ -1098,6 +1131,14 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       if (renderer) {
         this.setRendererTrack(renderer, event.track)
       }
+      // 远端轨可能早于"谁是当前会话"被确定。没有活动会话时先接管，
+      // 否则共享渲染器永远收不到这条轨，大格会一直停在占位画面。
+      if (!this.activeSessionKey) {
+        this.activeSessionKey = session.sessionKey
+      }
+      this.log(`remote_video_track sidHash=${this.getSessionHash(session.sessionKey)}` +
+        ` activeHash=${this.getSessionHash(this.activeSessionKey)}` +
+        ` sessionRenderer=${renderer ? 'bound' : 'none'}`)
     } else {
       return
     }

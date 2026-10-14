@@ -18,6 +18,8 @@ Reusable OpenHarmony audio/video call utilities for ArkTS applications.
 - Startup data cache and network recovery state helpers for startup pages that must continue with cached data while business APIs recover.
 - Incoming-call queue helpers for nurse hosts that need to display multiple bedside calls without replacing the active call session.
 - Device capability adapters for vendor-specific MAC, boot, power, LED, and hardware key actions.
+- Server-driven audio/video call settings (`callsetting`): resolution and bitrate profile, answer-volume setting, local override storage, change detection, and periodic re-fetch.
+- Shared audio/video settings page and panel for host and bedside admin UIs.
 - UI helpers for RTC status hints, admin-entry countdowns, API endpoint settings, and host/bed call view presentation models.
 - Process-local system navigation-bar visibility and window application helpers.
 - Shared call state and signal models.
@@ -31,6 +33,20 @@ Reusable OpenHarmony audio/video call utilities for ArkTS applications.
 - Transfer ringback: `ringtone/transfer_ringback.wav`
 - Call hold: `ringtone/hold.wav`
 - Presence calls: use `ringtone/presence_normal_ring.wav`, `ringtone/presence_bluecode_ring.wav`, or `ringtone/presence_sanitary_ring.wav` by event type.
+
+## Call setting
+
+`callsetting/` owns everything about the server-pushed `call_setting.json` so host and bedside applications do not parse it twice:
+
+- `RtcCallSettingPolicy` — pure matching and sanitizing. Beans are matched by `mac`, then `packageName`, then `deviceType`; `deviceVolume` is a **percentage** in `-1..100`, not an absolute stream level.
+- `RtcCallSettingPorts` — the host injects `fetcher` (remote + bundled), `logger` and `identity`. The default override store uses `dataPreferences`; tests can substitute both.
+- `RtcCallSettingController` — `load(reason)` is single-flight and falls back remote → bundled → code default, then applies the local **resolution** override; audio has no override path, the server value is what applies. `onChange` fires only on a real diff. `startAutoRefresh()` re-fetches every 3 minutes by default and keeps the previous snapshot when the fetch fails. Hosts may also call `load()` right before a call so the per-call volume tracks the server.
+
+`RtcWebRtcMediaController.setVideoSource` and `RtcHostCallController.setVideoSource` apply an updated profile to the next track without re-registering. `setScreenAnswerVolumePercent` additionally writes the device level straight away, so a server change lands without waiting for the next call. `RtcCallControllerKey` tells a host whether the device identity really changed and the controller must be rebuilt.
+
+`audio.deviceVolume` is a percentage written to the device's `VOICE_CALL` level, and it stays applied: the only working setter on this SDK is the deprecated `AudioManager.setVolume`, which needs `ohos.permission.ACCESS_NOTIFICATION_POLICY` (availableLevel `normal`, so a normal-APL app gets it at install). Every write is followed by a read-back and both are logged, because "no exception" does not prove the level moved. There is no revert on hangup — a bedside panel is shared equipment with no user-tuned call volume to protect.
+
+Two fields are intentionally not implemented because this WebRTC build exposes no API for them: `audio.streamVolume` (playback already runs on the `VOICE_CALL` stream through the default `rendererUsage`, so there is no separate remote-track gain to set — the settings page shows the value and says so) and `startKbps` (no start bitrate).
 
 ## Install
 

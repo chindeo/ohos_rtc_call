@@ -44,6 +44,8 @@ export interface RtcHostCallControllerOptions {
   autoAnswer?: boolean
   localVideoEnabled?: boolean
   videoSource?: RtcWebRtcVideoSourceOptions
+  screenAnswerVolumePercent?: number
+  handsetAnswerVolumePercent?: number
   onExternalVideoCaptureStateChange?: (active: boolean) => void
   onRegistered?: () => void
   onIncoming?: (session: RtcWebRtcCallSessionInfo) => void
@@ -70,8 +72,8 @@ export class RtcHostCallController {
   private mediaController: RtcWebRtcMediaController
   private webRtcController: RtcWebRtcCallController
   private audioPolicyController: RtcCallAudioPolicyController
-  private localVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController()
-  private remoteVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController()
+  private localVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController('host-local')
+  private remoteVideoSurface: RtcVideoSurfaceController = new RtcVideoSurfaceController('host-remote-shared')
   private sessionRemoteVideoSurfaces: Map<string, RtcVideoSurfaceController> = new Map()
   private connectedMediaNotifications: Map<string, boolean> = new Map()
   private started: boolean = false
@@ -80,8 +82,11 @@ export class RtcHostCallController {
     this.options = options
     this.audioPolicyController = new RtcCallAudioPolicyController({
       deviceRole: RTC_DEVICE_ROLE_NURSE_HOST,
-      restoreVolumeOnEnd: true
+      screenAnswerVolumePercent: options.screenAnswerVolumePercent,
+      handsetAnswerVolumePercent: options.handsetAnswerVolumePercent,
+      restoreVolumeOnEnd: false
     })
+    this.applyServerVolume('controller created')
     const audioController = new RtcAudioController()
     if (options.diagnostics) {
       audioController.configureDiagnostics({
@@ -390,7 +395,7 @@ export class RtcHostCallController {
     const key = (sessionKey || '').trim()
     let surface = this.sessionRemoteVideoSurfaces.get(key)
     if (!surface) {
-      surface = new RtcVideoSurfaceController()
+      surface = new RtcVideoSurfaceController('host-remote-session')
       this.sessionRemoteVideoSurfaces.set(key, surface)
     }
     this.bindSessionRemoteVideoRenderer(key, surface)
@@ -412,6 +417,27 @@ export class RtcHostCallController {
 
   onUiModelChange(listener: RtcHostCallUiModelListener): RtcCallUnsubscribe {
     return this.multiCallController.onUiModelChange(listener)
+  }
+
+  setScreenAnswerVolumePercent(percent?: number): void {
+    this.options.screenAnswerVolumePercent = percent
+    this.audioPolicyController.setScreenAnswerVolumePercent(percent)
+    this.applyServerVolume('call setting applied')
+  }
+
+  private applyServerVolume(reason: string): void {
+    const percent = this.options.screenAnswerVolumePercent
+    if (percent === undefined) {
+      return
+    }
+    this.audioPolicyController.applyVolumePercent(percent, reason).catch((error: Error) => {
+      this.options.onError?.(`apply server volume failed reason=${reason} percent=${percent}: ${error.message}`)
+    })
+  }
+
+  setVideoSource(videoSource: RtcWebRtcVideoSourceOptions): void {
+    this.options.videoSource = videoSource
+    this.mediaController.setVideoSource(videoSource)
   }
 
   dispose(): void {

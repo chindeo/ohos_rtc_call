@@ -20,6 +20,7 @@ export interface RtcWebRtcVideoSourceOptions {
   width: number
   height: number
   frameRate: number
+  maxBitrateKbps?: number
   facingMode?: string
   deviceId?: string
   externalNv21?: boolean

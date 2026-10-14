@@ -17,7 +17,7 @@ export const RTC_DEVICE_ROLE_DOOR_HOST = 'doorHost'
 
 export interface RtcCallAudioPolicyDriver {
   readVoiceCallVolumeSnapshot(): RtcCallVolumeSnapshot
-  setVoiceCallVolume(volume: number): Promise<void>
+  setVoiceCallVolume(volume: number, reason?: string): Promise<void>
   setSpeaker(enabled: boolean): Promise<void>
   setHandsetMode?(enabled: boolean, reason: string): void
   setMuted?(muted: boolean): void
@@ -56,8 +56,8 @@ class RtcDefaultCallAudioPolicyDriver implements RtcCallAudioPolicyDriver {
     return RtcCallVolumeMonitor.readVoiceCallVolumeSnapshot()
   }
 
-  async setVoiceCallVolume(volume: number): Promise<void> {
-    await RtcCallVolumeMonitor.setVoiceCallVolume(volume)
+  async setVoiceCallVolume(volume: number, reason?: string): Promise<void> {
+    await RtcCallVolumeMonitor.setVoiceCallVolume(volume, reason || 'volume write')
   }
 
   async setSpeaker(enabled: boolean): Promise<void> {
@@ -89,6 +89,23 @@ export class RtcCallAudioPolicyController {
     this.state.deviceRole = options.deviceRole || RTC_DEVICE_ROLE_BEDSIDE
   }
 
+  setScreenAnswerVolumePercent(percent?: number): void {
+    this.options.screenAnswerVolumePercent = percent
+  }
+
+  /**
+   * 服务器值常驻：不等通话时机，把百分比直接写成当前档位。
+   * 床旁是公共设备，没有"用户自己调过、需要保护的通话音量"，
+   * 所以 deviceVolume 就是设备的目标档位，挂断也不还原。
+   */
+  async applyVolumePercent(percent: number, reason: string): Promise<void> {
+    const bounded = Math.max(0, Math.min(100, percent))
+    const snapshot = this.driver.readVoiceCallVolumeSnapshot()
+    const level = RtcCallVolumeMonitor.getVolumeLevelByPercent(bounded, snapshot.minLevel, snapshot.maxLevel)
+    await this.driver.setVoiceCallVolume(level, reason)
+    this.state.currentVolumePercent = bounded
+  }
+
   captureOriginalVolume(): RtcCallVolumeSnapshot {
     const snapshot = this.driver.readVoiceCallVolumeSnapshot()
     this.state.hasOriginalVolume = true
@@ -103,7 +120,7 @@ export class RtcCallAudioPolicyController {
     const volumePercent = this.resolveAnswerVolumePercent(route)
     const volumeLevel = RtcCallVolumeMonitor.getVolumeLevelByPercent(volumePercent, snapshot.minLevel, snapshot.maxLevel)
     await this.driver.setSpeaker(route.speakerEnabled)
-    await this.driver.setVoiceCallVolume(volumeLevel)
+    await this.driver.setVoiceCallVolume(volumeLevel, `answer ${reason}`)
     const nextHandsetMode = route.source === RTC_CALL_CONTROL_SOURCE_HANDSET
     if (nextHandsetMode || this.state.handsetMode) {
       this.applyHandsetMode(nextHandsetMode, reason)
@@ -164,7 +181,7 @@ export class RtcCallAudioPolicyController {
 
   async restoreAfterCall(reason: string = 'call ended'): Promise<void> {
     if (this.options.restoreVolumeOnEnd !== false && this.state.hasOriginalVolume) {
-      await this.driver.setVoiceCallVolume(this.state.originalVolumeLevel)
+      await this.driver.setVoiceCallVolume(this.state.originalVolumeLevel, `restore ${reason}`)
       this.state.currentVolumePercent = this.state.originalVolumePercent
     }
     await this.driver.setSpeaker(false)
