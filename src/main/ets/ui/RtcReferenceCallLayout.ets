@@ -241,11 +241,16 @@ export struct RtcReferenceCallLayout {
   }
 
   private getRenderKey(call: RtcHostCallUiItem): string {
+    // hasRemoteVideo / mediaConnected 必须进 key：远端轨通常在 connected 之后才到位，
+    // 而整棵媒体子树包在 ForEach([getRenderKey]) 里，key 不变则 itemGenerator 不重跑，
+    // remoteVideoBuilder() 这支不会被重新求值，远端 XComponent 永远不挂载、surface 不创建。
     return call.sessionKey +
       '|phase=' + call.phase +
       '|mode=' + call.mode +
       '|overlay=' + this.shouldShowOverlay() +
-      '|sideCount=' + this.getSideCalls().length
+      '|sideCount=' + this.getSideCalls().length +
+      '|hasRemoteVideo=' + (call.hasRemoteVideo === true) +
+      '|mediaConnected=' + (call.mediaConnected === true)
   }
 
   private getControlsRenderKey(call: RtcHostCallUiItem): string {
@@ -270,6 +275,7 @@ export struct RtcReferenceCallLayout {
       '|canHold=' + (call.canHold === true) +
       '|canResume=' + (call.canResume === true) +
       '|isHold=' + (call.isHold === true) +
+      '|hasRemoteVideo=' + (call.hasRemoteVideo === true) +
       '|mediaConnected=' + (call.mediaConnected === true)
   }
 
