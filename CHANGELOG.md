@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Fixed the shared WebRTC controller tearing down every active call when the server echoed `c__hangup` for a session that was already removed by a local single-call hangup. The echo guard now runs for every `c__hangup` (previously short-circuited by the terminal policy), and the terminal close-all fallback keeps other sessions whenever the payload carries an identity or more than one call is active. `c__offline` and the last-session close-all semantics are unchanged.
+- Known boundary (host-validated 2026-10-15 on .61/.93): a `c__hangup` that carries **no** session identity (`uuid`/`rtcUid`/target number all empty) while exactly **one** call remains still closes the whole group, preserving the `b45dd98` single-call close-on-terminal semantics. Android `RtcInitCall.kt:578` instead skips the close-all whenever any other target exists, ignoring the count. Real traffic always carries an identity, so the echo is caught by the guard first; not aligning now to avoid reintroducing the "single-call UI does not close" regression, to be revisited only if device evidence shows a stale identityless terminal.
 
 ## 0.1.4-rc3 timestamp HAR (2026-10-13)
 
