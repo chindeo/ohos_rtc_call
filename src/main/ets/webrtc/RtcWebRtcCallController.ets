@@ -398,16 +398,17 @@ export class RtcWebRtcCallController {
       const payload = this.parsePayload(message.data)
       const session = payload ? this.resolvePayloadSession(payload) : undefined
       const keepAlive = this.shouldKeepAliveAfterRemoteHangup(message.eventName, payload)
-      const useHangupTerminalPolicy = message.eventName === 'c__hangup' && !keepAlive
-      if (!useHangupTerminalPolicy && this.shouldIgnoreTerminalEchoAfterLocalSingleHangup(payload, session)) {
-        this.listener.onLog?.('ignore terminal echo after local single hangup')
+      const isHangup = message.eventName === 'c__hangup'
+      if (isHangup && this.shouldIgnoreTerminalEchoAfterLocalSingleHangup(payload, session)) {
+        this.listener.onLog?.('ignore terminal echo after local single hangup' +
+          ' sidHash=' + this.getSessionHash(this.recentLocalSingleHangup?.sessionKey || ''))
       } else if (session) {
         const key = session.sessionKey
         const preservePublish = this.sessions.size > 1
         if (keepAlive) {
           this.removeSession(key, preservePublish)
           this.listener.onHangup?.(key, false)
-        } else if (message.eventName === 'c__hangup') {
+        } else if (isHangup) {
           this.removeSession(key, preservePublish)
           this.recentLocalSingleHangup = undefined
           this.listener.onHangup?.(key, false)
@@ -417,9 +418,18 @@ export class RtcWebRtcCallController {
         }
       } else if (keepAlive) {
         this.listener.onLog?.('keep call page after remote hangup because other calls remain')
-      } else if (message.eventName === 'c__hangup') {
-        this.closeAllLocalSessions('remote hangup complete')
-        this.listener.onHangup?.('', true)
+      } else if (isHangup) {
+        // 对齐安卓 callbackHangUpWithUid：有 uid 却解析不到时视为迟到回声或未知 uid，
+        // 只要本地还有其他会话就必须 keep_call_group，不能拆整组。
+        if (payload && this.hasPayloadSessionIdentity(payload) && this.sessions.size > 0) {
+          this.listener.onLog?.('ignore remote hangup for unresolved target; keeping other calls' +
+            ' remaining=' + this.sessions.size)
+        } else if (this.sessions.size > 1) {
+          this.listener.onLog?.('ignore terminal signal without target in multi-call')
+        } else {
+          this.closeAllLocalSessions('remote hangup complete')
+          this.listener.onHangup?.('', true)
+        }
       } else if (payload?.isAll === true) {
         this.closeAllLocalSessions('remote terminal all')
         this.listener.onHangup?.('', true)

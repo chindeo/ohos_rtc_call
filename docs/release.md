@@ -1,5 +1,15 @@
 # ohos-rtc-call Release Notes
 
+## 0.1.4-rc3 挂断作用域修复
+
+修复主机/床旁多路通话场景下，单路挂断会误拆整组通话的问题（复现：主机接起 B 后只挂 B，A 也一并被拆；两个床旁同时拨主机，只挂一路整组退出）。
+
+- 恢复 `RtcWebRtcCallController.handleMessage` 对 `c__hangup` 的回声守卫，不再被 `useHangupTerminalPolicy` 短路；本地挂断某一路之后、服务端把同一条挂断以 `isHangUp:true` 或 `isHangUp` 缺失形式回传时，只要其他会话仍在，就当回声忽略。
+- `c__hangup` 兜底不再无条件 `closeAllLocalSessions`：payload 带身份（`uuid`/`rtcUid`/目标号码）却解析不到会话时，视为迟到回声或未知 uid，`sessions.size > 0` 就保留其他通话；完全无身份且 `sessions.size > 1` 同样保留，只有 `sessions.size <= 1` 才走全关。
+- `c__offline` 语义保持 b45dd98 的约定（`isHangUp:false` 只在 `c__hangup` 里作为 keepAlive 提示，`c__offline` 一律终态），单通 UI 关闭回归测试不变。
+- 新增 3 条 Hypium 回归用例：本地挂断后 `isHangUp:true` 回声保留其他路、有身份但解析不到的 `c__hangup` 保留其他路、无身份 `c__hangup` 在多路时保留其他路。
+- 手工验收：主机 ↔ 床旁 A 通话中，B 打入并接听后只挂 B，主机保留 A 通话；两路同时拨打主机，只挂一路另一路继续；日志应见 `ignore terminal echo after local single hangup` 或 `keeping other calls`，不再出现 `close all begin reason=remote hangup complete`。
+
 ## 0.1.4-rc3 CameraKit 生命周期修复
 
 - 床旁 CameraKit 视频源在挂断和失败恢复时显式调用 native `VideoSource.release()`，等待采集线程和摄像头资源释放后再允许下一次创建。

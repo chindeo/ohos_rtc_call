@@ -253,12 +253,14 @@ foreach ($Pattern in $SensitivePatterns) {
 
 Push-Location $StageRoot
 try {
-  $HarFileName = [System.IO.Path]::GetFileName($HarPath)
-  & tar.exe -czf $HarFileName package
+  # Git Bash `tar` resolves Windows drive paths as host names, so write to a
+  # relative file here and move it to the destination afterwards.
+  $StagedHarName = [System.IO.Path]::GetFileName($HarPath)
+  & tar.exe -czf $StagedHarName package
   if ($LASTEXITCODE -ne 0) {
     throw "tar failed with exit code $LASTEXITCODE"
   }
-  Move-Item -LiteralPath $HarFileName -Destination $HarPath -Force
+  Move-Item -LiteralPath (Join-Path $StageRoot $StagedHarName) -Destination $HarPath -Force
 } finally {
   Pop-Location
 }
