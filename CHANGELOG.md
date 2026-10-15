@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fixed the shared WebRTC controller tearing down every active call when the server echoed `c__hangup` for a session that was already removed by a local single-call hangup. The echo guard now runs for every `c__hangup` (previously short-circuited by the terminal policy), and the terminal close-all fallback keeps other sessions whenever the payload carries an identity or more than one call is active. `c__offline` and the last-session close-all semantics are unchanged.
+
 ## 0.1.4-rc3 timestamp HAR (2026-10-13)
 
 - Added the `callsetting` module as the single source of truth for server-driven audio/video parameters: bean matching, sanitizing, video-profile and audio-setting resolution, local override storage, change detection, and 5-minute auto refresh. Host applications now inject a fetcher, a logger and the device identity instead of re-implementing parsing.

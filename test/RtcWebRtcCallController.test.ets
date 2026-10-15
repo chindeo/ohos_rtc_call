@@ -1390,5 +1390,153 @@ export default function rtcWebRtcCallControllerTest() {
         message.indexOf('ignore terminal echo after local single hangup') >= 0)).assertEqual(true)
       controller.dispose()
     })
+
+    it('keeps the other call when the server echoes isHangUp=true after a local single hangup', 0, () => {
+      let endedKey = 'unset'
+      let endedAll = false
+      const logs: string[] = []
+      const signalSession = new TestSignalSession()
+      const mediaController = new TrackingMediaController({
+        local: { number: '1000' },
+        appVersion: 'test'
+      })
+      const controller = new RtcWebRtcCallController(mediaController, {
+        onHangup: (sessionKey: string, all: boolean) => {
+          endedKey = sessionKey
+          endedAll = all
+        },
+        onLog: (message: string) => {
+          logs.push(message)
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+      controller.registerOutgoingSession('call-b', { number: '1111' }, RtcCallMode.AUDIO)
+
+      expect(controller.hangup('call-b')).assertEqual(true)
+      endedKey = 'unset'
+
+      signalSession.emitMessage({
+        eventName: 'c__hangup',
+        data: JSON.stringify({
+          isHangUp: true,
+          commonRequest: {
+            uuid: 'call-b',
+            number: '1111',
+            from: '1111',
+            to: '1000'
+          }
+        })
+      })
+
+      expect(endedKey).assertEqual('unset')
+      expect(endedAll).assertEqual(false)
+      expect(controller.getSession('call-a')?.sessionKey).assertEqual('call-a')
+      expect(controller.getSession('call-b') === undefined).assertEqual(true)
+      expect(mediaController.closeAllCalls.length).assertEqual(0)
+      expect(logs.some((message: string) =>
+        message.indexOf('ignore terminal echo after local single hangup') >= 0)).assertEqual(true)
+      controller.dispose()
+    })
+
+    it('keeps the other call when a c__hangup carries an identity that resolves to nothing', 0, () => {
+      let endedAll = false
+      const logs: string[] = []
+      const signalSession = new TestSignalSession()
+      const mediaController = new TrackingMediaController({
+        local: { number: '1000' },
+        appVersion: 'test'
+      })
+      const controller = new RtcWebRtcCallController(mediaController, {
+        onHangup: (_sessionKey: string, all: boolean) => {
+          endedAll = all
+        },
+        onLog: (message: string) => {
+          logs.push(message)
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+      controller.registerOutgoingSession('call-b', { number: '1111' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__hangup',
+        data: JSON.stringify({
+          isHangUp: true,
+          commonRequest: {
+            uuid: 'unknown-call',
+            number: '9999',
+            from: '9999',
+            to: '1000'
+          }
+        })
+      })
+
+      expect(endedAll).assertEqual(false)
+      expect(controller.getSession('call-a')?.sessionKey).assertEqual('call-a')
+      expect(controller.getSession('call-b')?.sessionKey).assertEqual('call-b')
+      expect(mediaController.closeAllCalls.length).assertEqual(0)
+      expect(logs.some((message: string) =>
+        message.indexOf('keeping other calls') >= 0)).assertEqual(true)
+      controller.dispose()
+    })
+
+    it('ignores an identityless c__hangup with isHangUp=true while multi-call is active', 0, () => {
+      let endedAll = false
+      const logs: string[] = []
+      const signalSession = new TestSignalSession()
+      const mediaController = new TrackingMediaController({
+        local: { number: '1000' },
+        appVersion: 'test'
+      })
+      const controller = new RtcWebRtcCallController(mediaController, {
+        onHangup: (_sessionKey: string, all: boolean) => {
+          endedAll = all
+        },
+        onLog: (message: string) => {
+          logs.push(message)
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+      controller.registerOutgoingSession('call-b', { number: '1111' }, RtcCallMode.AUDIO)
+
+      signalSession.emitMessage({
+        eventName: 'c__hangup',
+        data: JSON.stringify({
+          isHangUp: true,
+          commonRequest: {
+            uuid: '',
+            number: ''
+          }
+        })
+      })
+
+      expect(endedAll).assertEqual(false)
+      expect(controller.getSession('call-a')?.sessionKey).assertEqual('call-a')
+      expect(controller.getSession('call-b')?.sessionKey).assertEqual('call-b')
+      expect(mediaController.closeAllCalls.length).assertEqual(0)
+      expect(logs.some((message: string) =>
+        message.indexOf('ignore terminal signal without target in multi-call') >= 0)).assertEqual(true)
+      controller.dispose()
+    })
   })
 }
