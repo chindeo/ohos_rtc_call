@@ -15,6 +15,7 @@ import rtcHostMultiCallControllerTest from './RtcHostMultiCallController.test'
 import rtcIncomingCallQueueTest from './RtcIncomingCallQueue.test'
 import rtcNetworkRequestRecoveryControllerTest from './RtcNetworkRequestRecoveryController.test'
 import rtcPeerSessionRegistryTest from './RtcPeerSessionRegistry.test'
+import rtcRingtoneControllerTest from './RtcRingtoneController.test'
 import rtcRuntimeConfigControllerTest from './RtcRuntimeConfigController.test'
 import rtcStartupFallbackControllerTest from './RtcStartupFallbackController.test'
 import rtcStartupDataCacheTest from './RtcStartupDataCache.test'
@@ -43,6 +44,7 @@ export default function testsuite() {
   rtcIncomingCallQueueTest()
   rtcNetworkRequestRecoveryControllerTest()
   rtcPeerSessionRegistryTest()
+  rtcRingtoneControllerTest()
   rtcRuntimeConfigControllerTest()
   rtcStartupFallbackControllerTest()
   rtcStartupDataCacheTest()

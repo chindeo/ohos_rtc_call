@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Made `RtcRingtoneController` observable: `playIncoming` / `playUrl` now emit a `ring_local_gate` / `ring_url_gate` line through an optional `configureLogger` callback whenever they skip, start, or the driver refuses, so a server-configured URL ringtone that silently does nothing reports the exact reason (`emptyUrl`, `policyDisabled`, `busy`, `channelDisabled`, `noDriver`, `driverNoUrl`) instead of returning with no trace. Purely additive: no default sink, behavior unchanged when no logger is wired, and the `externalUrlEnabled` default stays `false` (hosts opt in via `configurePolicy`).
+
 ## 0.1.4-rc3 timestamp HAR (2026-10-13)
 
 - Added the `callsetting` module as the single source of truth for server-driven audio/video parameters: bean matching, sanitizing, video-profile and audio-setting resolution, local override storage, change detection, and 5-minute auto refresh. Host applications now inject a fetcher, a logger and the device identity instead of re-implementing parsing.

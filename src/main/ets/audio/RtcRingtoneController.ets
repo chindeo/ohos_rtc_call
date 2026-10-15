@@ -21,6 +21,7 @@ export class RtcRingtoneController {
   private creating: boolean = false
   private stopping: boolean = false
   private activeChannel: RtcRingtoneChannel | undefined = undefined
+  private logger?: (message: string) => void
   private policy: RtcRingtonePolicy = {
     webrtcEnabled: true,
     sipEnabled: true,
@@ -29,6 +30,10 @@ export class RtcRingtoneController {
 
   configureDriver(driver: RtcRingtoneDriver): void {
     this.driver = driver
+  }
+
+  configureLogger(logger?: (message: string) => void): void {
+    this.logger = logger
   }
 
   configurePolicy(policy: RtcRingtonePolicy): void {
@@ -59,38 +64,53 @@ export class RtcRingtoneController {
   }
 
   async playIncoming(channel: RtcRingtoneChannel = RtcRingtoneChannel.WEBRTC): Promise<void> {
-    if (!this.canPlay(channel) || !this.driver) {
+    const reason = this.localGateReason(channel)
+    if (reason) {
+      this.log(`ring_local_gate result=skip reason=${reason} channel=${channel}`)
       return
     }
+    this.log(`ring_local_gate result=play channel=${channel}`)
+    const driver = this.driver as RtcRingtoneDriver
     this.creating = true
     this.stopping = false
     try {
-      const started = await this.driver.playIncoming()
+      const started = await driver.playIncoming()
       if (this.stopping) {
         await this.stop()
         return
       }
       this.playing = started
       this.activeChannel = started ? channel : undefined
+      if (!started) {
+        this.log(`ring_local_gate result=driverRefused channel=${channel}`)
+      }
     } finally {
       this.creating = false
     }
   }
 
   async playUrl(url: string, channel: RtcRingtoneChannel = RtcRingtoneChannel.WEBRTC): Promise<void> {
-    if (!url || this.policy.externalUrlEnabled !== true || !this.canPlay(channel) || !this.driver || !this.driver.playUrl) {
+    const reason = this.urlGateReason(url, channel)
+    if (reason) {
+      this.log(`ring_url_gate result=skip reason=${reason} channel=${channel}`)
       return
     }
+    this.log(`ring_url_gate result=play channel=${channel}`)
+    const driver = this.driver as RtcRingtoneDriver
+    const playUrl = driver.playUrl as (url: string) => Promise<boolean>
     this.creating = true
     this.stopping = false
     try {
-      const started = await this.driver.playUrl(url)
+      const started = await playUrl.call(driver, url)
       if (this.stopping) {
         await this.stop()
         return
       }
       this.playing = started
       this.activeChannel = started ? channel : undefined
+      if (!started) {
+        this.log(`ring_url_gate result=driverRefused channel=${channel}`)
+      }
     } finally {
       this.creating = false
     }
@@ -112,10 +132,48 @@ export class RtcRingtoneController {
     }
   }
 
-  private canPlay(channel: RtcRingtoneChannel): boolean {
+  private busyReason(channel: RtcRingtoneChannel): string {
     if (this.playing || this.creating) {
-      return false
+      return 'busy'
     }
-    return this.isChannelEnabled(channel)
+    if (!this.isChannelEnabled(channel)) {
+      return 'channelDisabled'
+    }
+    return ''
+  }
+
+  private localGateReason(channel: RtcRingtoneChannel): string {
+    const busy = this.busyReason(channel)
+    if (busy) {
+      return busy
+    }
+    if (!this.driver) {
+      return 'noDriver'
+    }
+    return ''
+  }
+
+  private urlGateReason(url: string, channel: RtcRingtoneChannel): string {
+    if (!url) {
+      return 'emptyUrl'
+    }
+    if (this.policy.externalUrlEnabled !== true) {
+      return 'policyDisabled'
+    }
+    const busy = this.busyReason(channel)
+    if (busy) {
+      return busy
+    }
+    if (!this.driver) {
+      return 'noDriver'
+    }
+    if (!this.driver.playUrl) {
+      return 'driverNoUrl'
+    }
+    return ''
+  }
+
+  private log(message: string): void {
+    this.logger?.(message)
   }
 }
