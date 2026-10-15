@@ -3,6 +3,7 @@ import audio from '@ohos.multimedia.audio'
 import fs from '@ohos.file.fs'
 import { RtcCallDiagnosticsOptions } from '../model/RtcCallConfig'
 import { RtcWebRtcVideoSourceOptions } from '../webrtc/RtcWebRtcConfig'
+import { RTC_VIDEO_CAPTURE_STOP_TIMEOUT_MS, RtcVideoCaptureStopGate } from './RtcVideoCaptureStopGate'
 
 export interface RtcLocalAudioOptions {
   trackId: string
@@ -87,6 +88,7 @@ export class RtcAudioController {
   private localVideoCapturerFailureHandler?: (failure: RtcVideoCapturerFailure) => void
   private localVideoCapturerReadyHandler?: () => void
   private localVideoGeneration: number = 0
+  private localVideoStopGate: RtcVideoCaptureStopGate = new RtcVideoCaptureStopGate()
 
   configureDiagnostics(options: RtcMediaDiagnosticsOptions): void {
     this.diagnostics = options
@@ -195,7 +197,9 @@ export class RtcAudioController {
     this.log('create_video_source begin sourceType=' + sourceType +
       ' generation=' + generation +
       ' deviceId=' + (options.deviceId || '') + ' width=' + options.width +
-      ' height=' + options.height + ' frameRate=' + options.frameRate)
+      ' height=' + options.height + ' frameRate=' + options.frameRate +
+      ' previousStopPending=' + this.localVideoStopGate.isPending() +
+      ' previousStopAgeMs=' + this.localVideoStopGate.pendingAgeMs())
     if (options.externalNv21 === true) {
       this.localVideoSource = this.pcf.createExternalVideoSource(options.frameRate)
       this.localVideoUsesExternalFrames = true
@@ -363,9 +367,19 @@ export class RtcAudioController {
       ' readyState=' + (track?.readyState || 'none') +
       ' sourceType=' + (usesExternalFrames ? 'external-nv21' : 'camera-kit') +
       ' generation=' + generation)
-    if (source) {
+    // Arm the stop gate before stopping the track so a capture-stopped callback dispatched while
+    // the native release runs below can settle it. External NV21/UVC sources are owned by the
+    // host, so their release policy stays unchanged and the window closes immediately.
+    const stopToken: number = this.localVideoStopGate.arm()
+    if (!source || usesExternalFrames) {
+      this.localVideoStopGate.settle(stopToken)
+    } else {
       source.oncapturerstarted = null
-      source.oncapturerstopped = null
+      source.oncapturerstopped = () => {
+        if (this.localVideoStopGate.settle(stopToken)) {
+          this.log('video_capturer_stopped generation=' + generation + ' token=' + stopToken)
+        }
+      }
     }
     if (track) {
       try {
@@ -393,6 +407,49 @@ export class RtcAudioController {
     this.log('release_video complete sourceType=' +
       (usesExternalFrames ? 'external-nv21' : 'camera-kit') +
       ' generation=' + generation + ' nativeReleased=' + nativeReleased)
+  }
+
+  /**
+   * Releases the local video source and waits, within a bounded deadline, for native capture to
+   * report that it actually stopped.
+   *
+   * Callers that create the next video source immediately after releasing must use this instead
+   * of the fire-and-forget `releaseLocalVideo()`: creating while the previous capture is still
+   * alive makes CameraKit destroy the old session inside `CreateCaptureSession`, which re-locks a
+   * non-recursive mutex and wedges camera_service for every later caller on the device.
+   *
+   * Returns `stopped` when native confirmed quiescence, `quiesced` when there was nothing to
+   * wait for, and `timeout` when the confirmation never arrived.
+   */
+  async releaseLocalVideoAsync(
+    timeoutMs: number = RTC_VIDEO_CAPTURE_STOP_TIMEOUT_MS
+  ): Promise<string> {
+    this.releaseLocalVideo()
+    const result: string = await this.localVideoStopGate.wait(timeoutMs)
+    this.log('release_video wait result=' + result +
+      ' stillPending=' + this.localVideoStopGate.isPending() +
+      ' pendingAgeMs=' + this.localVideoStopGate.pendingAgeMs() +
+      ' timeoutMs=' + timeoutMs)
+    return result
+  }
+
+  isLocalVideoCaptureQuiesced(): boolean {
+    return !this.localVideoStopGate.isPending()
+  }
+
+  /**
+   * Waits for the most recently released local video source to confirm that capture stopped,
+   * without releasing anything itself. Callers about to create a video source use this so
+   * CameraKit never sees a new CreateCaptureSession while the previous session is still alive.
+   */
+  waitForLocalVideoCaptureQuiesced(
+    timeoutMs: number = RTC_VIDEO_CAPTURE_STOP_TIMEOUT_MS
+  ): Promise<string> {
+    return this.localVideoStopGate.wait(timeoutMs)
+  }
+
+  localVideoCapturePendingAgeMs(): number {
+    return this.localVideoStopGate.pendingAgeMs()
   }
 
   releaseLocalMedia(): void {

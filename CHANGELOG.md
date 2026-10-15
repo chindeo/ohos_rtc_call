@@ -39,6 +39,7 @@
 - Bind side-call video tracks to session-specific renderers and limit live side previews to one by default, keeping additional video calls as placeholders.
 - Emit low-frequency per-video-peer RTC stats for negotiated codec, direction, resolution, FPS, frame count, bytes, and packet loss, with timers tied to peer teardown.
 - Enforce exact camera and sender frame-rate limits, recover a stalled native camera stream without rebuilding the call, and replace the local publish track once when native recovery is exhausted.
+- Wait for native capture to confirm it stopped before creating the next bedside video source, bounded by a default 1500 ms timeout, so an overlapping `CreateCaptureSession` cannot wedge `camera_service` while the previous session object is still alive.
 
 ## 0.1.4-rc3
 

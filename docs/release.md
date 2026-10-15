@@ -12,7 +12,13 @@
 
 ## 0.1.4-rc3 CameraKit 生命周期修复
 
-- 床旁 CameraKit 视频源在挂断和失败恢复时显式调用 native `VideoSource.release()`，等待采集线程和摄像头资源释放后再允许下一次创建。
+- 床旁 CameraKit 视频源在挂断和失败恢复时显式调用 native `VideoSource.release()`。
+- 下一次创建视频源前等待采集确认停止：失败恢复重建走 `releaseLocalVideoAsync()`，新通话建源走
+  `waitForLocalVideoCaptureQuiesced()`，超时上限 `RTC_VIDEO_CAPTURE_STOP_TIMEOUT_MS`（默认 1500 ms）。
+- 等待依赖 native 派发 `oncapturerstopped`；未派发时退化为有界延时，只降低重叠建源概率，不等于消除。
+  验收看日志 `video_capturer_stopped`（已确认停止）、`release_video wait result=timeout`（未确认）和
+  `local video create with unconfirmed previous capture`（未确认仍建源）。
+- 挂断路径 `closeSession()` 仍为同步接口，不在挂断当场等待，只在下一次创建前补齐。
 - 视频采集回调增加 generation 校验，旧通话迟到的 started/error 回调不能更新新通话状态。
 - 主机外部 NV21/UVC 视频源保留现有释放策略，不改变已经验证的 API23 采集、权限和 CameraKit 回退路径。
 

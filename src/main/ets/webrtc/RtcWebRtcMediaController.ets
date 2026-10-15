@@ -418,6 +418,16 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       throw new Error('PeerConnectionFactory unavailable')
     }
     if (role === RTC_WEBRTC_PEER_ROLE_PUBLISH) {
+      if (this.localVideoEnabled && session?.mode === RtcCallMode.VIDEO) {
+        // A previous call may still have an unconfirmed capture stop. Creating now is what
+        // re-enters CreateCaptureSession while the old session object lives and wedges
+        // camera_service, so give native one bounded window to confirm before creating.
+        const quiesced: string = await this.audioController.waitForLocalVideoCaptureQuiesced()
+        if (quiesced !== 'quiesced' && quiesced !== 'stopped') {
+          this.log('local video create with unconfirmed previous capture result=' + quiesced +
+            ' pendingAgeMs=' + this.audioController.localVideoCapturePendingAgeMs())
+        }
+      }
       this.prepareLocalMedia(this.localVideoEnabled && session?.mode === RtcCallMode.VIDEO)
       if (session) {
         this.emitMediaState(session)
@@ -866,7 +876,11 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     const previousTrack = this.audioController.getLocalVideoTrack()
     this.log('local video replace begin reason=' + reason + ' generation=' + generation)
     this.localVideoHasFrame = false
-    this.audioController.releaseLocalVideo()
+    // Do not create the replacement source until native capture reports the previous one stopped;
+    // an overlapping CreateCaptureSession is what wedges camera_service on the bedside boards.
+    const stopResult: string = await this.audioController.releaseLocalVideoAsync()
+    this.log('local video replace stopped reason=' + reason + ' releaseResult=' + stopResult +
+      ' generation=' + generation)
     if (this.closeAllInProgress || this.sessions.size === 0 || this.resourceGeneration !== generation) {
       this.log('local video replace cancelled reason=' + reason + ' generation=' + generation)
       return false
