@@ -174,6 +174,18 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 - 通话结束后恢复接听前音量。
 - WebRTC / SIP 协议切换和 runtime config refresh 不打断当前通话。
 
+### 外链铃声失败回落
+
+方案见 `docs/ringtone-url-fallback.md`。验收要覆盖"有公网"和"无公网"两类设备，只测一类不算过。
+
+- 无公网设备（如调试台 .93）收到来电时，应听到本地兜底铃声，日志出现 `ring_url_gate result=fallback reason=<io|timeout>`。
+- 有公网设备（如 .61）收到来电时，应只播外链铃声，**不得出现外链 + 本地双音**；日志只有 `result=play`，不应有 `result=fallback`。
+- 同一台无公网设备连续第二、第三次来电仍要能响，不得再出现 `5400102 current state is not idle, unsupport set url`（验证失败后确实复位回 idle）。
+- 外链配置下设备注册阶段仍应预热本地 wav；若日志出现 `ring_warm skipped reason=networkUrl` 说明回落会有冷启动延迟，属未达标。
+- 外链铃声日志里应能看到 `state=playing` 或带错误码的 `error`；"派发了、无报错、无声音"这种形态不允许再出现。
+- 服务端 `isPlayRingtone=0` 时仍然完全静音，回落不得绕过这个开关。
+- 未接入 `onOutcome` 回报的宿主（如尚未升级的主机）行为保持与本次改动前一致，不因为默认超时机制而被叠加铃声。
+
 ### 主机 / 床旁启动降级
 
 - 业务接口不可访问但已有缓存配置时，主机 / 床旁可进入主界面并保留通话能力。
