@@ -1,0 +1,6 @@
+{
+  "name": "libsherpa_onnx.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "Sherpa-onnx offline TTS native shim (Matcha VITS, armeabi-v7a soft-float)."
+}

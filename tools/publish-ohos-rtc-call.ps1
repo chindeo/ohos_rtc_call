@@ -239,7 +239,7 @@ $SensitivePatterns = @(
   "secret[_-]?key",
   "dgzyh\.server\.chindeo\.test",
   "@company/device_sdk",
-  '"file:(?!\./src/main/(?:libohos_webrtc|cpp/types/libcurl_http)")'
+  '"file:(?!\./src/main/(?:libohos_webrtc|cpp/types/libcurl_http|cpp/types/libsherpa_onnx)")'
 )
 
 $ScanFiles = Get-ChildItem -Path $PackageRoot -Recurse -File -Include *.ets,*.ts,*.json,*.json5,*.md,*.txt
@@ -253,7 +253,12 @@ foreach ($Pattern in $SensitivePatterns) {
 
 Push-Location $StageRoot
 try {
-  & tar -czf $HarPath package
+  $HarFileName = [System.IO.Path]::GetFileName($HarPath)
+  & tar.exe -czf $HarFileName package
+  if ($LASTEXITCODE -ne 0) {
+    throw "tar failed with exit code $LASTEXITCODE"
+  }
+  Move-Item -LiteralPath $HarFileName -Destination $HarPath -Force
 } finally {
   Pop-Location
 }
