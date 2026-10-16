@@ -2,6 +2,7 @@ import sherpa from 'libsherpa_onnx.so'
 import media from '@ohos.multimedia.media'
 import fs from '@ohos.file.fs'
 import common from '@ohos.app.ability.common'
+import { normalizeTtsText } from './RtcTtsText'
 
 export interface RtcTtsConfig {
   modelDir?: string
@@ -115,9 +116,31 @@ async function playWav(path: string): Promise<void> {
     } catch (_error) {
     }
   }
+  // AVPlayer 只能在 initialized 态 prepare、prepared 态 play，顺序写死，否则报
+  // "current state is not stopped or initialized, unsupport prepare operation"。
   await new Promise<void>((resolve, reject) => {
     player.on('stateChange', (state: string) => {
+      if (state === 'initialized') {
+        player.prepare().catch((err: Error) => {
+          finish()
+          reject(err)
+        })
+        return
+      }
+      if (state === 'prepared') {
+        player.play().catch((err: Error) => {
+          finish()
+          reject(err)
+        })
+        return
+      }
       if (state === 'completed') {
+        finish()
+        resolve()
+        return
+      }
+      // stop()/release() 之后不会再有 completed，必须在这里收尾，否则 speak() 永远挂着。
+      if (state === 'stopped' || state === 'idle') {
         finish()
         resolve()
       }
@@ -126,11 +149,7 @@ async function playWav(path: string): Promise<void> {
       finish()
       reject(err)
     })
-    player.url = `fd://${file.fd}`
-    player.prepare().catch((err: Error) => {
-      finish()
-      reject(err)
-    })
+    player.fdSrc = { fd: file.fd, length: fs.statSync(path).size }
   })
   if (activePlayer === player) {
     await stopActivePlayer()
@@ -146,6 +165,7 @@ export class RtcTtsController {
   private handle: number = 0
   private ready: Promise<void> | undefined = undefined
   private speaking: Promise<void> | undefined = undefined
+  private generation: number = 0
   private wavPath: string = ''
 
   init(ctx: common.Context, cfg: RtcTtsConfig = {}): Promise<void> {
@@ -180,10 +200,18 @@ export class RtcTtsController {
     if (!this.ready) {
       throw new Error('RtcTtsController: not initialized')
     }
+    const generation = this.generation
     const prev = this.speaking ?? Promise.resolve()
     this.speaking = prev.catch(() => undefined).then(async (): Promise<void> => {
+      // 合成要几秒，期间点"停止"必须真的不出声，所以每个检查点都比一次代次。
+      if (generation !== this.generation) {
+        return
+      }
       await this.ready
-      const generated = await sherpa.generateAsync(this.handle, text, 0, 1.0)
+      const generated = await sherpa.generateAsync(this.handle, normalizeTtsText(text), 0, 1.0)
+      if (generation !== this.generation) {
+        return
+      }
       if (!generated || generated.sampleRate === 0 || generated.samples.length === 0) {
         return
       }
@@ -194,10 +222,12 @@ export class RtcTtsController {
   }
 
   async stop(): Promise<void> {
+    this.generation++
     await stopActivePlayer()
   }
 
   async release(): Promise<void> {
+    this.generation++
     await stopActivePlayer()
     if (this.handle !== 0) {
       sherpa.destroy(this.handle)
