@@ -452,6 +452,12 @@ export class RtcWebRtcCallController {
       return
     }
     if (message.eventName === 'c__broadcast') {
+      // 只打结构不打原文：这条广播里带病人姓名和号码，日志要能对着外场看。
+      const raw = message.data || ''
+      this.listener.onLog?.(`rtc_broadcast_raw len=${raw.length}` +
+        ` hasStatus=${raw.includes('"status"') ? 'true' : 'false'}` +
+        ` hasUid=${raw.includes('"uid"') ? 'true' : 'false'}` +
+        ` wrapped=${raw.startsWith('{"data"') ? 'true' : 'false'}`)
       const holdChanges = this.parseHoldSwitchNotice(message.data)
       if (holdChanges.length > 0) {
         let handled = false
