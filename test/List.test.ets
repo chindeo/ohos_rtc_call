@@ -20,6 +20,7 @@ import rtcRingtoneControllerTest from './RtcRingtoneController.test'
 import rtcRuntimeConfigControllerTest from './RtcRuntimeConfigController.test'
 import rtcStartupFallbackControllerTest from './RtcStartupFallbackController.test'
 import rtcStartupDataCacheTest from './RtcStartupDataCache.test'
+import rtcTtsTextTest from './RtcTtsText.test'
 import rtcWebRtcCallControllerTest from './RtcWebRtcCallController.test'
 import rtcWebRtcReconnectPolicyTest from './RtcWebRtcReconnectPolicy.test'
 import rtcWebRtcSignalSessionTest from './RtcWebRtcSignalSession.test'
@@ -51,6 +52,7 @@ export default function testsuite() {
   rtcRuntimeConfigControllerTest()
   rtcStartupFallbackControllerTest()
   rtcStartupDataCacheTest()
+  rtcTtsTextTest()
   rtcWebRtcCallControllerTest()
   rtcWebRtcReconnectPolicyTest()
   rtcWebRtcSignalSessionTest()

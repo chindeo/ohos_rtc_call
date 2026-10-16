@@ -1,7 +1,11 @@
 import sherpa from 'libsherpa_onnx.so'
 import media from '@ohos.multimedia.media'
 import fs from '@ohos.file.fs'
+import hilog from '@ohos.hilog'
 import common from '@ohos.app.ability.common'
+import { normalizeTtsText } from './RtcTtsText'
+
+const TAG = 'RtcTts'
 
 export interface RtcTtsConfig {
   modelDir?: string
@@ -19,7 +23,8 @@ const DEFAULT_ACOUSTIC = 'model-steps-3.onnx'
 const DEFAULT_VOCODER = 'vocos-22khz-univ.onnx'
 const DEFAULT_LEXICON = 'lexicon.txt'
 const DEFAULT_TOKENS = 'tokens.txt'
-// 数字/日期/电话的读法交给 sherpa 的文本规整，不在端上自己拼汉字。
+// 床号、体温这类短数字交给 sherpa 的文本规整；时刻和编号要先在端上转成汉字，
+// 因为 number.fst 排在最前会把所有数字串按基数读掉，date/phone 两条永远轮不到。
 // 注意开关名：TTS 用的是 rule_fsts，ASR 才叫 rule-fsts，传错会直接 exit(-1)。
 const RULE_FSTS = ['number.fst', 'date.fst', 'phone.fst']
 const DEFAULT_NOISE_SCALE = 0.33
@@ -113,64 +118,99 @@ async function stopActivePlayer(): Promise<void> {
   }
 }
 
-async function playWav(path: string): Promise<void> {
+// 返回 false 只代表看门狗到点（渲染器没起来），需要重试；正常播完或被主动停止都返回 true。
+async function playOnce(path: string, durationMs: number): Promise<boolean> {
   await stopActivePlayer()
   const file = fs.openSync(path, fs.OpenMode.READ_ONLY)
   const player = await media.createAVPlayer()
   activePlayer = player
   let settled = false
+  let timedOut = false
+  let watchdog = 0
   const finish = (): void => {
     if (settled) {
       return
     }
     settled = true
+    if (watchdog !== 0) {
+      clearTimeout(watchdog)
+      watchdog = 0
+    }
     try {
       fs.closeSync(file)
     } catch (_error) {
     }
   }
-  // AVPlayer 只能在 initialized 态 prepare、prepared 态 play，顺序写死，否则报
-  // "current state is not stopped or initialized, unsupport prepare operation"。
-  await new Promise<void>((resolve, reject) => {
-    player.on('stateChange', (state: string) => {
-      if (state === 'initialized') {
-        player.prepare().catch((err: Error) => {
-          finish()
-          reject(err)
-        })
-        return
-      }
-      if (state === 'prepared') {
-        player.play().catch((err: Error) => {
-          finish()
-          reject(err)
-        })
-        return
-      }
-      if (state === 'completed') {
-        finish()
-        resolve()
-        return
-      }
-      // stop()/release() 之后不会再有 completed，必须在这里收尾，否则 speak() 永远挂着。
-      if (state === 'stopped' || state === 'idle') {
+  try {
+    // AVPlayer 只能在 initialized 态 prepare、prepared 态 play，顺序写死，否则报
+    // "current state is not stopped or initialized, unsupport prepare operation"。
+    await new Promise<void>((resolve, reject) => {
+      const done = (): void => {
         finish()
         resolve()
       }
+      // 这块板子的渲染器偶发起不来（HDI 报 AudioRenderProxyStart -1），播放器会停在 playing
+      // 一百多秒才自己 drain 出 completed。按音频时长兜底，不能让一条把整个播报挂死。
+      watchdog = setTimeout((): void => {
+        hilog.warn(0, TAG, `playWav watchdog fired, durationMs=${durationMs}, player stuck`)
+        timedOut = true
+        done()
+      }, Math.max(3000, durationMs + 4000))
+      player.on('stateChange', (state: string) => {
+        if (settled) {
+          return
+        }
+        if (state === 'initialized') {
+          player.prepare().catch((err: Error) => {
+            finish()
+            reject(err)
+          })
+          return
+        }
+        if (state === 'prepared') {
+          player.play().catch((err: Error) => {
+            finish()
+            reject(err)
+          })
+          return
+        }
+        if (state === 'completed') {
+          done()
+          return
+        }
+        // stop()/release() 之后不会再有 completed，必须在这里收尾，否则 speak() 永远挂着。
+        if (state === 'stopped' || state === 'idle') {
+          done()
+        }
+      })
+      player.on('error', (err: Error) => {
+        finish()
+        reject(err)
+      })
+      player.fdSrc = { fd: file.fd, length: fs.statSync(path).size }
     })
-    player.on('error', (err: Error) => {
-      finish()
-      reject(err)
-    })
-    player.fdSrc = { fd: file.fd, length: fs.statSync(path).size }
-  })
-  if (activePlayer === player) {
-    await stopActivePlayer()
-  } else {
-    try {
-      await player.release()
-    } catch (_error) {
+  } finally {
+    finish()
+    if (activePlayer === player) {
+      await stopActivePlayer()
+    } else {
+      try {
+        await player.release()
+      } catch (_error) {
+      }
     }
+  }
+  return !timedOut
+}
+
+const PLAY_ATTEMPTS = 2
+
+async function playWav(path: string, durationMs: number): Promise<void> {
+  for (let attempt = 1; attempt <= PLAY_ATTEMPTS; attempt++) {
+    if (await playOnce(path, durationMs) || attempt === PLAY_ATTEMPTS) {
+      return
+    }
+    hilog.warn(0, TAG, `playWav retry, attempt=${attempt + 1}`)
   }
 }
 
@@ -214,15 +254,13 @@ export class RtcTtsController {
     if (!this.ready) {
       throw new Error('RtcTtsController: not initialized')
     }
-    const generation = this.generation
+    // 多条播报排队念完，不互相打断：这里不能先 stop，否则新呼叫会把上一条的播报掐掉。
     const prev = this.speaking ?? Promise.resolve()
     this.speaking = prev.catch(() => undefined).then(async (): Promise<void> => {
-      // 合成要几秒，期间点"停止"必须真的不出声，所以每个检查点都比一次代次。
-      if (generation !== this.generation) {
-        return
-      }
       await this.ready
-      const generated = await sherpa.generateAsync(this.handle, text, 0, 1.0)
+      // 代次只在真正轮到这条时取：stop() 只掐正在播的那一条，排在后面的照常播。
+      const generation = this.generation
+      const generated = await sherpa.generateAsync(this.handle, normalizeTtsText(text), 0, 1.0)
       if (generation !== this.generation) {
         return
       }
@@ -230,7 +268,7 @@ export class RtcTtsController {
         return
       }
       writeWav(this.wavPath, generated.samples, generated.sampleRate)
-      await playWav(this.wavPath)
+      await playWav(this.wavPath, generated.samples.length / generated.sampleRate * 1000)
     })
     return this.speaking
   }
