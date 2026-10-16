@@ -2,7 +2,6 @@ import sherpa from 'libsherpa_onnx.so'
 import media from '@ohos.multimedia.media'
 import fs from '@ohos.file.fs'
 import common from '@ohos.app.ability.common'
-import { normalizeTtsText } from './RtcTtsText'
 
 export interface RtcTtsConfig {
   modelDir?: string
@@ -20,6 +19,9 @@ const DEFAULT_ACOUSTIC = 'model-steps-3.onnx'
 const DEFAULT_VOCODER = 'vocos-22khz-univ.onnx'
 const DEFAULT_LEXICON = 'lexicon.txt'
 const DEFAULT_TOKENS = 'tokens.txt'
+// 数字/日期/电话的读法交给 sherpa 的文本规整，不在端上自己拼汉字。
+// 注意开关名：TTS 用的是 rule_fsts，ASR 才叫 rule-fsts，传错会直接 exit(-1)。
+const RULE_FSTS = ['number.fst', 'date.fst', 'phone.fst']
 const DEFAULT_NOISE_SCALE = 0.33
 const DEFAULT_LENGTH_SCALE = 1.0
 const DEFAULT_NUM_THREADS = 4
@@ -31,18 +33,29 @@ async function ensureModelFiles(ctx: common.Context, modelDir: string): Promise<
   if (!fs.accessSync(base)) {
     fs.mkdirSync(base, true)
   }
-  const names = [DEFAULT_ACOUSTIC, DEFAULT_VOCODER, DEFAULT_LEXICON, DEFAULT_TOKENS]
+  const names = [DEFAULT_ACOUSTIC, DEFAULT_VOCODER, DEFAULT_LEXICON, DEFAULT_TOKENS].concat(RULE_FSTS)
   for (const name of names) {
     const dest = `${base}/${name}`
     if (fs.accessSync(dest)) {
       continue
     }
-    const content = await ctx.resourceManager.getRawFileContent(`${modelDir}/${name}`)
+    // 没打进包的老宿主工程可以不带 fst，缺文件只影响数字读法，不能让引擎起不来。
+    let content: Uint8Array | undefined = undefined
+    try {
+      content = await ctx.resourceManager.getRawFileContent(`${modelDir}/${name}`)
+    } catch (_error) {
+      continue
+    }
     const file = fs.openSync(dest, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
     fs.writeSync(file.fd, content.buffer as ArrayBuffer)
     fs.closeSync(file)
   }
   return base
+}
+
+function ruleFstsArg(base: string): string {
+  const present = RULE_FSTS.filter((name: string): boolean => fs.accessSync(`${base}/${name}`))
+  return present.map((name: string): string => `${base}/${name}`).join(',')
 }
 
 function writeWav(path: string, samples: Float32Array, sampleRate: number): void {
@@ -181,6 +194,7 @@ export class RtcTtsController {
         vocoder: cfg.vocoder ?? `${base}/${DEFAULT_VOCODER}`,
         lexicon: cfg.lexicon ?? `${base}/${DEFAULT_LEXICON}`,
         tokens: cfg.tokens ?? `${base}/${DEFAULT_TOKENS}`,
+        ruleFsts: ruleFstsArg(base),
         noiseScale: cfg.noiseScale ?? DEFAULT_NOISE_SCALE,
         lengthScale: cfg.lengthScale ?? DEFAULT_LENGTH_SCALE,
         numThreads: cfg.numThreads ?? DEFAULT_NUM_THREADS
@@ -208,7 +222,7 @@ export class RtcTtsController {
         return
       }
       await this.ready
-      const generated = await sherpa.generateAsync(this.handle, normalizeTtsText(text), 0, 1.0)
+      const generated = await sherpa.generateAsync(this.handle, text, 0, 1.0)
       if (generation !== this.generation) {
         return
       }

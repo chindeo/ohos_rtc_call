@@ -6,6 +6,7 @@ export interface SherpaTtsConfig {
   noiseScale?: number
   lengthScale?: number
   numThreads?: number
+  ruleFsts?: string
 }
 
 export interface SherpaTtsAudio {
