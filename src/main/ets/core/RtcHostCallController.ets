@@ -35,6 +35,7 @@ import {
 import { RtcWebRtcVideoSourceOptions } from '../webrtc/RtcWebRtcConfig'
 import { RtcCallStatusNotifier } from '../model/RtcCallStatusMessage'
 import { RtcWebRtcReconnectOptions } from '../signaling/RtcWebRtcReconnectPolicy'
+import { RtcBroadcastHistory } from '../signaling/RtcBroadcastHistory'
 
 export interface RtcHostCallControllerOptions {
   serverUrl: string
@@ -49,6 +50,8 @@ export interface RtcHostCallControllerOptions {
   onExternalVideoCaptureStateChange?: (active: boolean) => void
   onRegistered?: () => void
   onIncoming?: (session: RtcWebRtcCallSessionInfo) => void
+  onAutoAnswerNotice?: (session: RtcWebRtcCallSessionInfo) => void
+  onCallHistory?: (history: RtcBroadcastHistory) => void
   onConnected?: (sessionKey: string) => void
   onEnded?: (sessionKey: string, all: boolean, remainingCount?: number) => void
   onHold?: (session: RtcCallSession) => void | Promise<void>
@@ -226,6 +229,9 @@ export class RtcHostCallController {
       },
       onHoldChange: (sessionKey: string, isHold: boolean) => {
         this.handleRemoteHoldChange(sessionKey, isHold)
+      },
+      onCallHistory: (history: RtcBroadcastHistory) => {
+        this.options.onCallHistory?.(history)
       },
       onRegistrationStateChange: (registered, state) => {
         this.service.setRegistrationState(registered, registered ? '' : state.lastError)
@@ -468,6 +474,11 @@ export class RtcHostCallController {
     }
     this.multiCallController.receiveIncomingCall(incoming).then(() => {
       this.options.onIncoming?.(session)
+      // 对齐安卓 AutoAnswerUtils.autoAnswer：来电界面出现即播报提示并停铃，
+      // 实际接听执行点仍留在 onPublishReady，不改动接听判定。
+      if (session.incoming && this.options.autoAnswer) {
+        this.options.onAutoAnswerNotice?.(session)
+      }
     })
   }
 

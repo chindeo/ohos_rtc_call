@@ -17,6 +17,11 @@ import {
   RtcWebRtcSignalState
 } from '../signaling/RtcWebRtcSignalSession'
 import {
+  isRtcBroadcastHistoryTimeout,
+  parseRtcBroadcastHistory,
+  RtcBroadcastHistory
+} from '../signaling/RtcBroadcastHistory'
+import {
   RTC_WEBRTC_PEER_ROLE_PUBLISH,
   RtcWebRtcRtcScope,
   RtcWebRtcSignalContext,
@@ -50,6 +55,7 @@ export interface RtcWebRtcCallControllerListener {
   onHangup?: (sessionKey: string, all: boolean) => void
   onHoldChange?: (sessionKey: string, isHold: boolean) => void
   onBroadcast?: (message: RtcWebRtcSignalMessage) => void
+  onCallHistory?: (history: RtcBroadcastHistory) => void
   onRegistrationStateChange?: (registered: boolean, state: RtcWebRtcSignalState) => void
   onError?: (message: string) => void
   onLog?: (message: string) => void
@@ -459,6 +465,20 @@ export class RtcWebRtcCallController {
           }
         })
         if (handled) {
+          return
+        }
+      } else {
+        // 安卓 BroadcastConst.isOperationType 口径：带 status 的广播是通话记录，
+        // 无人接听等业务语义由宿主判定，这里只负责识别和上抛。
+        const history = parseRtcBroadcastHistory(message.data)
+        if (history) {
+          // hangUpType 的原值必须先取证：安卓是用网关码表换成中文再播报的，
+          // 鸿蒙还没有这张表，别凭猜映射"对方拒接"这类文本。
+          this.listener.onLog?.(`rtc_broadcast_history status=${history.status || ''}` +
+            ` timeout=${isRtcBroadcastHistoryTimeout(history) ? 'true' : 'false'}` +
+            ` hangUpType=${history.hang_up_type || ''}` +
+            ` autoAnswer=${history.is_auto_answer === true ? 'true' : 'false'}`)
+          this.listener.onCallHistory?.(history)
           return
         }
       }
