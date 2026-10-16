@@ -29,12 +29,24 @@ export interface RtcRingtonePolicy {
 
 const DEFAULT_URL_FALLBACK_TIMEOUT_MS = 1200
 
+/**
+ * 一次外链派发的回落上下文。必须挂在实例字段上：驱动的 error 回调几乎总比
+ * playUrl() 的 promise 晚到，用局部变量记回落意图会在外层返回后永远无人读取。
+ */
+interface RtcUrlFallbackCall {
+  settled: boolean
+  returned: boolean
+  timeoutId: number
+  pendingReason: string
+}
+
 export class RtcRingtoneController {
   private driver?: RtcRingtoneDriver
   private playing: boolean = false
   private creating: boolean = false
   private stopping: boolean = false
   private activeChannel: RtcRingtoneChannel | undefined = undefined
+  private urlCall?: RtcUrlFallbackCall
   private logger?: (message: string) => void
   private policy: RtcRingtonePolicy = {
     webrtcEnabled: true,
@@ -106,32 +118,29 @@ export class RtcRingtoneController {
       onResult?: (result: RtcRingtoneUrlResult) => void
     ) => Promise<boolean>
     const fallbackEnabled = this.policy.urlFallbackEnabled === true
+    const call: RtcUrlFallbackCall = { settled: false, returned: false, timeoutId: -1, pendingReason: '' }
     this.creating = true
     this.stopping = false
-    let settled = false
-    let timeoutId = -1
-    let pendingFallback = ''
+    this.urlCall = fallbackEnabled ? call : undefined
     const onResult = (result: RtcRingtoneUrlResult): void => {
-      if (settled || this.stopping) {
+      if (call.settled || this.stopping || this.urlCall !== call) {
         return
       }
       if (result === RtcRingtoneUrlResult.PLAYING) {
-        settled = true
-        if (timeoutId >= 0) {
-          clearTimeout(timeoutId)
-          timeoutId = -1
-        }
+        call.settled = true
+        this.clearUrlFallbackTimer(call)
         this.log(`ring_url_gate result=started channel=${channel}`)
         return
       }
-      // error / idle 都说明外链没出声；还在 creating 里就先记下，
-      // 等 finally 之后再做回落，否则会被自己的 busy 闸门挡掉。
-      settled = true
-      if (timeoutId >= 0) {
-        clearTimeout(timeoutId)
-        timeoutId = -1
+      // error / idle 都说明外链没出声。
+      call.settled = true
+      this.clearUrlFallbackTimer(call)
+      if (call.returned) {
+        // 外层 await 已经返回，没人会再读挂起标记，就地回落。
+        this.runFallback(driver, channel, 'io')
+        return
       }
-      pendingFallback = 'io'
+      call.pendingReason = 'io'
     }
     try {
       const started = await playUrl.call(driver, url, fallbackEnabled ? onResult : undefined)
@@ -143,28 +152,49 @@ export class RtcRingtoneController {
       this.activeChannel = started ? channel : undefined
       if (!started) {
         this.log(`ring_url_gate result=driverRefused channel=${channel}`)
-        if (fallbackEnabled && !settled) {
-          settled = true
-          pendingFallback = 'refused'
+        if (fallbackEnabled && !call.settled) {
+          call.settled = true
+          call.pendingReason = 'refused'
         }
-      } else if (fallbackEnabled && !settled) {
+      } else if (fallbackEnabled && !call.settled) {
         // 外链要等下载，串行等 playing 会把起音推到几秒后；
         // 所以只开计时器，到期还没出声就回落已预热的本地铃声。
-        timeoutId = setTimeout((): void => {
-          timeoutId = -1
-          if (settled || this.stopping) {
+        call.timeoutId = setTimeout((): void => {
+          call.timeoutId = -1
+          if (call.settled || this.stopping) {
             return
           }
-          settled = true
+          call.settled = true
           this.runFallback(driver, channel, 'timeout')
         }, this.urlFallbackTimeoutMs)
       }
     } finally {
       this.creating = false
+      call.returned = true
     }
-    if (pendingFallback) {
-      this.runFallback(driver, channel, pendingFallback)
+    if (call.pendingReason && this.urlCall === call) {
+      const pending = call.pendingReason
+      call.pendingReason = ''
+      this.runFallback(driver, channel, pending)
     }
+  }
+
+  private clearUrlFallbackTimer(call: RtcUrlFallbackCall): void {
+    if (call.timeoutId >= 0) {
+      clearTimeout(call.timeoutId)
+      call.timeoutId = -1
+    }
+  }
+
+  private cancelUrlCall(): void {
+    const call = this.urlCall
+    if (!call) {
+      return
+    }
+    call.settled = true
+    call.pendingReason = ''
+    this.clearUrlFallbackTimer(call)
+    this.urlCall = undefined
   }
 
   private async startLocal(driver: RtcRingtoneDriver, channel: RtcRingtoneChannel): Promise<void> {
@@ -187,6 +217,7 @@ export class RtcRingtoneController {
   }
 
   private runFallback(driver: RtcRingtoneDriver, channel: RtcRingtoneChannel, reason: string): Promise<void> {
+    this.cancelUrlCall()
     this.log(`ring_url_gate result=fallback reason=${reason} channel=${channel}`)
     return this.stopUrlAndPlayLocal(driver, channel)
   }
@@ -204,6 +235,8 @@ export class RtcRingtoneController {
   }
 
   async stop(): Promise<void> {
+    // 挂断后驱动的 error/idle 回调还会晚到，取消上下文才不会把本地铃声重新拉起来。
+    this.cancelUrlCall()
     if (!this.driver || (!this.playing && !this.creating)) {
       this.playing = false
       this.activeChannel = undefined

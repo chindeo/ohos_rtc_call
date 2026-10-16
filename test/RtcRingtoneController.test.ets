@@ -218,5 +218,18 @@ export default function rtcRingtoneControllerTest() {
       expect(logs.some((m: string) => m === 'ring_url_gate result=fallback reason=refused channel=webrtc'))
         .assertEqual(true)
     })
+
+    it('keeps a late idle report after stop from ringing again', 0, async () => {
+      const logs: string[] = []
+      const driver = new ReportingDriver(RtcRingtoneUrlResult.IDLE)
+      const controller = controllerWithLogger(logs)
+      controller.configurePolicy({ externalUrlEnabled: true, urlFallbackEnabled: true, urlFallbackTimeoutMs: 400 })
+      controller.configureDriver(driver)
+      await controller.playUrl('https://host/ring.mp3', RtcRingtoneChannel.WEBRTC)
+      await controller.stop()
+      await delay(120)
+      expect(logs.some((m: string) => m.indexOf('result=fallback') >= 0)).assertEqual(false)
+      expect(driver.incomingCalls).assertEqual(0)
+    })
   })
 }

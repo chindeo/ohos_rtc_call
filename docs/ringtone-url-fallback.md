@@ -29,8 +29,14 @@
 ## 驱动契约
 
 - `playUrl?(url, onOutcome?)`：`onOutcome` 用于回报真实播放结果，取值 `playing` / `error` / `idle`。不传即维持旧行为。
-- 宿主驱动责任：外链播放器钉 `RINGTONE` usage、`loop = true`、`stateChange` 与 `error` 带码打日志、失败后 `reset` 回 idle。
+- 宿主驱动责任：外链播放器钉 `RINGTONE` usage（设置时机为设 url → `initialized` 回调里设 renderer → `prepare`，否则 `5400102`）、`loop = true`、`stateChange` 与 `error` 带码打日志、失败后 `reset` 回 idle、并在 `onOutcome` 里把结果回报给控制器（控制器不靠"设完 url"判定出声）。
 - 宿主预热责任：`music` 是外链时也要预热本地兜底 wav，否则回落会有冷启动延迟。
+
+**回落意图必须挂在实例字段上，不能在 `playUrl()` 返回后只清计时器。** `AVPlayer` 的 IO 失败天然是异步晚到的：驱动的 `playUrl()` 先 `return true`，几十毫秒后 `on('error')` 才回调。若回落标记只是外层函数的局部变量，外层已经走完 `if (pendingFallback)` 判空并返回，晚到的回报只会把 `settled` 置真、清掉计时器，然后把值写进一个再也没人读的变量——结果既没有 `result=fallback`，也没有本地铃声，完全静音，"给无公网设备兜底"这个特性在真实时序下等于没实现。现在上下文 `RtcUrlFallbackCall` 挂在实例字段上，`onResult` 发现外层已返回（`returned`）就地触发回落；`stop()` 会取消上下文，避免挂断后晚到的 `idle` 把铃声重新拉起来。
+
+**`audioRendererInfo` 的设置时机是驱动侧硬性要求：设 url → 在 `initialized` 回调里设 renderer → 再 `prepare`。** 顺序错了宿主侧会直接报 `5400102`，两端都会复现静音。公共包不碰播放器，所以这条只作为契约写在这里，宿主驱动必须遵守。
+
+已知边界（不猜、留取证）：床旁本地常驻播放器在 `createAVPlayer()` 之后、赋 `fdSrc` 之前设 `audioRendererInfo`，在 .99/.93 真机上铃声确实出声；主机报告的是外链播放器在 idle 设报 `5400102`。两者不在同一条通路上，本仓库没法复现主机的外链设备，因此外链分支按上面的 `initialized` 顺序写死，本地常驻分支保持已验证顺序不动，等主机给出具体设备/API 级别再统一。
 
 ## 日志约定
 
