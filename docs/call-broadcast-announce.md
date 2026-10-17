@@ -89,6 +89,25 @@
 安卓 call-lib 根本不念"正在呼叫"，抢占不是经过验证的产品口径）；每条 CALL/CRASH 消息都念，不绑弹窗生命周期。
 `stop()` 只掐正在播的那一条，排队的照常播。
 
+## 来电是否响铃：网关 muteRingtone（2026-10-16 与服务端定稿）
+
+响铃和本机播报同时出声很吵，产品口径改成默认只播报不响铃，由网关开关控制。
+
+- 字段：`muteRingtone: boolean`，在 WS 注册成功响应 `eventName="c__register"`、`status=200` 的 `data` 里，
+  与 `serveNumber` / `autoAnswer` / `enableMulti` 同层。`true` = 只播报不响铃；**字段缺省 = 响铃**（老网关、老客户端不受影响）。
+- 生效时机：注册时下发，改配置后要设备重连/重注册才拿到新值，客户端不需要额外拉取接口。
+- 优先级：只有病区一层 + 内置默认；病区队列不存在时按"只播报"。紧急呼叫本期不豁免，与普呼同一字段。
+- 落点：`RtcServerInfo.muteRingtone` → `RtcHostCallController.options.onRegistered(server)` →
+  床旁/主机各自的 `RtcCallHost` 存 `muteIncomingRingtone`，在 `onIncoming` 里和原有 `isPlayRingtone` 门控并列决定是否 `playIncomingRingtone`。
+  床旁同时在 mute 时跳过铃声预热。
+- 日志锚点：两端都打 `rtc_ring muteRingtone=<bool>`（TAG `RtcCallHost`），注册后立刻能看出拿到的值。
+
+### 手工验收点
+
+1. 后台把科室"来电响铃"关掉 → 设备重注册 → 日志 `rtc_ring muteRingtone=true`，来电只有播报没有铃声，接听/挂断流程不受影响。
+2. 后台打开响铃（或网关未带该字段）→ 日志 `muteRingtone=false`，铃声行为与改动前一致。
+3. 静音病区里播报失败时现场无任何提示，这是已知风险（服务端本期不豁免紧急呼叫），播报失败必须有日志。
+
 ## 手工验收点
 
 1. 床旁开启自动接听、被叫：来电界面出现即听到"为您自动接听"，铃声立刻停止，通话仍能正常建立。

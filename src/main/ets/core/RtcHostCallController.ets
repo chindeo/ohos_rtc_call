@@ -36,6 +36,7 @@ import { RtcWebRtcVideoSourceOptions } from '../webrtc/RtcWebRtcConfig'
 import { RtcCallStatusNotifier } from '../model/RtcCallStatusMessage'
 import { RtcWebRtcReconnectOptions } from '../signaling/RtcWebRtcReconnectPolicy'
 import { RtcBroadcastHistory } from '../signaling/RtcBroadcastHistory'
+import { RtcServerInfo } from '../model/RtcSignalTypes'
 
 export interface RtcHostCallControllerOptions {
   serverUrl: string
@@ -48,7 +49,7 @@ export interface RtcHostCallControllerOptions {
   screenAnswerVolumePercent?: number
   handsetAnswerVolumePercent?: number
   onExternalVideoCaptureStateChange?: (active: boolean) => void
-  onRegistered?: () => void
+  onRegistered?: (server: RtcServerInfo) => void
   onIncoming?: (session: RtcWebRtcCallSessionInfo) => void
   onAutoAnswerNotice?: (session: RtcWebRtcCallSessionInfo) => void
   onCallHistory?: (history: RtcBroadcastHistory) => void
@@ -202,10 +203,10 @@ export class RtcHostCallController {
       videoReady: false
     })
     this.webRtcController = new RtcWebRtcCallController(this.mediaController, {
-      onRegistered: () => {
+      onRegistered: (server: RtcServerInfo) => {
         this.service.setRegistrationState(true)
         this.options.onLog?.('rtc host registered')
-        this.options.onRegistered?.()
+        this.options.onRegistered?.(server)
       },
       onIncoming: (session: RtcWebRtcCallSessionInfo) => {
         this.handleIncoming(session)

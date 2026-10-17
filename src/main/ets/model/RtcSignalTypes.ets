@@ -42,6 +42,8 @@ export interface RtcServerInfo {
   serveDisplayName: string
   iceConf?: string
   i10n?: string
+  // 网关注册响应下发：true 表示该病区来电只播报不响铃。字段缺省表示要响铃。
+  muteRingtone?: boolean
 }
 
 export interface RtcApplySignalData {
