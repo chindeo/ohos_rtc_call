@@ -94,18 +94,28 @@
 响铃和本机播报同时出声很吵，产品口径改成默认只播报不响铃，由网关开关控制。
 
 - 字段：`muteRingtone: boolean`，在 WS 注册成功响应 `eventName="c__register"`、`status=200` 的 `data` 里，
-  与 `serveNumber` / `autoAnswer` / `enableMulti` 同层。`true` = 只播报不响铃；**字段缺省 = 响铃**（老网关、老客户端不受影响）。
+  与 `serveNumber` / `autoAnswer` / `enableMulti` 同层。`true` = 只播报不响铃。
+- **客户端默认口径（2026-10-17 用户定）：默认不响铃**。端上按 `server.muteRingtone !== false` 判定：
+  只有显式 `false` 才恢复响铃，字段缺省一律按静音处理。
+- **服务端配套义务（2026-10-17 定稿）**：既然缺省=静音，"开启响铃"就必须显式下发 `"muteRingtone":false`，
+  不能靠 `omitempty` 把键省掉——否则开关变成单向（能静音、再也打不响）。
+- 已知服务端根因（服务端侧 2026-10-17 定位）：设备注册的 200 响应由 `ServeWs`（`websocket_client.go`）构造，
+  原先赋值放在了 `instance_ws.go` 的转发路径上，serve 路径从未赋值 → 键恒缺省。已移进 `ServeWs` 并加守卫测试。
 - 生效时机：注册时下发，改配置后要设备重连/重注册才拿到新值，客户端不需要额外拉取接口。
 - 优先级：只有病区一层 + 内置默认；病区队列不存在时按"只播报"。紧急呼叫本期不豁免，与普呼同一字段。
 - 落点：`RtcServerInfo.muteRingtone` → `RtcHostCallController.options.onRegistered(server)` →
   床旁/主机各自的 `RtcCallHost` 存 `muteIncomingRingtone`，在 `onIncoming` 里和原有 `isPlayRingtone` 门控并列决定是否 `playIncomingRingtone`。
   床旁同时在 mute 时跳过铃声预热。
-- 日志锚点：两端都打 `rtc_ring muteRingtone=<bool>`（TAG `RtcCallHost`），注册后立刻能看出拿到的值。
+- 取值路径（已逐段核对）：`status===200` 才做 `JSON.parse(message.data) as RtcServerInfo`（`RtcWebRtcSignalSession.applyRegisterMessage`），
+  经 `RtcWebRtcCallController.onRegister` → `RtcHostCallController.onRegistered` 透传给宿主。字段按**布尔**下发；
+  下发成字符串 `"true"` 时当前写法仍会静音，但任何改成 `=== true` 判定的版本都会失效。
+- 日志锚点：两端都打 `rtc_ring raw=<下发原值> muted=<端上判定>`（TAG `RtcCallHost`）。
+  `raw` 用 `String()` 打，能区分 `undefined`（服务端没带字段）和 `false`（显式响铃）。
 
 ### 手工验收点
 
-1. 后台把科室"来电响铃"关掉 → 设备重注册 → 日志 `rtc_ring muteRingtone=true`，来电只有播报没有铃声，接听/挂断流程不受影响。
-2. 后台打开响铃（或网关未带该字段）→ 日志 `muteRingtone=false`，铃声行为与改动前一致。
+1. 后台"来电响铃"关闭 → 日志 `rtc_ring raw=true muted=true`；网关尚未下发该字段时同样是 `raw=undefined muted=true`，两种都只播报不响铃，接听/挂断流程不受影响。
+2. 后台打开响铃且网关显式下发 `false` → 日志 `raw=false muted=false`，铃声恢复。**若 `raw=undefined` 说明服务端还在用 omitempty 省键，响铃开关打不开。**
 3. 静音病区里播报失败时现场无任何提示，这是已知风险（服务端本期不豁免紧急呼叫），播报失败必须有日志。
 
 ## 手工验收点
