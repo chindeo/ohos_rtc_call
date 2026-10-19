@@ -1,0 +1,4 @@
+# 本机 core.autocrlf=true，checkout 时文本会被换成 CRLF。
+# 交叉编译脚本要在 WSL/Linux 下直接 bash 跑，CRLF 会让 bash 在 shebang 处就失败，
+# 所以只把 shell 脚本钉成 LF（其它文件维持仓库现状，不改动 checkout 行为）。
+*.sh text eol=lf
