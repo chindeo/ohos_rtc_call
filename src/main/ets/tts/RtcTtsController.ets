@@ -7,6 +7,17 @@ import { normalizeTtsText } from './RtcTtsText'
 
 const TAG = 'RtcTts'
 
+/**
+ * 播报取证锚点。只加日志不改行为：没有这几条，"没出声"、"播了但听不见"和"队列卡住"
+ * 在日志上是同一个样子，验收清单里 RTF 和长时间不失效两项也无从判定。
+ */
+function perf(message: string): void {
+  hilog.info(0, TAG, `rtc_tts_perf ${message}`)
+}
+
+let speakSeq: number = 0
+let queuedCount: number = 0
+
 export interface RtcTtsConfig {
   modelDir?: string
   acousticModel?: string
@@ -205,13 +216,15 @@ async function playOnce(path: string, durationMs: number): Promise<boolean> {
 
 const PLAY_ATTEMPTS = 2
 
-async function playWav(path: string, durationMs: number): Promise<void> {
+// 返回实际用的尝试次数：>1 就说明这块板子的渲染器起不来过一次。
+async function playWav(path: string, durationMs: number): Promise<number> {
   for (let attempt = 1; attempt <= PLAY_ATTEMPTS; attempt++) {
     if (await playOnce(path, durationMs) || attempt === PLAY_ATTEMPTS) {
-      return
+      return attempt
     }
     hilog.warn(0, TAG, `playWav retry, attempt=${attempt + 1}`)
   }
+  return PLAY_ATTEMPTS
 }
 
 export class RtcTtsController {
@@ -226,23 +239,30 @@ export class RtcTtsController {
       return this.ready
     }
     const modelDir = cfg.modelDir ?? DEFAULT_MODEL_DIR
+    const threads = cfg.numThreads ?? DEFAULT_NUM_THREADS
+    const noiseScale = cfg.noiseScale ?? DEFAULT_NOISE_SCALE
     this.wavPath = `${ctx.filesDir}/tts-out.wav`
     this.ready = (async (): Promise<void> => {
+      const startedAt = Date.now()
       const base = await ensureModelFiles(ctx, modelDir)
+      const fsts = ruleFstsArg(base)
       const h = await sherpa.createAsync({
         acousticModel: cfg.acousticModel ?? `${base}/${DEFAULT_ACOUSTIC}`,
         vocoder: cfg.vocoder ?? `${base}/${DEFAULT_VOCODER}`,
         lexicon: cfg.lexicon ?? `${base}/${DEFAULT_LEXICON}`,
         tokens: cfg.tokens ?? `${base}/${DEFAULT_TOKENS}`,
-        ruleFsts: ruleFstsArg(base),
-        noiseScale: cfg.noiseScale ?? DEFAULT_NOISE_SCALE,
+        ruleFsts: fsts,
+        noiseScale: noiseScale,
         lengthScale: cfg.lengthScale ?? DEFAULT_LENGTH_SCALE,
-        numThreads: cfg.numThreads ?? DEFAULT_NUM_THREADS
+        numThreads: threads
       })
       if (h === 0) {
+        perf(`stage=fail reason=create_zero elapsed_ms=${Date.now() - startedAt} fsts=${fsts === '' ? '0' : String(fsts.split(',').length)}`)
         throw new Error('RtcTtsController: sherpa.createAsync failed')
       }
       this.handle = h
+      perf(`stage=init ok=true create_ms=${Date.now() - startedAt} threads=${threads}` +
+        ` noiseScale=${noiseScale} fsts=${fsts === '' ? '0' : String(fsts.split(',').length)}`)
     })()
     return this.ready
   }
@@ -252,29 +272,52 @@ export class RtcTtsController {
       return
     }
     if (!this.ready) {
+      perf('stage=fail reason=not_initialized')
       throw new Error('RtcTtsController: not initialized')
     }
+    speakSeq += 1
+    const seq = speakSeq
+    queuedCount += 1
+    perf(`stage=enqueue seq=${seq} queue=${queuedCount} text_len=${text.length}`)
     // 多条播报排队念完，不互相打断：这里不能先 stop，否则新呼叫会把上一条的播报掐掉。
     const prev = this.speaking ?? Promise.resolve()
     this.speaking = prev.catch(() => undefined).then(async (): Promise<void> => {
       await this.ready
+      queuedCount -= 1
       // 代次只在真正轮到这条时取：stop() 只掐正在播的那一条，排在后面的照常播。
       const generation = this.generation
-      const generated = await sherpa.generateAsync(this.handle, normalizeTtsText(text), 0, 1.0)
-      if (generation !== this.generation) {
-        return
+      const synthStartedAt = Date.now()
+      try {
+        const generated = await sherpa.generateAsync(this.handle, normalizeTtsText(text), 0, 1.0)
+        const synthMs = Date.now() - synthStartedAt
+        if (generation !== this.generation) {
+          perf(`stage=skip seq=${seq} reason=cancelled synth_ms=${synthMs}`)
+          return
+        }
+        if (!generated || generated.sampleRate === 0 || generated.samples.length === 0) {
+          perf(`stage=fail seq=${seq} reason=empty_audio synth_ms=${synthMs}`)
+          return
+        }
+        const audioMs = generated.samples.length / generated.sampleRate * 1000
+        perf(`stage=synth seq=${seq} ok=true synth_ms=${synthMs} audio_ms=${Math.round(audioMs)} queue=${queuedCount}`)
+        writeWav(this.wavPath, generated.samples, generated.sampleRate)
+        const playStartedAt = Date.now()
+        const attempts = await playWav(this.wavPath, audioMs)
+        // rtf 只算合成耗时与音频时长之比，验收清单里 RTF<=2.0 看这个数，不看墙钟。
+        perf(`stage=play seq=${seq} play_ms=${Date.now() - playStartedAt} attempts=${attempts}` +
+          ` rtf=${(synthMs / audioMs).toFixed(2)} queue=${queuedCount}`)
+      } catch (error) {
+        perf(`stage=fail seq=${seq} reason=exception elapsed_ms=${Date.now() - synthStartedAt}` +
+          ` error=${String(error)}`)
+        throw error
       }
-      if (!generated || generated.sampleRate === 0 || generated.samples.length === 0) {
-        return
-      }
-      writeWav(this.wavPath, generated.samples, generated.sampleRate)
-      await playWav(this.wavPath, generated.samples.length / generated.sampleRate * 1000)
     })
     return this.speaking
   }
 
   async stop(): Promise<void> {
     this.generation++
+    perf(`stage=stop generation=${this.generation} queue=${queuedCount}`)
     await stopActivePlayer()
   }
 
