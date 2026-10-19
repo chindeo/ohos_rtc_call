@@ -27,6 +27,8 @@ export interface RtcTtsConfig {
   noiseScale?: number
   lengthScale?: number
   numThreads?: number
+  // 中英混读模型需要 espeak-ng-data 的父目录；纯中文模型不传。
+  dataDir?: string
 }
 
 const DEFAULT_MODEL_DIR = 'matcha-icefall-zh-baker'
@@ -251,6 +253,7 @@ export class RtcTtsController {
         vocoder: cfg.vocoder ?? `${base}/${DEFAULT_VOCODER}`,
         lexicon: cfg.lexicon ?? `${base}/${DEFAULT_LEXICON}`,
         tokens: cfg.tokens ?? `${base}/${DEFAULT_TOKENS}`,
+        dataDir: cfg.dataDir,
         ruleFsts: fsts,
         noiseScale: noiseScale,
         lengthScale: cfg.lengthScale ?? DEFAULT_LENGTH_SCALE,

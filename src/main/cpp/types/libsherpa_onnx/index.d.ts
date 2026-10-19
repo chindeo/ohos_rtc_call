@@ -7,6 +7,9 @@ export interface SherpaTtsConfig {
   lengthScale?: number
   numThreads?: number
   ruleFsts?: string
+  // espeak-ng-data 的父目录；只有中英混读模型（matcha-icefall-zh-en）需要，
+  // 缺了它拉丁字母不会被念出来。
+  dataDir?: string
 }
 
 export interface SherpaTtsAudio {

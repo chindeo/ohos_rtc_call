@@ -1,6 +1,8 @@
 # TTS 模型来源与原生库构建记录
 
-模型与预构建 `.so` 都**不进 Git**（体积大、且与 `*.har` 一样按本地分发产物处理）。
+模型**不进 Git**（放在宿主 HAP 的 `rawfile` 里，那边被 gitignore）；`libs/armeabi-v7a/*.so`
+在本仓库是**被 git 跟踪的**（`git ls-files libs/` 可见），所以下面这些 sha256 是核对产物有没有被
+覆盖过的依据，改完 shim 记得把新产物一起提交。
 没有这份记录，新环境无法重建可用的 TTS，所以这里是唯一权威来源，请按 sha256 校验后使用。
 
 ## 模型文件（matcha-icefall-zh-baker 首选档）
@@ -44,10 +46,13 @@ github release 大文件**经常截断**，必须 `wget -c` 续传、`bzip2 -t` 
 
 | 文件 | 字节数 | sha256 |
 |---|---:|---|
-| `libsherpa_onnx.so`（本项目 napi shim） | 138,648 | `48fd705d1b6940ebf8bb2955aa7794649b61ad62d387502cdcb7d8befa7e1b5f` |
+| `libsherpa_onnx.so`（本项目 napi shim，2026-10-16 那版） | 138,824 | `62ca93940ceba4118a68f9aef7ab89800249b5684c1e76cad86b7ecb365ac7c8` |
 | `libsherpa-onnx-c-api.so` | 3,333,004 | `36fe763253fa5962a6d48a4eff25adfd5b829633176cc4e74068a4a0078e469f` |
 | `libonnxruntime.so`（自研，非预构建） | 12,333,464 | `f1699d786e4af292359132e06950842996c337e1615256093e9f5d4df5d5fa68` |
 | `libcargs.so` | 5,240 | `a90dbed7faa9eab26b5a432963b7e5bc7fecfaf042362e6058eed2b15e3bcb41` |
+
+> 更正：本节原先记的 shim 是 `138,648 / 48fd705d1b69…`，与本机实际分发的那份对不上（应是更早一次构建的记录）。
+> 2026-10-19 按下面「shim 重建」一节重编出的新产物是 `30,508 / 9719231a911c…`，**只做了静态比对，尚未装机验证**。
 
 ### ABI 前提（不满足就装不上/跑不起）
 
@@ -79,6 +84,86 @@ OHOS clang 对 `armv7-unknown-linux-ohos` 裸默认是 pure soft，而 MLAS 的 
 - HAP 应用命名空间**不会**按 `RUNPATH=$ORIGIN` 解析兄弟目录里的 app `.so` 依赖，所以 shim 不把这些 `.so` 写成 `DT_NEEDED`，而是在构造函数里用 `dladdr` 取自身目录、按 `libc++_shared → libonnxruntime → libcargs → libsherpa-onnx-c-api` 顺序 `dlopen(RTLD_LAZY|RTLD_GLOBAL)`，再 `dlsym` 绑 6 个 C API 指针。
 - `SherpaOnnxCreateOfflineTts` 要 mmap 上百 MB 模型，**跑在主线程会阻塞 ability 生命周期事务、被 sysfreeze `LIFECYCLE_TIMEOUT` 看门狗杀掉，表现像"启动就崩"**。因此 shim 提供 `createAsync`/`generateAsync`：`napi_create_async_work` 丢到 libuv 线程池、`napi_deferred` 回主线程 resolve，并用全局 `std::mutex` 串行化 create/generate（同一 `OfflineTts` 实例的 generate 非线程安全）。
 - 真机取证：`SherpaShim` 应出现四条 `dlopen ... ok` + `sherpa symbols bound`；合成期日志的 TID 与主进程 PID 不同即证明已离开 UI 线程。
+
+## 环境与版本基线（换机器先看这一节）
+
+| 项 | 值 | 怎么确认 |
+|---|---|---|
+| OHOS Native SDK | apiVersion **12**、包版本 **5.0.0.71**，取 `5.0-ohos-sdk-windows_linux-public.tar.gz` 里的 **linux** 侧 `native` 包 | `cat <SDK>/native/oh-uni-package.json` 的 `apiVersion` / `version` |
+| 交叉编译器 | `native/llvm/bin/armv7-unknown-linux-ohos-clang++`，OHOS (dev) clang **15.0.4** | `clang++ --version` |
+| sysroot | `native/sysroot`，需要 `usr/include/napi/native_api.h`、`usr/include/hilog/log.h`、`usr/lib/arm-linux-ohos/{libace_napi.z.so,libhilog_ndk.z.so}` | 构建脚本会逐项检查并报错 |
+| sherpa-onnx | **v1.12.18** | `strings libsherpa-onnx-c-api.so \| grep -E '^1\.[0-9]+\.[0-9]+$'` |
+| sherpa C API 头 | `https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v1.12.18/sherpa-onnx/c-api/c-api.h` | shim 里的结构体必须与该 tag 一致 |
+| onnxruntime | 1.16.3（自研，见上一节三个补丁） | — |
+
+Windows 侧的 SDK 只有 `clang.exe`，不能产出 OHOS ELF；交叉编译只能在 Linux/WSL 里跑。
+WSL 里解包位置不固定，构建脚本用 `OHOS_NATIVE` 环境变量覆盖，默认 `/root/ohos-native/native`。
+
+## shim 重建
+
+源码 **`src/main/cpp/sherpa_tts_napi.cpp`（已入仓）**。此前仓库里只有 `.so` 产物和 sha256，
+没有源码，也没有任何编译命令——2026-10-19 想给 `dataDir` 加字段时发现本机已经找不到这份源码
+（`sherpa_tts_napi.cpp` 这个文件名只能从产物里的 `_GLOBAL__sub_I_sherpa_tts_napi.cpp` 挖出来），
+所以按本文的行为记录重写了一份。**下次别再只留产物。**
+
+构建（在仓库根，WSL/Linux）：
+
+```bash
+bash tools/build-sherpa-shim.sh          # OHOS_NATIVE=<sdk>/native 可覆盖
+```
+
+脚本里的关键参数：`--target=armv7-unknown-linux-ohos -mfloat-abi=softfp -mfpu=neon-vfpv4`
+（ABI 原因见上面）、`-std=c++17 -Os -DNDEBUG -fPIC -shared`、链 `ace_napi.z hilog_ndk.z c dl`，
+并会把旧产物备份成 `libsherpa_onnx.so.before-<时间戳>`。
+
+导出接口（与 `src/main/cpp/types/libsherpa_onnx/index.d.ts` 一一对应，改动要同步）：
+`create` / `createAsync` / `destroy` / `generate` / `generateAsync` / `sampleRate` / `numSpeakers`，
+模块注册名 `sherpa_onnx`，日志 tag `SherpaShim`。
+
+两条踩过的坑：
+
+1. **不要加 `-nostdlib++`。** 那样 `DT_NEEDED` 里就没有 `libc++_shared.so`，而产物里有
+   `_ZTISt12length_error`、`_ZTV…` 这类**非 lazy 重定位**，加载期就要解析；构造函数里的
+   `dlopen(libc++_shared.so)` 跑在重定位之后，救不回来，表现是模块直接加载失败。
+   照旧产物那样正常链 libc++（`DT_NEEDED` 由系统侧的 `libc++_shared.so` 满足）。
+2. 结构体字段顺序**必须**与 v1.12.18 的 `c-api.h:1019-1100` 一致（`SherpaOnnxOfflineTtsModelConfig`
+   里 `vits` 在最前、`matcha` 在第 5 个字段之后），错位不会报错，只会让
+   `SherpaOnnxCreateOfflineTts` 读到野指针。
+
+## 中英混读模型（matcha-icefall-zh-en，尚未接入）
+
+换它的原因是 baker 只能念汉字：**给 `lexicon.txt` 补字母条目是无效的**（实测 52 行大小写条目、
+`ABCDEFGHIJ` 仍然 `reason=empty_audio synth_ms=13`，字母在查词表之前就被中文前端丢了）。
+zh-en 的英文走 **espeak-ng**，与词表无关。
+
+包内文件（tar 79,033,838 字节，解压后约 93MB）：
+
+| 文件 | 字节数 | 说明 |
+|---|---:|---|
+| `model-steps-3.onnx` | 75,717,082 | 与 baker 的 75,624,188 同级，算力同档 |
+| `lexicon.txt` | 1,400,278 | 68,037 行，**以 ASCII 开头的键 0 条** |
+| `tokens.txt` | 21,146 | 2,190 个 token，含 IPA/英文音素 |
+| `espeak-ng-data/` | 约 19MB、120 个文件 | **必须随包分发**，`data_dir` 指向它的父目录 |
+| `number-zh.fst` / `phone-zh.fst` / `date-zh.fst` | 64,482 / 88,630 / 59,154 | 文件名与 baker 不同，带 `-zh` |
+| 声码器 | `vocos-16khz-univ.onnx` 53,882,848 | README 指定，22k 那只**不能用** |
+
+接入要点：现有 `libsherpa-onnx-c-api.so` 的字符串里已有 `--matcha-data-dir` 和
+`Failed to initialize espeak-ng with data dir`，说明 **c-api 不用重编，只需重编 shim**
+（本仓库 shim 已加 `dataDir` 字段）；另外宿主侧 `ensureModelFiles` 目前只拷平铺文件，
+接 espeak-ng-data 之前要补目录递归拷贝。
+
+## 下载与环境坑
+
+- **只有 WSL 能连 github**，Windows 侧 git/curl 走 443 不通。
+- github release 资产返回的是带签名的临时地址，**过期时报 `618 jwt:expired`**；续传必须重新请求
+  `github.com/<repo>/releases/download/...` 原始地址（脚本里包一层重试循环）。曾据此以为在下，
+  实际以 35KB/s 卡了半小时。
+- 大文件一律 `wget -c` + `bzip2 -t` 双校验；**判据是字节数和校验结果，不是 wget 的退出码**。
+- 从 Git Bash 调 `wsl.exe` 时路径会被 MSYS 改写（`/mnt/d/...` → `C:/Program Files/Git/mnt/...`），
+  要么加 `MSYS_NO_PATHCONV=1`，要么把命令写进 `.sh` 再调用；**改写后可能仍然返回 0**，
+  所以每次都要验产物是否真的存在。
+- 内联 `wsl.exe bash -c "V=...; echo \$V"` 里的变量会被外层吃掉，写脚本文件最省事。
+- 本文档涉及的脚本必须是 LF 行尾，CRLF 会让 bash 在 shebang 处就失败。
 
 ## 装载顺序
 
