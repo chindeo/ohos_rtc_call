@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 namespace {
 
@@ -207,6 +208,21 @@ void ExecuteRequest(napi_env, void *data) {
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "chindeo-ohos-curl/1.0");
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, context->insecure ? 0L : 1L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, context->insecure ? 0L : 2L);
+  // 这批 OHOS 固件的 CA 存储在 /system/etc/ssl/certs/cacert.pem，而 libcurl 编译期默认的
+  // /system/etc/ssl/cert.pem 在设备上并不存在；不显式指定路径，校验必失败。
+  if (!context->insecure) {
+    static const char *const kCaBundles[] = {
+      "/system/etc/ssl/certs/cacert.pem",
+      "/system/etc/ssl/cert.pem",
+      "/etc/ssl/certs/ca-certificates.crt",
+    };
+    for (const char *caBundle : kCaBundles) {
+      if (access(caBundle, R_OK) == 0) {
+        curl_easy_setopt(curl, CURLOPT_CAINFO, caBundle);
+        break;
+      }
+    }
+  }
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteBody);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, context);
   curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, WriteHeader);
