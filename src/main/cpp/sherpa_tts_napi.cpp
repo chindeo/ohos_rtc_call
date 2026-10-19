@@ -23,10 +23,10 @@ struct SherpaOnnxOfflineTtsVitsModelConfig {
   const char* lexicon;
   const char* tokens;
   const char* data_dir;
-  float length_scale;
   float noise_scale;
   float noise_scale_w;
-  float sdp_ratio;
+  float length_scale;
+  const char* dict_dir;
 };
 
 struct SherpaOnnxOfflineTtsMatchaModelConfig {
@@ -68,6 +68,8 @@ struct SherpaOnnxOfflineTtsZipvoiceModelConfig {
   const char* pinyin_dict;
   float feat_scale;
   float t_shift;
+  float target_rms;
+  float guidance_scale;
 };
 
 struct SherpaOnnxOfflineTtsModelConfig {
@@ -291,6 +293,11 @@ void RunCreate(CreateRequest& req) {
   config.model.matcha.length_scale = req.lengthScale;
   config.model.num_threads = req.numThreads;
   config.rule_fsts = req.ruleFsts.empty() ? nullptr : req.ruleFsts.c_str();
+  // 上游把这两个标量给了默认值（offline-tts.h: max_num_sentences=1, silence_scale=0.2），
+  // 但 C API 的结构体没有默认值，零初始化会让 OfflineTts::Validate 直接判
+  // "Errors in config" 并返回 null —— 真机上表现成"TTS 未初始化"。
+  config.max_num_sentences = 1;
+  config.silence_scale = 0.2f;
   {
     const std::lock_guard<std::mutex> lock(gApiMutex);
     req.engine = FnCreate(&config);
@@ -393,9 +400,28 @@ napi_value Throw(napi_env env, const std::string& message) {
 }
 
 void Reject(napi_env env, napi_deferred deferred, const std::string& message) {
+  // 真机上这里曾经是唯一的失败出口，之前 reject 的是裸字符串，宿主侧 catch 到的
+  // error.message 打成 undefined，排查时看不出到底哪一步失败，所以先落一条原生日志。
+  OH_LOG_Print(LOG_APP, LOG_ERROR, kLogDomain, kTag, "reject: %{public}s", message.c_str());
   napi_value reason = nullptr;
+  napi_value messageValue = nullptr;
+  if (napi_create_string_utf8(env, message.c_str(), NAPI_AUTO_LENGTH, &messageValue) == napi_ok &&
+      napi_create_error(env, nullptr, messageValue, &reason) == napi_ok) {
+    napi_reject_deferred(env, deferred, reason);
+    return;
+  }
   napi_create_string_utf8(env, message.c_str(), NAPI_AUTO_LENGTH, &reason);
   napi_reject_deferred(env, deferred, reason);
+}
+
+bool QueueWork(napi_env env, const char* name, napi_async_execute_callback execute,
+               napi_async_complete_callback complete, void* data, napi_async_work* work) {
+  napi_value resourceName = nullptr;
+  if (napi_create_string_utf8(env, name, NAPI_AUTO_LENGTH, &resourceName) != napi_ok) {
+    return false;
+  }
+  return napi_create_async_work(env, nullptr, resourceName, execute, complete, data, work) ==
+    napi_ok;
 }
 
 napi_value Create(napi_env env, napi_callback_info info) {
@@ -556,8 +582,7 @@ napi_value CreateAsync(napi_env env, napi_callback_info info) {
     Reject(env, deferred, error);
     return promise;
   }
-  if (napi_create_async_work(env, nullptr, nullptr, CreateExecute, CreateComplete, call,
-                             &call->work) != napi_ok) {
+  if (!QueueWork(env, "sherpa_tts_create", CreateExecute, CreateComplete, call, &call->work)) {
     delete call;
     Reject(env, deferred, "napi_create_async_work failed");
     return promise;
@@ -585,8 +610,8 @@ napi_value GenerateAsync(napi_env env, napi_callback_info info) {
     Reject(env, deferred, error);
     return promise;
   }
-  if (napi_create_async_work(env, nullptr, nullptr, GenerateExecute, GenerateComplete, call,
-                             &call->work) != napi_ok) {
+  if (!QueueWork(env, "sherpa_tts_generate", GenerateExecute, GenerateComplete, call,
+                 &call->work)) {
     delete call;
     Reject(env, deferred, "napi_create_async_work failed");
     return promise;

@@ -52,7 +52,9 @@ github release 大文件**经常截断**，必须 `wget -c` 续传、`bzip2 -t` 
 | `libcargs.so` | 5,240 | `a90dbed7faa9eab26b5a432963b7e5bc7fecfaf042362e6058eed2b15e3bcb41` |
 
 > 更正：本节原先记的 shim 是 `138,648 / 48fd705d1b69…`，与本机实际分发的那份对不上（应是更早一次构建的记录）。
-> 2026-10-19 按下面「shim 重建」一节重编出的新产物是 `30,508 / 9719231a911c…`，**只做了静态比对，尚未装机验证**。
+> 2026-10-19 按下面「shim 重建」一节重编的产物已在 .104 装机跑通 baker（`stage=init ok=true create_ms=11404 fsts=3`）；
+> 头一版结构体少字段导致 create 返回 null，修好后的那份以 `ohos_rtc_call/libs/armeabi-v7a/` 里的当前文件为准，
+> 换机器重建请按「shim 重建」末尾的判据核对，不要照抄本文早期出现的任何字节数/sha256。
 
 ### ABI 前提（不满足就装不上/跑不起）
 
@@ -126,9 +128,14 @@ bash tools/build-sherpa-shim.sh          # OHOS_NATIVE=<sdk>/native 可覆盖
    `_ZTISt12length_error`、`_ZTV…` 这类**非 lazy 重定位**，加载期就要解析；构造函数里的
    `dlopen(libc++_shared.so)` 跑在重定位之后，救不回来，表现是模块直接加载失败。
    照旧产物那样正常链 libc++（`DT_NEEDED` 由系统侧的 `libc++_shared.so` 满足）。
-2. 结构体字段顺序**必须**与 v1.12.18 的 `c-api.h:1019-1100` 一致（`SherpaOnnxOfflineTtsModelConfig`
-   里 `vits` 在最前、`matcha` 在第 5 个字段之后），错位不会报错，只会让
-   `SherpaOnnxCreateOfflineTts` 读到野指针。
+2. 结构体字段**必须逐字段**照 v1.12.18 的 `c-api.h:1019-1100` 抄，少一个字段不会编译报错，
+   只会让后面的字段整体错位。本项目踩的是 `SherpaOnnxOfflineTtsZipvoiceModelConfig` 少了
+   `target_rms`/`guidance_scale`（40 字节写成 32 字节），外层 `silence_scale` 因此读成 0，
+   真机表现：`sherpa_onnx: --tts-silence-scale '<private>' is too small` → `Errors in config`
+   → `SherpaOnnxCreateOfflineTts returned null`，应用侧只剩"TTS 未初始化"。
+3. C API 结构体没有默认值，`max_num_sentences=1`、`silence_scale=0.2` 这两个上游给在 C++
+   结构体里的默认值必须显式赋；`Reject()` 要记一条原生日志并 reject 真正的 `Error` 对象，
+   否则宿主侧 `error.message` 打成 `undefined`，排查时看不出失败在哪一步。
 
 ## 中英混读模型（matcha-icefall-zh-en，尚未接入）
 
