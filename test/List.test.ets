@@ -1,4 +1,5 @@
 import rtcAdminEntryControllerTest from './RtcAdminEntryController.test'
+import rtcAppVersionTest from './RtcAppVersion.test'
 import rtcAudioControllerTest from './RtcAudioController.test'
 import rtcBroadcastHistoryTest from './RtcBroadcastHistory.test'
 import rtcCallAudioPolicyControllerTest from './RtcCallAudioPolicyController.test'
@@ -31,6 +32,7 @@ import rtcVideoCaptureStopGateTest from './RtcVideoCaptureStopGate.test'
 
 export default function testsuite() {
   rtcAdminEntryControllerTest()
+  rtcAppVersionTest()
   rtcAudioControllerTest()
   rtcBroadcastHistoryTest()
   rtcCallAudioPolicyControllerTest()

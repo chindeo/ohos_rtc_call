@@ -147,7 +147,7 @@ function isAbsoluteUrl(url: string): boolean {
   return lowerUrl.startsWith('http://') || lowerUrl.startsWith('https://')
 }
 
-function combineUrl(baseURL: string, url: string): string {
+export function combineHttpUrl(baseURL: string, url: string): string {
   if (!baseURL || isAbsoluteUrl(url)) {
     return url
   }
@@ -249,7 +249,7 @@ export class CurlAxiosInstance {
       }
     }
 
-    const url = appendQuery(combineUrl(config.baseURL || '', config.url || ''), config.params)
+    const url = appendQuery(combineHttpUrl(config.baseURL || '', config.url || ''), config.params)
     const method = (config.method || 'GET').toUpperCase()
     const headers = copyHeaders(config.headers)
     const body = serializeBody(config)

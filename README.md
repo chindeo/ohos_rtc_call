@@ -132,6 +132,7 @@ signal.setListener({
 
 signal.connect({
   serverUrl: route.webrtcSignalUrl || '',
+  // RtcAppVersion.build(versionName, buildTime) -> v1.0.0_hmos_20261019153813
   appVersion: 'your_app_webrtc',
   identity: {
     number: '1001',
