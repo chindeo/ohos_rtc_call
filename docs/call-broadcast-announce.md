@@ -61,7 +61,16 @@
 `rtcHangupReasonText()` 只镜像上面四个码——**按业务文案要求处理，不是取代网关码表**；网关补上广播时两处会同时命中，宿主各自做了去重。
 
 方向门控和通路一（广播）一样在包内完成：`RtcWebRtcCallController` 解析到 `reason` 后，
-只在**本机是呼出方**（`session.incoming !== true`）时上抛 `onHangupNotice(text, sessionKey)`，宿主只负责念。
+只在**本机是呼出方**时上抛 `onHangupNotice(text, sessionKey)`，宿主只负责念。
+
+**方向只在建会话那一刻定，后续信令不许改写。** 真机踩过：`.104` 主叫、`.93` 拒接，挂断信令里
+`from` 是发起挂断的那一方（对端号码），照它折会把主叫侧判成被叫，日志
+`rtc_hangup_reason reason=rejected notice=对方拒接 incoming=true` —— 文案都认出来了，
+四句提示却被方向门控全挡掉。超时那条同理（`reason=timeout notice=无人接听 incoming=true`）。
+
+取证锚点：`rtc_signal_recv` 每条入站信令打事件名/status/result/长度，
+`s__apply` 与 `c__broadcast` 额外打**顶层键名**（`keys=`，值不打）——
+网关异步生成的会话主键到底落在回执还是广播里、字段叫什么，靠这一层判。
 
 ## 事件从哪来：`c__broadcast` HistoryBean
 

@@ -306,10 +306,14 @@ export class RtcWebRtcCallController {
     // 只打事件名/长度，不打 data 原文——里面是病人姓名和号码，日志要在现场看。
     // candidate 量大且 rtc_route_candidate 已逐条打过，这里跳过免得淹掉关键几行。
     if (message.eventName !== 'c__candidate') {
+      // s__apply 回执和 c__broadcast 再加一层顶层键名：网关异步生成的会话主键到底落在这两条的
+      // 哪一个、字段叫什么，光看事件名和长度判不出来。只打键名，值仍然不打。
+      const keys = message.eventName === 's__apply' || message.eventName === 'c__broadcast' ?
+        ` keys=${RtcWebRtcCallController.describeDataKeys(message.data)}` : ''
       this.listener.onLog?.(`rtc_signal_recv event=${message.eventName || ''}` +
         ` status=${message.status === undefined ? '' : message.status}` +
         ` result=${message.result || ''} len=${(message.data || '').length}` +
-        ` known=${RtcWebRtcCallController.isKnownSignalEvent(message.eventName)}`)
+        ` known=${RtcWebRtcCallController.isKnownSignalEvent(message.eventName)}${keys}`)
     }
     if (message.eventName === 'c__register') {
       return
@@ -573,7 +577,9 @@ export class RtcWebRtcCallController {
       session.mode = commonRequest.isVideo === true ? RtcCallMode.VIDEO : session.mode
       session.sessionId = sessionId || session.sessionId
       session.uid = session.sessionId || session.uid
-      session.incoming = sessionIncoming
+      // 方向只在建会话那一刻定，后续信令不许改写：c__hangup 里的 from 是"发起挂断的那一方"，
+      // 被叫拒接后主叫侧会被折成被叫，依赖方向的铃声门控和挂断播报会整条失效
+      //（真机取证：.104 主叫、.93 拒接，挂断时 incoming=true，「对方拒接」被门掉）。
       session.commonRequest = commonRequest
       if (oldSessionId && oldSessionId !== session.sessionId) {
         this.sessionIds.set(oldSessionId, session.sessionKey)
@@ -1277,6 +1283,20 @@ export class RtcWebRtcCallController {
       '|hasServer=' + hasServer +
       '|sent=' + sent +
       '|reason=' + reason)
+  }
+
+  // 只报顶层键名，不报任何值：外场要靠这一行确认会话主键到底在回执里还是在广播里。
+  private static describeDataKeys(data: string): string {
+    if (!data) {
+      return 'empty'
+    }
+    try {
+      const parsed = JSON.parse(data) as Record<string, Object>
+      const keys = Object.keys(parsed)
+      return keys.length > 0 ? keys.sort().join(',') : 'none'
+    } catch (_error) {
+      return 'unparsable'
+    }
   }
 
   // 下面这些是 handleMessage 真正有分支的事件名；不在表里的整条会被丢弃，

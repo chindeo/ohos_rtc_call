@@ -905,6 +905,89 @@ export default function rtcWebRtcCallControllerTest() {
       controller.dispose()
     })
 
+    it('announces the hangup reason for a call this device placed even when the peer hangs up', 0, () => {
+      let noticeText = ''
+      const signalSession = new TestSignalSession()
+      const controller = new RtcWebRtcCallController(createMediaController(), {
+        onHangupNotice: (text: string, sessionKey: string) => {
+          noticeText = text + '|' + sessionKey
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
+
+      // 拒接时挂断信令的 from 是对端号码：方向必须还是"本机呼出"，
+      // 否则播报门控会把自己当成被叫，四句提示全被挡掉（真机踩过）。
+      signalSession.emitMessage({
+        eventName: 'c__hangup',
+        data: JSON.stringify({
+          isHangUp: true,
+          reason: 'rejected',
+          commonRequest: {
+            uuid: 'call-a',
+            number: '1101',
+            from: '1101',
+            to: '1000'
+          }
+        })
+      })
+
+      expect(noticeText).assertEqual('对方拒接|call-a')
+      controller.dispose()
+    })
+
+    it('does not announce the hangup reason for an incoming call', 0, () => {
+      let noticeText = ''
+      const signalSession = new TestSignalSession()
+      const controller = new RtcWebRtcCallController(createMediaController(), {
+        onHangupNotice: (text: string, sessionKey: string) => {
+          noticeText = text + '|' + sessionKey
+        }
+      }, signalSession)
+      controller.start({
+        serverUrl: 'ws://rtc.example.com/websocket',
+        appVersion: 'test',
+        identity: { number: '1000' },
+        local: { number: '1000' }
+      })
+      signalSession.emitRegister()
+      signalSession.emitMessage({
+        eventName: 'c__invite',
+        data: JSON.stringify({
+          commonRequest: {
+            uuid: 'call-in',
+            number: '1000',
+            from: '1101',
+            to: '1000',
+            isCallout: false
+          }
+        })
+      })
+
+      signalSession.emitMessage({
+        eventName: 'c__hangup',
+        data: JSON.stringify({
+          isHangUp: true,
+          reason: 'timeout',
+          commonRequest: {
+            uuid: 'call-in',
+            number: '1000',
+            from: '1101',
+            to: '1000'
+          }
+        })
+      })
+
+      expect(noticeText).assertEqual('')
+      controller.dispose()
+    })
+
     it('removes only the matched remote hangup target even when backend reports no other calls', 0, () => {
       let endedKey = ''
       let endedAll = false
