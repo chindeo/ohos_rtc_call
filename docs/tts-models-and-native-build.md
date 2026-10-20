@@ -5,9 +5,11 @@
 覆盖过的依据，改完 shim 记得把新产物一起提交。
 没有这份记录，新环境无法重建可用的 TTS，所以这里是唯一权威来源，请按 sha256 校验后使用。
 
-## 模型文件（matcha-icefall-zh-baker 首选档）
+## 模型文件（matcha-icefall-zh-baker 兜底档，无字母能力）
 
 放置位置：宿主 HAP 的 `entry/src/main/resources/rawfile/matcha-icefall-zh-baker/`，四个文件缺一不可。
+**2026-10-20 晚起它不再是默认档**，默认档是下面「中英混读模型」一节的 `matcha-icefall-zh-en`；
+本节保留是因为 baker 音色更亮（22kHz）、且是字母需求妥协时的回退目标。
 
 | 文件 | 字节数 | sha256 |
 |---|---:|---|
@@ -137,21 +139,39 @@ bash tools/build-sherpa-shim.sh          # OHOS_NATIVE=<sdk>/native 可覆盖
    结构体里的默认值必须显式赋；`Reject()` 要记一条原生日志并 reject 真正的 `Error` 对象，
    否则宿主侧 `error.message` 打成 `undefined`，排查时看不出失败在哪一步。
 
-## 中英混读模型（matcha-icefall-zh-en，2026-10-20 已退回 baker）
+## 中英混读模型（matcha-icefall-zh-en，2026-10-20 晚起为默认档）
 
-**退回原因（真机日志，不是听感评价）**：`.104` 上 `stage=enqueue` 显示喂进去的文本是对的
-（`text=体温36.5度 fed=体温36.5度`、`text=21床正在呼叫 fed=21床正在呼叫`），音频却念成
-「34.5 度」和「21床正呼叫」——**数字内容错、音节丢/叠，出在引擎侧**。医院播报把体温念错比不念更危险，
-所以默认模型改回 `matcha-icefall-zh-baker`（纯中文），zh-en 整目录移出工程留作后续复测。
-旁证：同一条 MQTT 文本带逗号「21床,正在呼叫。」在 `.93` 连播三条都干净，测试页无逗号那条丢字，
-怀疑是 matcha 在缺少韵律切分时更容易丢/叠音节；补逗号能缓解但停顿变长，现场已否决该做法。
-**拉丁字母需求医院确认要有**，这条 zh-en 是唯一在端上能出声的路，待解决（不是靠改词表，已证伪）。
+**10-20 上午那次退回是个误判，根因在我们把 baker 的参数扣在了它头上。** 端上 `DEFAULT_NOISE_SCALE=0.2`
+是为 baker 听感调的，接 zh-en 时原样带了过去；模型作者自己的推理脚本里 `noise_scale`/`length_scale`
+都是硬编码 1.0。同一模型在 PC 上扫参（`D:\tmp\tts\zhen_sweep.py`，SenseVoice 回读）：
 
-换回 baker 同时要改的三处（都在 `RtcTtsController.ets` 常量区）：模型目录名、
-声码器 `vocos-22khz-univ.onnx`（16k 那只不给 baker 用）、rule-fst 名字去掉 `-zh`；
-`data_dir` 现在按 `filesDir/<model>/espeak-ng-data/phontab` 是否存在才传，baker 没这目录就是空串
-（shim 里 `empty() ? nullptr`，等价于不设）。工程里的 zh-en 目录已移到 `D:\tmp\tts\models\zh-en-from-bed`
-和 `zh-en-from-host`，baker 备份在 `baker-from-bed`/`baker-from-host`，两边 lexicon.txt sha256 一致。
+| noise_scale | 「21床正在呼叫」 | 「为您自动接听」 | 「体温36.5度」（挂 fst） |
+|---|---|---|---|
+| 0.2（当时的出厂值） | 二十一床**正**呼叫 | 为您**致赠**接听 | **三十四**点五度 |
+| 0.667 / 1.0 | 正确 | 正确 | 三十六点五度 |
+
+0.2 那一档**精确复现了现场听到的丢字和错数字**，所以上面那行「`.104` 上 `fed=` 正确却念成 34.5」
+不是模型坏，是参数错。上游 issue #2847 同因：复现者反馈"用作者的 python 脚本推理同样的模型没问题，
+换成 sherpa 就有叠音"。
+
+定档的四条要求（少一条都会退回老现象）：
+
+1. `noise_scale=1.0`；
+2. **必须挂 fst**，且不挂时整句崩（`体温36.5度`→"体温 forty six five度"、`A10床`→"a 探装正正在呼叫"）；
+3. 字母串用逗号枚举**并且首尾都补逗号**：`I, C, U, 三床请到护士站`。少尾部那个逗号会把字母和中文连读出多余鼻音，
+   整串不拆（`ICU`）则 espeak 当成一个英文单词拼读；
+4. **语速锁定 1.0**：`speed=0.9` 即使在 noise 1.0 下也把 `体温36.5度` 念成"先三六点五度"、
+   `为您自动接听` 念成"自自动接听"，这条限制不是参数能救的（见下面「语速」一节）。
+
+仍然存在的问题，别当已解决：21 字无逗号长句在任何参数下都错（`二十一传唤…`）；字母逐字念把含字母话术
+从 2.1 秒拉到 3.6 秒；声码器只有 16kHz，高频比 baker 闷；`A10床` 过 `number-zh.fst` 念成"A**十**床"，
+现场已认可这个读法，未按位读。
+
+两档的差异（模型目录名、声码器 16k/22k、fst 是否带 `-zh`、`noise_scale`、语速是否可调）现在集中在
+`RtcTtsController.ets` 的 `profileFor(modelDir)`，宿主只靠 `rawfile` 里放哪个目录来选档，不再散着改常量。
+`data_dir` 按 `filesDir/<model>/espeak-ng-data/phontab` 是否存在才传，baker 没这目录就是空串
+（shim 里 `empty() ? nullptr`，等价于不设）。工程里的 Baker 备份在 `D:\tmp\tts\models\baker-from-bed`
+和 `baker-from-host`，zh-en 备份在同级 `zh-en-from-bed`/`zh-en-from-host`（两份逐文件字节数一致）。
 
 换它的原因是 baker 只能念汉字：**给 `lexicon.txt` 补字母条目是无效的**（实测 52 行大小写条目、
 `ABCDEFGHIJ` 仍然 `reason=empty_audio synth_ms=13`，字母在查词表之前就被中文前端丢了）。
@@ -168,6 +188,18 @@ zh-en 的英文走 **espeak-ng**，与词表无关。
 | `number-zh.fst` / `phone-zh.fst` / `date-zh.fst` | 64,482 / 88,630 / 59,154 | 文件名与 baker 不同，带 `-zh` |
 | 声码器 | `vocos-16khz-univ.onnx` 53,882,848 | README 指定，22k 那只**不能用** |
 
+逐文件 sha256（2026-10-20 按 `zh-en-from-bed` 实测；三个 `.fst` 与 baker 那三份**字节完全相同**，只是改了名）：
+
+```
+524286bf6cf11be74329ae1c682ac69e34d6860c2ea9fd1290319d561540b16a  model-steps-3.onnx
+b599142a1fb8ff03de3e84ac35ff537c619e56f4267a6fe894851a42844acf9e  vocos-16khz-univ.onnx
+599efdcdaff4df2a123ce988c2cb90abcd59b919ef609ce36eb587d68b7ca2c0  lexicon.txt
+77fee8e5e5dd96b3547119e6159292c648e99e065c54c97777722e3ce710b9a4  tokens.txt
+```
+
+来源：`https://modelscope.cn/models/dengcunqin/matcha_tts_zh_en_20251010`（声学模型/词表/espeak-ng-data），
+声码器走 `https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos-16khz-univ.onnx`。
+
 接入要点：c-api 不用重编（`--matcha-data-dir` 已在库里），只重编了 shim 加 `dataDir` 字段；
 `ensureModelFiles` 用 `ensureRawTree` 递归解 `espeak-ng-data`，解完在目录里落一个 `.extracted`
 标记，第二次启动直接跳过（355 个文件首次解包要几十秒）。`rawfile` 只读，所以模型一律先解到
@@ -176,32 +208,40 @@ zh-en 的英文走 **espeak-ng**，与词表无关。
 ## 语速（后台可配，出货模型已验证）
 
 `generateAsync(handle, text, sid, speed)` 的 `speed` 是靠拉长 duration 实现倍率的（sherpa 内部
-`length_scale = 配置值 / speed`，小于 1 就是放慢）。历史上 `.61` 用 `speed=0.85` 实测把同一条
-「21床,正在呼叫。」合成成「211床正在呼呼叫」——**那次是在中英混合模型 `matcha-icefall-zh-en` 上测的**，
-出货模型 `matcha-icefall-zh-baker` 没有这个问题，旧结论作废。
+`length_scale = 配置值 / speed`，小于 1 就是放慢）。**这条旋钮只对 baker 有效，zh-en 档一律锁 1.0**：
+2026-10-20 晚在 `noise_scale=1.0` 下重测 zh-en，`speed=0.9` 仍把 `体温36.5度` 念成"先三六点五度"、
+`为您自动接听` 念成"自自动接听"，0.85 更差（"三三四点五度度"）；同批 1.0 全部正确。
+所以"zh-en 不支持调速"这条判据**当时不是被参数冤枉的**，被冤枉的只有中文丢字那一半。
 
 现在取值来自后台"参数设置"的 `tts.TextToSpeechSpeechRate`（病区级，注册后随 `/config/list` 下发），
 链路：宿主 `refreshRuntimeConfig` → `parseSpeechRate(value)` → `RtcTtsController.setSpeed()`，
-下一次合成生效。真机试听（2026-10-20，测试页逐条听）：
+下一次合成生效。baker 档的真机试听（2026-10-20，测试页逐条听）：
 
-| 取值 | 现场判定 |
+| 取值 | 现场判定（仅 baker） |
 | --- | --- |
 | 0.7 | 不叠字，但停顿很差、听着费劲，不要用 |
-| 0.9 | 流畅、不叠字不卡字，比 1.0 舒服，**推荐值** |
-| 1.0 | 正常（后台留空/填错时的回落值） |
+| 0.9 | 流畅、不叠字不卡字，比 1.0 舒服，**baker 推荐值** |
+| 1.0 | 正常（后台留空/填错时的回落值；**zh-en 档恒为此值**） |
 
 调节按 0.05~0.1 一档试听即可，0.01 的差别人耳在这条模型上分不出来。两端管理员设置里的 TTS 测试页
-会在顶部只读显示当前生效语速，并提示"无法播报英文字母"（baker 的 lexicon 只有汉字，带字母的文案会整段跳过）。
+会在顶部只读显示**引擎实际在用**的语速；zh-en 档下后台填什么都显示 1，日志给一条
+`stage=speed value=1 model_locked=true`，免得现场以为参数没下发。"无法播报英文字母"那句提示随默认档切到
+zh-en 一起撤掉。
 
 取值口径在 `tts/RtcSpeechRate.ets`（单独成文件是为了能被 Hypium import，控制器本体挂着 `libsherpa_onnx.so`
 加载不了）：空/非数/越界一律回落 1.0，允许区间 0.5~2.0。后台填 `0` 或 `7`（少打小数点）不会把播报念成噪音。
 
 ## 停顿稳定性（noise_scale）
 
-matcha 是扩散模型，`--matcha-noise-scale` 越大采样越不稳、越容易出现怪停顿。试听对比过
-0.66 / 0.33 / 0.2，`.93` 与 `.104` 上 0.33 和 0.66 现场判定"几乎没区别"，`0.2` 是当前出厂值
-（`DEFAULT_NOISE_SCALE`，仍可通过 `RtcTtsConfig.noiseScale` 由宿主覆盖）；句内停顿是模型自身
-分词/韵律造成的，`tts-silence-scale` 只管句间，压不住。
+matcha 是扩散模型，`noise_scale` 越小采样越稳、但内容越容易丢/叠音节，**两个模型的最优值相反，不能共用**：
+
+| 档 | 出厂 `noise_scale` | 依据 |
+|---|---|---|
+| `matcha-icefall-zh-baker` | 0.2 | 0.66/0.33/0.2 现场对比，`.93` 与 `.104` 判"几乎没区别"，0.2 听感认可 |
+| `matcha-icefall-zh-en` | 1.0 | 0.2 下丢字/错数字（见上面中英档那节的扫参表），作者脚本硬编码 1.0 |
+
+值仍可通过 `RtcTtsConfig.noiseScale` 由宿主覆盖，不传就用上面按档的默认值。句内停顿是模型自身
+分词/韵律造成的，`tts-silence-scale` 只管句间，压不住；扫参也确认了 `silence_scale` 不影响文字对错。
 
 ## 下载与环境坑
 

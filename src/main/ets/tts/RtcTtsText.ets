@@ -37,9 +37,11 @@ function readDigitByDigit(digits: string): string {
  * 所以只处理全大写串；含小写的正常英文单词保持整词读法。
  * 用逗号而不是空格分隔：espeak 会把逗号编成韵律停顿，光用空格十个字母会连着念成一串，
  * 真机上听不出边界。
+ * 串尾也要补一个逗号：`I, C, U三床…` 会和后面的汉字连读出一个多余鼻音（回读成 `i c u n`），
+ * `I, C, U, 三床…` 才分得开（2026-10-20 五组写法对比试听定这一种）。
  */
 export function spellUpperRuns(text: string): string {
-  return text.replace(/[A-Z]{2,}/g, (run: string): string => run.split('').join(', '))
+  return text.replace(/[A-Z]{2,}/g, (run: string): string => `${run.split('').join(', ')}, `)
 }
 
 /**

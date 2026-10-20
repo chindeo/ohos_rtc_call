@@ -31,29 +31,58 @@ export interface RtcTtsConfig {
   numThreads?: number
 }
 
-const DEFAULT_MODEL_DIR = 'matcha-icefall-zh-baker'
+const DEFAULT_MODEL_DIR = 'matcha-icefall-zh-en'
 const DEFAULT_ACOUSTIC = 'model-steps-3.onnx'
-const DEFAULT_VOCODER = 'vocos-22khz-univ.onnx'
 const DEFAULT_LEXICON = 'lexicon.txt'
 const DEFAULT_TOKENS = 'tokens.txt'
 // 床号、体温这类短数字交给 sherpa 的文本规整；时刻和编号要先在端上转成汉字，
 // 因为 number.fst 排在最前会把所有数字串按基数读掉，date/phone 两条永远轮不到。
 // 注意开关名：TTS 用的是 rule_fsts，ASR 才叫 rule-fsts，传错会直接 exit(-1)。
-const RULE_FSTS = ['number.fst', 'date.fst', 'phone.fst']
 // espeak-ng 的音库目录：只有中英混读模型带它，纯中文模型没有这个目录。
 const ESPEAK_DIR = 'espeak-ng-data'
-const DEFAULT_NOISE_SCALE = 0.2
 const DEFAULT_LENGTH_SCALE = 1.0
 const DEFAULT_NUM_THREADS = 4
 
+/**
+ * 两档模型的声码器、fst 文件名、扩散噪声和"能不能调速"都不一样，混用会直接念错内容：
+ * zh-en 用 baker 那套 noise_scale=0.2 会把「21床正在呼叫」念成「二十一床正呼叫」、
+ * 「体温36.5度」念成「三十四点五度」（2026-10-20 扫参复现，与现场反馈逐条对得上）；
+ * 反过来 zh-en 一调速（speed=0.9）数字又错回去，所以它那档把语速锁死。
+ * 选档只看宿主 rawfile 里放的是哪个目录，不再需要同时改三处常量。
+ */
+interface RtcTtsProfile {
+  vocoder: string
+  fsts: string[]
+  noiseScale: number
+  speedAdjustable: boolean
+}
+
+const PROFILE_ZH_EN: RtcTtsProfile = {
+  vocoder: 'vocos-16khz-univ.onnx',
+  fsts: ['number-zh.fst', 'date-zh.fst', 'phone-zh.fst'],
+  noiseScale: 1.0,
+  speedAdjustable: false
+}
+
+const PROFILE_BAKER: RtcTtsProfile = {
+  vocoder: 'vocos-22khz-univ.onnx',
+  fsts: ['number.fst', 'date.fst', 'phone.fst'],
+  noiseScale: 0.2,
+  speedAdjustable: true
+}
+
+function profileFor(modelDir: string): RtcTtsProfile {
+  return modelDir === DEFAULT_MODEL_DIR ? PROFILE_ZH_EN : PROFILE_BAKER
+}
+
 let activePlayer: media.AVPlayer | undefined = undefined
 
-async function ensureModelFiles(ctx: common.Context, modelDir: string): Promise<string> {
+async function ensureModelFiles(ctx: common.Context, modelDir: string, profile: RtcTtsProfile): Promise<string> {
   const base = `${ctx.filesDir}/${modelDir}`
   if (!fs.accessSync(base)) {
     fs.mkdirSync(base, true)
   }
-  const names = [DEFAULT_ACOUSTIC, DEFAULT_VOCODER, DEFAULT_LEXICON, DEFAULT_TOKENS].concat(RULE_FSTS)
+  const names = [DEFAULT_ACOUSTIC, profile.vocoder, DEFAULT_LEXICON, DEFAULT_TOKENS].concat(profile.fsts)
   for (const name of names) {
     const dest = `${base}/${name}`
     if (fs.accessSync(dest)) {
@@ -126,8 +155,8 @@ async function ensureEspeakTree(ctx: common.Context, modelDir: string, base: str
   return written
 }
 
-function ruleFstsArg(base: string): string {
-  const present = RULE_FSTS.filter((name: string): boolean => fs.accessSync(`${base}/${name}`))
+function ruleFstsArg(base: string, fsts: string[]): string {
+  const present = fsts.filter((name: string): boolean => fs.accessSync(`${base}/${name}`))
   return present.map((name: string): string => `${base}/${name}`).join(',')
 }
 
@@ -252,15 +281,24 @@ export class RtcTtsController {
   private generation: number = 0
   private wavPath: string = ''
   private speed: number = DEFAULT_SPEECH_RATE
+  private speedAdjustable: boolean = true
 
-  /** 语速在真正合成那一刻取值：排在队列里还没轮到的那条，会按改后的值念。 */
+  /**
+   * 语速在真正合成那一刻取值：排在队列里还没轮到的那条，会按改后的值念。
+   * 中英档不认这个旋钮（0.9 会把「体温36.5度」念成「先三六点五度」），所以只记日志不生效，
+   * 并且一定要打出来：否则现场看到后台填了 0.9 而播报没变，会当成参数没下发去查链路。
+   */
   setSpeed(value: number): void {
-    const next = clampSpeechRate(value)
-    if (next === this.speed) {
+    const requested = clampSpeechRate(value)
+    if (!this.speedAdjustable) {
+      perf(`stage=speed value=${this.speed} requested=${requested} model_locked=true`)
       return
     }
-    this.speed = next
-    perf(`stage=speed value=${next}`)
+    if (requested === this.speed) {
+      return
+    }
+    this.speed = requested
+    perf(`stage=speed value=${requested}`)
   }
 
   /** 当前生效的语速，给宿主测试页只读显示用（不是它设置的那个值，而是引擎真正在用的）。 */
@@ -274,15 +312,21 @@ export class RtcTtsController {
     }
     const modelDir = cfg.modelDir ?? DEFAULT_MODEL_DIR
     const threads = cfg.numThreads ?? DEFAULT_NUM_THREADS
-    const noiseScale = cfg.noiseScale ?? DEFAULT_NOISE_SCALE
+    const profile = profileFor(modelDir)
+    const noiseScale = cfg.noiseScale ?? profile.noiseScale
+    this.speedAdjustable = profile.speedAdjustable
+    if (!profile.speedAdjustable) {
+      // 初始化前可能就收到过后台语速（宿主先拿到 /config/list），锁档时把它清回常速。
+      this.speed = DEFAULT_SPEECH_RATE
+    }
     this.wavPath = `${ctx.filesDir}/tts-out.wav`
     this.ready = (async (): Promise<void> => {
       const startedAt = Date.now()
-      const base = await ensureModelFiles(ctx, modelDir)
-      const fsts = ruleFstsArg(base)
+      const base = await ensureModelFiles(ctx, modelDir, profile)
+      const fsts = ruleFstsArg(base, profile.fsts)
       const h = await sherpa.createAsync({
         acousticModel: cfg.acousticModel ?? `${base}/${DEFAULT_ACOUSTIC}`,
-        vocoder: cfg.vocoder ?? `${base}/${DEFAULT_VOCODER}`,
+        vocoder: cfg.vocoder ?? `${base}/${profile.vocoder}`,
         lexicon: cfg.lexicon ?? `${base}/${DEFAULT_LEXICON}`,
         tokens: cfg.tokens ?? `${base}/${DEFAULT_TOKENS}`,
         // 真机取证：sherpa 检查的是 <data_dir>/phontab，所以要指到 espeak-ng-data

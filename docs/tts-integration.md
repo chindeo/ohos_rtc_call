@@ -7,17 +7,19 @@
 
 ## 首选档
 
-- 模型：`matcha-icefall-zh-baker` + `vocos-22khz-univ.onnx`（~128MB）。
-- 参数：`noiseScale=0.33`、`lengthScale=1.0`、`numThreads=4`。
+- 默认模型：`matcha-icefall-zh-en` + `vocos-16khz-univ.onnx`（约 143MB，含 `espeak-ng-data` 355 个文件）。
+- 兜底模型：`matcha-icefall-zh-baker` + `vocos-22khz-univ.onnx`（约 128MB，纯中文、念不出字母）。
+- 参数按模型分档（`RtcTtsController` 里 `profileFor(modelDir)`）：zh-en 用 `noiseScale=1.0` +
+  `number-zh/date-zh/phone-zh.fst` + 语速锁定 1.0；baker 用 `noiseScale=0.2` + 无 `-zh` 的三个 fst + 语速可调。
 - 音频链路：napi `sherpa.generate` → Float32 PCM → 落 wav → `AVPlayer` 播放。
 
 ## 数字与时间读法（交给 sherpa 的 rule-fsts）
 
 - 现象：播报句子里的阿拉伯数字不响，前后汉字正常（例：`21床,正在呼叫。` 只念出"床,正在呼叫"）。
 - 根因：matcha 中文词典只认拼音，数字必须由文本规整层先展开。
-- 现在的做法：`RtcTtsController` 把 `number.fst,date.fst,phone.fst` 作为 `ruleFsts` 传给
-  `sherpa.createAsync`，端上不再自己拼汉字（曾有过一版自研 `normalizeTtsText`，已在上游能力确认可用后删除，
-  避免两套规整互相覆盖）。
+- 现在的做法：`RtcTtsController` 把三个 `.fst`（zh-en 档文件名带 `-zh`）作为 `ruleFsts` 传给
+  `sherpa.createAsync`。端上的 `normalizeTtsText` 只补 fst 覆盖不到的三类：时刻（`10:05`）、
+  ≥4 位编号的逐位读法、算符与字母枚举，避免和 fst 的两套规整互相覆盖。
 - **别再踩的坑**：TTS 的开关/字段叫 `rule_fsts`（CLI 是 `--tts-rule-fsts`），`--rule-fsts` 是 ASR 的；
   给 TTS CLI 传 `--rule-fsts` 会走"未知选项"分支 `exit(-1)`，也就是 RC=255。这个 255 曾被误判成
   "软浮点构建带 fst 会崩"，实际是名字用错。
@@ -82,6 +84,19 @@
 2026-10-19 早上"播报跑一阵就不念、重启才恢复"就是落在这个面上：连续失败时每条都白等 10 秒再丢，
 日志上只有零散的 watchdog 行。要收口得加连续失败计数和一条聚合告警。
 
+### 切到 zh-en 后的验收点（2026-10-20 晚定档，四台未验）
+
+- [ ] `stage=extract model=matcha-icefall-zh-en espeak_files=355`（首次解包，第二次同一行应是 `-2`）
+      → `stage=init ok=true noiseScale=1 fsts=3`。`fsts=0` 说明 `-zh` 文件名没对上。
+- [ ] 字母话术逐字可辨：`ICU三床请到护士站`、`CCU两床呼叫护士站`、`JHC鸿蒙6.1床头`，
+      喂给引擎的 `fed=` 应是 `I, C, U, 三床请到护士站`（字母串**首尾都有**逗号）。
+- [ ] 数字没被念错：`体温36.5度`→三十六点五度、`21床正在呼叫`→二十一床、`10点05分`→十点零五分。
+      这是 10-20 上午退回 baker 的那条判据，本轮必须在真机上复听，不接受只有 PC 数据。
+- [ ] 后台语速对 zh-en 不生效：把 `tts.TextToSpeechSpeechRate` 填 0.9，日志应出现
+      `stage=speed value=1 model_locked=true`，播报仍常速。测试页顶部的生效语速显示 1。
+- [ ] RTF 不劣化：zh-en 与 baker 同架构同尺寸，PC 侧 0.07–0.16，沿用现有 `rtf≤2.0` 那条线。
+- [ ] 设备 `filesDir` 里残留的 `matcha-icefall-zh-baker/` 已删，不占 128MB。
+
 ## API
 
 ```
@@ -98,5 +113,6 @@ await tts.release()
 
 - HAR 打包：`libs/armeabi-v7a/{libsherpa_onnx.so,libsherpa-onnx-c-api.so,libonnxruntime.so,libcargs.so}`
 - 类型：`src/main/cpp/types/libsherpa_onnx/index.d.ts`
-- 模型：宿主 HAP `entry/src/main/resources/rawfile/matcha-icefall-zh-baker/`
+- 模型：宿主 HAP `entry/src/main/resources/rawfile/matcha-icefall-zh-en/`（主机在 `nurse/src/main/resources/rawfile/`），
+  两个目录都被各自工程 gitignore
 - **模型下载地址、逐文件 sha256 和原生库交叉编译配方（含 onnxruntime 三个源码补丁）见 `docs/tts-models-and-native-build.md`；这些二进制都不进 Git，新环境必须按那份记录重建。**
