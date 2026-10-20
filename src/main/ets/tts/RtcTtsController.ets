@@ -27,8 +27,6 @@ export interface RtcTtsConfig {
   noiseScale?: number
   lengthScale?: number
   numThreads?: number
-  // 中英混读模型需要 espeak-ng-data 的父目录；纯中文模型不传。
-  dataDir?: string
 }
 
 const DEFAULT_MODEL_DIR = 'matcha-icefall-zh-baker'
@@ -40,9 +38,14 @@ const DEFAULT_TOKENS = 'tokens.txt'
 // 因为 number.fst 排在最前会把所有数字串按基数读掉，date/phone 两条永远轮不到。
 // 注意开关名：TTS 用的是 rule_fsts，ASR 才叫 rule-fsts，传错会直接 exit(-1)。
 const RULE_FSTS = ['number.fst', 'date.fst', 'phone.fst']
-const DEFAULT_NOISE_SCALE = 0.33
+// espeak-ng 的音库目录：只有中英混读模型带它，纯中文模型没有这个目录。
+const ESPEAK_DIR = 'espeak-ng-data'
+const DEFAULT_NOISE_SCALE = 0.2
 const DEFAULT_LENGTH_SCALE = 1.0
 const DEFAULT_NUM_THREADS = 4
+// 语速固定 1.0，不做可调倍率：.61 实测 speed=0.85 时同一条"21床,正在呼叫。"会合成出
+// "211床正在呼呼叫"这种叠字和多余音素。sherpa 的 speed 是靠拉长 duration 实现的，
+// 这个模型被拉长后对齐就崩，所以宁可快一点，也不要念不清。
 
 let activePlayer: media.AVPlayer | undefined = undefined
 
@@ -68,7 +71,60 @@ async function ensureModelFiles(ctx: common.Context, modelDir: string): Promise<
     fs.writeSync(file.fd, content.buffer as ArrayBuffer)
     fs.closeSync(file)
   }
+  let espeakFiles = 0
+  try {
+    espeakFiles = await ensureEspeakTree(ctx, modelDir, base)
+  } catch (_error) {
+    espeakFiles = -1
+  }
+  perf(`stage=extract model=${modelDir} espeak_files=${espeakFiles}`)
   return base
+}
+
+// getRawFileListSync 返回的是 string[]，没有 isDir；rawfile 也 stat 不了，
+// 所以只能"读得到就是文件、读不到就是目录"来分流。
+async function ensureRawTree(ctx: common.Context, rawDir: string, destDir: string): Promise<number> {
+  const entries: string[] = ctx.resourceManager.getRawFileListSync(rawDir)
+  if (!fs.accessSync(destDir)) {
+    fs.mkdirSync(destDir, true)
+  }
+  let written = 0
+  for (const name of entries) {
+    const rawChild = `${rawDir}/${name}`
+    const destChild = `${destDir}/${name}`
+    let content: Uint8Array | undefined = undefined
+    try {
+      content = await ctx.resourceManager.getRawFileContent(rawChild)
+    } catch (_error) {
+      written += await ensureRawTree(ctx, rawChild, destChild)
+      continue
+    }
+    if (fs.accessSync(destChild)) {
+      continue
+    }
+    const file = fs.openSync(destChild, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
+    fs.writeSync(file.fd, content.buffer as ArrayBuffer)
+    fs.closeSync(file)
+    written += 1
+  }
+  return written
+}
+
+// espeak-ng-data 有 355 个文件，逐个 getRawFileContent 再判存在太费，
+// 解过一次就落一个标记文件；espeak 只按自己的文件名表读目录，多个陌生文件不影响它。
+async function ensureEspeakTree(ctx: common.Context, modelDir: string, base: string): Promise<number> {
+  const tree = `${base}/${ESPEAK_DIR}`
+  const marker = `${tree}/.extracted`
+  if (fs.accessSync(marker)) {
+    return -2
+  }
+  const written = await ensureRawTree(ctx, `${modelDir}/${ESPEAK_DIR}`, tree)
+  if (written > 0) {
+    const file = fs.openSync(marker, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
+    fs.writeSync(file.fd, 'ok')
+    fs.closeSync(file)
+  }
+  return written
 }
 
 function ruleFstsArg(base: string): string {
@@ -253,7 +309,10 @@ export class RtcTtsController {
         vocoder: cfg.vocoder ?? `${base}/${DEFAULT_VOCODER}`,
         lexicon: cfg.lexicon ?? `${base}/${DEFAULT_LEXICON}`,
         tokens: cfg.tokens ?? `${base}/${DEFAULT_TOKENS}`,
-        dataDir: cfg.dataDir,
+        // 真机取证：sherpa 检查的是 <data_dir>/phontab，所以要指到 espeak-ng-data
+        // 本身，指到它的父目录会得到 "phontab does not exist" 然后 create 返回 null。
+        // 纯中文模型不带这个目录，就不传（空串在 shim 里等价于不设 data_dir）。
+        dataDir: fs.accessSync(`${base}/${ESPEAK_DIR}/phontab`) ? `${base}/${ESPEAK_DIR}` : '',
         ruleFsts: fsts,
         noiseScale: noiseScale,
         lengthScale: cfg.lengthScale ?? DEFAULT_LENGTH_SCALE,
@@ -281,7 +340,10 @@ export class RtcTtsController {
     speakSeq += 1
     const seq = speakSeq
     queuedCount += 1
-    perf(`stage=enqueue seq=${seq} queue=${queuedCount} text_len=${text.length}`)
+    // fed= 是真正喂给引擎的规整后文本：现场报"漏字"时先看这里，就能分清是端上规整吃掉的
+    // 还是 espeak/词表没这个音。
+    const fed = normalizeTtsText(text)
+    perf(`stage=enqueue seq=${seq} queue=${queuedCount} text=${text} fed=${fed}`)
     // 多条播报排队念完，不互相打断：这里不能先 stop，否则新呼叫会把上一条的播报掐掉。
     const prev = this.speaking ?? Promise.resolve()
     this.speaking = prev.catch(() => undefined).then(async (): Promise<void> => {
@@ -291,7 +353,7 @@ export class RtcTtsController {
       const generation = this.generation
       const synthStartedAt = Date.now()
       try {
-        const generated = await sherpa.generateAsync(this.handle, normalizeTtsText(text), 0, 1.0)
+        const generated = await sherpa.generateAsync(this.handle, fed, 0, 1.0)
         const synthMs = Date.now() - synthStartedAt
         if (generation !== this.generation) {
           perf(`stage=skip seq=${seq} reason=cancelled synth_ms=${synthMs}`)

@@ -19,8 +19,24 @@ export default function rtcTtsTextTest() {
       expect(normalizeTtsText('体温36.5度')).assertEqual('体温36.5度')
     })
 
+    it('reads math symbols as chinese words', 0, () => {
+      expect(normalizeTtsText('3+2=5，9-4=5，6×3=18，8÷2=4'))
+        .assertEqual('3加2等于5，9减4等于5，6乘3等于18，8除2等于4')
+      expect(normalizeTtsText('2−1')).assertEqual('2减1')
+    })
+
     it('leaves an invalid clock alone', 0, () => {
       expect(normalizeTtsText('比例25:99')).assertEqual('比例25:99')
+    })
+
+    it('splits an upper-case run into letters with a pause', 0, () => {
+      expect(normalizeTtsText('ABCDEFGHIJ')).assertEqual('A, B, C, D, E, F, G, H, I, J')
+      expect(normalizeTtsText('JHC主机呼叫21床')).assertEqual('J, H, C主机呼叫21床')
+    })
+
+    it('keeps a normal english word as one word', 0, () => {
+      expect(normalizeTtsText('PICC维护')).assertEqual('P, I, C, C维护')
+      expect(normalizeTtsText('Nurse station')).assertEqual('Nurse station')
     })
 
     it('handles empty text', 0, () => {

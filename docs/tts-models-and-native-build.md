@@ -137,27 +137,56 @@ bash tools/build-sherpa-shim.sh          # OHOS_NATIVE=<sdk>/native 可覆盖
    结构体里的默认值必须显式赋；`Reject()` 要记一条原生日志并 reject 真正的 `Error` 对象，
    否则宿主侧 `error.message` 打成 `undefined`，排查时看不出失败在哪一步。
 
-## 中英混读模型（matcha-icefall-zh-en，尚未接入）
+## 中英混读模型（matcha-icefall-zh-en，2026-10-20 已退回 baker）
+
+**退回原因（真机日志，不是听感评价）**：`.104` 上 `stage=enqueue` 显示喂进去的文本是对的
+（`text=体温36.5度 fed=体温36.5度`、`text=21床正在呼叫 fed=21床正在呼叫`），音频却念成
+「34.5 度」和「21床正呼叫」——**数字内容错、音节丢/叠，出在引擎侧**。医院播报把体温念错比不念更危险，
+所以默认模型改回 `matcha-icefall-zh-baker`（纯中文），zh-en 整目录移出工程留作后续复测。
+旁证：同一条 MQTT 文本带逗号「21床,正在呼叫。」在 `.93` 连播三条都干净，测试页无逗号那条丢字，
+怀疑是 matcha 在缺少韵律切分时更容易丢/叠音节；补逗号能缓解但停顿变长，现场已否决该做法。
+**拉丁字母需求医院确认要有**，这条 zh-en 是唯一在端上能出声的路，待解决（不是靠改词表，已证伪）。
+
+换回 baker 同时要改的三处（都在 `RtcTtsController.ets` 常量区）：模型目录名、
+声码器 `vocos-22khz-univ.onnx`（16k 那只不给 baker 用）、rule-fst 名字去掉 `-zh`；
+`data_dir` 现在按 `filesDir/<model>/espeak-ng-data/phontab` 是否存在才传，baker 没这目录就是空串
+（shim 里 `empty() ? nullptr`，等价于不设）。工程里的 zh-en 目录已移到 `D:\tmp\tts\models\zh-en-from-bed`
+和 `zh-en-from-host`，baker 备份在 `baker-from-bed`/`baker-from-host`，两边 lexicon.txt sha256 一致。
 
 换它的原因是 baker 只能念汉字：**给 `lexicon.txt` 补字母条目是无效的**（实测 52 行大小写条目、
 `ABCDEFGHIJ` 仍然 `reason=empty_audio synth_ms=13`，字母在查词表之前就被中文前端丢了）。
 zh-en 的英文走 **espeak-ng**，与词表无关。
 
-包内文件（tar 79,033,838 字节，解压后约 93MB）：
+包内文件（tar 79,033,838 字节，解压后约 93MB，另加声码器约 143MB 进 rawfile）：
 
 | 文件 | 字节数 | 说明 |
 |---|---:|---|
 | `model-steps-3.onnx` | 75,717,082 | 与 baker 的 75,624,188 同级，算力同档 |
 | `lexicon.txt` | 1,400,278 | 68,037 行，**以 ASCII 开头的键 0 条** |
 | `tokens.txt` | 21,146 | 2,190 个 token，含 IPA/英文音素 |
-| `espeak-ng-data/` | 约 19MB、120 个文件 | **必须随包分发**，`data_dir` 指向它的父目录 |
+| `espeak-ng-data/` | 355 个文件 | **必须随包分发**，`data_dir` 指向这个目录本身（sherpa 查 `<data_dir>/phontab`，指到父目录会得到 `phontab does not exist` 然后 create 返回 null） |
 | `number-zh.fst` / `phone-zh.fst` / `date-zh.fst` | 64,482 / 88,630 / 59,154 | 文件名与 baker 不同，带 `-zh` |
 | 声码器 | `vocos-16khz-univ.onnx` 53,882,848 | README 指定，22k 那只**不能用** |
 
-接入要点：现有 `libsherpa-onnx-c-api.so` 的字符串里已有 `--matcha-data-dir` 和
-`Failed to initialize espeak-ng with data dir`，说明 **c-api 不用重编，只需重编 shim**
-（本仓库 shim 已加 `dataDir` 字段）；另外宿主侧 `ensureModelFiles` 目前只拷平铺文件，
-接 espeak-ng-data 之前要补目录递归拷贝。
+接入要点：c-api 不用重编（`--matcha-data-dir` 已在库里），只重编了 shim 加 `dataDir` 字段；
+`ensureModelFiles` 用 `ensureRawTree` 递归解 `espeak-ng-data`，解完在目录里落一个 `.extracted`
+标记，第二次启动直接跳过（355 个文件首次解包要几十秒）。`rawfile` 只读，所以模型一律先解到
+`ctx.filesDir` 再喂引擎。
+
+## 语速（固定 1.0，不做可调倍率）
+
+`generateAsync(handle, text, sid, speed)` 的 `speed` 是靠拉长 duration 实现倍率的（sherpa 内部
+`length_scale = 配置值 / speed`）。`.61` 实测 `speed=0.85` 时同一条「21床,正在呼叫。」会合成出
+「211床正在呼呼叫」这种叠字和多余音素，`.93` 的 1.0 干净。测试页滑条上线后现场唯一能接受的
+值就是 1.0，所以倍率已整条移除（`filesDir/tts-speed.txt`、`loadRtcTtsSpeed`/`saveRtcTtsSpeed`
+和两台测试页滑条都删了），引擎里硬编 1.0。觉得快也不要从这里加回来，只有换模型能解决。
+
+## 停顿稳定性（noise_scale）
+
+matcha 是扩散模型，`--matcha-noise-scale` 越大采样越不稳、越容易出现怪停顿。试听对比过
+0.66 / 0.33 / 0.2，`.93` 与 `.104` 上 0.33 和 0.66 现场判定"几乎没区别"，`0.2` 是当前出厂值
+（`DEFAULT_NOISE_SCALE`，仍可通过 `RtcTtsConfig.noiseScale` 由宿主覆盖）；句内停顿是模型自身
+分词/韵律造成的，`tts-silence-scale` 只管句间，压不住。
 
 ## 下载与环境坑
 
