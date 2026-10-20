@@ -244,13 +244,17 @@ export struct RtcReferenceCallLayout {
     // hasRemoteVideo / mediaConnected 必须进 key：远端轨通常在 connected 之后才到位，
     // 而整棵媒体子树包在 ForEach([getRenderKey]) 里，key 不变则 itemGenerator 不重跑，
     // remoteVideoBuilder() 这支不会被重新求值，远端 XComponent 永远不挂载、surface 不创建。
+    // 本机预览同一回事：localCard 的两个标志通常在建源之后才翻 true，不进 key 就永远停在
+    // 头像占位（.61 真机：本机轨已 live，但 [host-local] 的 surface 一次都没创建过）。
     return call.sessionKey +
       '|phase=' + call.phase +
       '|mode=' + call.mode +
       '|overlay=' + this.shouldShowOverlay() +
       '|sideCount=' + this.getSideCalls().length +
       '|hasRemoteVideo=' + (call.hasRemoteVideo === true) +
-      '|mediaConnected=' + (call.mediaConnected === true)
+      '|mediaConnected=' + (call.mediaConnected === true) +
+      '|localHasVideo=' + (this.model.localCard.hasVideo === true) +
+      '|localVideoReady=' + (this.model.localCard.videoReady === true)
   }
 
   private getControlsRenderKey(call: RtcHostCallUiItem): string {

@@ -670,8 +670,13 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     return hasRemoteAudio || hasRemoteVideo
   }
 
-  static isLocalVideoReady(readyState?: string, hasFrame: boolean = false): boolean {
-    return readyState === 'live' && hasFrame
+  /**
+   * 本机预览只以轨道是否 live 为准。以前还要求"摄像头上报过首帧"，
+   * 但 .61 这台 Dnake api12 主机从不回 capturer started 事件，轨道明明已经在推流
+   * （对端能看到画面）也永远点亮不了，本机自视图就一直停在头像占位。
+   */
+  static isLocalVideoReady(readyState?: string): boolean {
+    return readyState === 'live'
   }
 
   static prioritizeVideoCodecs(codecs: webrtc.RTCRtpCodec[]): webrtc.RTCRtpCodec[] {
@@ -748,6 +753,10 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
           ' frameRate=' + this.videoSource.frameRate +
           ' facingMode=' + this.videoSource.facingMode +
           ' deviceId=' + (this.videoSource.deviceId || ''))
+        if (nextVideoTrack?.readyState === 'live') {
+          // 建源成功就推一次状态，别等下一个信令事件才有机会点亮本机预览。
+          this.emitAllMediaStates()
+        }
       }
     } else {
       this.log('local_video_track requested=false')
@@ -1385,8 +1394,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       channelType: RTC_PEER_SESSION_CHANNEL_SUBSCRIBE,
       mode: session.mode,
       localVideoReady: RtcWebRtcMediaController.isLocalVideoReady(
-        this.audioController.getLocalVideoTrack()?.readyState,
-        this.localVideoHasFrame
+        this.audioController.getLocalVideoTrack()?.readyState
       ),
       hasRemoteAudio: session.hasRemoteAudio,
       hasRemoteVideo: session.hasRemoteVideo,

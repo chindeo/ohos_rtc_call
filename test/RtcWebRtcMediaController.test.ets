@@ -99,11 +99,11 @@ export default function rtcWebRtcMediaControllerTest() {
       )).assertEqual(true)
     })
 
-    it('reports local video ready only after a live track has a real frame', 0, () => {
+    it('reports local video ready from the live track alone', 0, () => {
+      // .61 这台 Dnake api12 主机从不回 capturer started 事件，要求"有首帧"会让本机预览永不挂载。
       expect(RtcWebRtcMediaController.isLocalVideoReady()).assertEqual(false)
-      expect(RtcWebRtcMediaController.isLocalVideoReady('ended', true)).assertEqual(false)
-      expect(RtcWebRtcMediaController.isLocalVideoReady('live')).assertEqual(false)
-      expect(RtcWebRtcMediaController.isLocalVideoReady('live', true)).assertEqual(true)
+      expect(RtcWebRtcMediaController.isLocalVideoReady('ended')).assertEqual(false)
+      expect(RtcWebRtcMediaController.isLocalVideoReady('live')).assertEqual(true)
     })
 
     it('prefers constrained baseline h264 and keeps vp8 fallback', 0, () => {
