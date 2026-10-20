@@ -20,6 +20,8 @@ export interface RtcSignalPayload {
   applyType?: number
   isAll?: boolean
   isHangUp?: boolean
+  // 网关在 c__hangup 里带的挂断原因，值是错误码（timeout/rejected/…），不是中文。
+  reason?: string
   sdp?: string
   sdpType?: string
   rtcUid?: string

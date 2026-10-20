@@ -77,3 +77,30 @@ export function isRtcBroadcastHistoryBusy(history: RtcBroadcastHistory): boolean
 export function isRtcBroadcastHistoryOffline(history: RtcBroadcastHistory): boolean {
   return matchesStatus(history, history.is_offline, RTC_HISTORY_OFFLINE_STATUS)
 }
+
+/**
+ * 网关把挂断原因写在 c__hangup 的 reason 字段里（call-gateway `peer_grpc.go` 的
+ * `HangUpRequest.Reason = UnwrapErr(e).Error()`），值是**错误码不是中文**；
+ * 安卓是拿网关内部 errToGBK 码表翻成中文再念的，鸿蒙拿不到那张表，所以这里只镜像
+ * 播报要用的四个码。其余（正常挂断、已接听）返回空串，免得每次挂断都多一句噪音。
+ * 网关也可能直接下发中文文本，两种都认。
+ */
+const RTC_HANGUP_NOTICE_TEXTS: string[][] = [
+  ['timeout', '无人接听'],
+  ['rejected', '对方拒接'],
+  ['other_answer', '其他设备接听'],
+  ['is_calling', '对方忙线中']
+]
+
+export function rtcHangupReasonText(reason?: string): string {
+  const key = (reason || '').trim()
+  if (key === '') {
+    return ''
+  }
+  for (const pair of RTC_HANGUP_NOTICE_TEXTS) {
+    if (pair[0] === key || pair[1] === key) {
+      return pair[1]
+    }
+  }
+  return ''
+}

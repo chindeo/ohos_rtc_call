@@ -19,6 +19,7 @@ import {
 import {
   isRtcBroadcastHistoryTimeout,
   parseRtcBroadcastHistory,
+  rtcHangupReasonText,
   RtcBroadcastHistory
 } from '../signaling/RtcBroadcastHistory'
 import {
@@ -53,6 +54,9 @@ export interface RtcWebRtcCallControllerListener {
   onPublishReady?: (sessionKey: string, session?: RtcWebRtcCallSessionInfo) => void
   onAnswerNotice?: (session: RtcWebRtcCallSessionInfo) => void
   onHangup?: (sessionKey: string, all: boolean) => void
+  // 网关只在 c__hangup 的 reason 里给出挂断原因，不推带状态的通话记录广播；
+  // 宿主用它念"无人接听/对方拒接"这类提示，只在被通知方是本机呼出的那一路时回调。
+  onHangupNotice?: (text: string, sessionKey: string) => void
   onHoldChange?: (sessionKey: string, isHold: boolean) => void
   onBroadcast?: (message: RtcWebRtcSignalMessage) => void
   onCallHistory?: (history: RtcBroadcastHistory) => void
@@ -297,6 +301,16 @@ export class RtcWebRtcCallController {
   }
 
   private handleMessage(message: RtcWebRtcSignalMessage): void {
+    // 每条入站信令先留一行存在性证据：外场报"该念的没念"时，日志里没有这一行才分得清
+    // 是网关没下发，还是下发了我们不认的事件名（不认的过去整条静默丢弃）。
+    // 只打事件名/长度，不打 data 原文——里面是病人姓名和号码，日志要在现场看。
+    // candidate 量大且 rtc_route_candidate 已逐条打过，这里跳过免得淹掉关键几行。
+    if (message.eventName !== 'c__candidate') {
+      this.listener.onLog?.(`rtc_signal_recv event=${message.eventName || ''}` +
+        ` status=${message.status === undefined ? '' : message.status}` +
+        ` result=${message.result || ''} len=${(message.data || '').length}` +
+        ` known=${RtcWebRtcCallController.isKnownSignalEvent(message.eventName)}`)
+    }
     if (message.eventName === 'c__register') {
       return
     }
@@ -410,6 +424,16 @@ export class RtcWebRtcCallController {
           ' sidHash=' + this.getSessionHash(this.recentLocalSingleHangup?.sessionKey || ''))
       } else if (session) {
         const key = session.sessionKey
+        if (isHangup) {
+          // 挂断原因只在这条信令里，通话记录广播从来没推给呼叫方，所以提示得从这里取。
+          // 被叫侧不念，对齐安卓 CallSendTypeUtils：状态提示只在本机是呼出方时念。
+          const notice = rtcHangupReasonText(payload?.reason)
+          this.listener.onLog?.(`rtc_hangup_reason reason=${(payload?.reason || '').trim()}` +
+            ` notice=${notice} incoming=${session.incoming === true}`)
+          if (notice !== '' && session.incoming !== true) {
+            this.listener.onHangupNotice?.(notice, key)
+          }
+        }
         const preservePublish = this.sessions.size > 1
         if (keepAlive) {
           this.removeSession(key, preservePublish)
@@ -1253,6 +1277,14 @@ export class RtcWebRtcCallController {
       '|hasServer=' + hasServer +
       '|sent=' + sent +
       '|reason=' + reason)
+  }
+
+  // 下面这些是 handleMessage 真正有分支的事件名；不在表里的整条会被丢弃，
+  // 所以 known=false 的那一行本身就是"网关发了但我们没接"的证据。
+  private static isKnownSignalEvent(eventName?: string): boolean {
+    const known: string[] = ['c__register', 'c__invite', 'c__sdp', 'c__candidate', 'c__answer',
+      'c__hangup', 'c__offline', 'c__broadcast']
+    return !!eventName && known.indexOf(eventName) >= 0
   }
 
   private static splitNumbers(value: string): string[] {

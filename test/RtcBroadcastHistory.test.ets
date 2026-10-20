@@ -3,11 +3,26 @@ import {
   isRtcBroadcastHistoryBusy,
   isRtcBroadcastHistoryOffline,
   isRtcBroadcastHistoryTimeout,
-  parseRtcBroadcastHistory
+  parseRtcBroadcastHistory,
+  rtcHangupReasonText
 } from '../src/main/ets/signaling/RtcBroadcastHistory'
 
 export default function rtcBroadcastHistoryTest() {
   describe('RtcBroadcastHistory', () => {
+    it('maps the hangup reason codes the gateway puts in c__hangup', 0, () => {
+      expect(rtcHangupReasonText('timeout')).assertEqual('无人接听')
+      expect(rtcHangupReasonText('rejected')).assertEqual('对方拒接')
+      expect(rtcHangupReasonText('other_answer')).assertEqual('其他设备接听')
+      expect(rtcHangupReasonText('is_calling')).assertEqual('对方忙线中')
+      expect(rtcHangupReasonText('  timeout  ')).assertEqual('无人接听')
+    })
+
+    it('keeps plain hangup and unknown reasons silent', 0, () => {
+      expect(rtcHangupReasonText('')).assertEqual('')
+      expect(rtcHangupReasonText(undefined)).assertEqual('')
+      expect(rtcHangupReasonText('hang_up_normally')).assertEqual('')
+    })
+
     it('parses a status-bearing broadcast and detects timeout by flag', 0, () => {
       const history = parseRtcBroadcastHistory(
         '{"uid":"u1","from":"1001","to":"2002","status":"挂断","is_timeout":true}'

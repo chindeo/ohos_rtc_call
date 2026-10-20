@@ -34,9 +34,34 @@
 
 大屏、走廊屏、门口屏、手表、PDA 等靠 MQTT `call` / `callEnd` category 起停播报（本仓库 AGENTS.md 明确：`call_end` 只服务外围通知，不参与 WebRTC 信令、接听门控或页面切换）。“xxx正在呼叫”这类走这条，与通路一的本机通话结果文本是两回事，不要混用。
 
-## 待补缺口：挂断原因中文不在端上
+## 缺口已补：挂断原因中文在端上有一张小表
 
-`hangUpType` 的中文由安卓 `BroadcastConst.isOperationType()` 调 `Gateway.errToGBK{hangUpType}` 换好再往下传。鸿蒙侧没有对应实现，`RtcServerInfo.i18n` 字段虽然存在但全仓未使用。**先确认这颗 i18n 是不是那张码表再接，不要自己写一份错误码到文本的映射。** 本轮能对齐的是超时 / 忙线 / 离线三条固定文本。
+原先这条写的是"先确认 `RtcServerInfo.i18n` 是不是那张码表再接，不要自己写一份错误码到文本的映射"。
+结论：`i18n` 全仓仍未使用，等不到网关下发；改走 `c__hangup` 的 `reason`，端上只镜像四个播报要用到的码，
+见下一节。**别把它当成完整码表的替代品**——除了这四条，其它错误文案还是走网关/安卓那条通路。
+
+## 挂断原因的真来源：`c__hangup` 的 `reason`（2026-10-20 定案）
+
+**网关不给呼叫方推带 `status` 的通话记录广播。** 真机取证（HAR `1020-090529`，`rtc_signal_recv` 逐条入站日志）：
+21床 → 主机 拒接一次、放到超时一次，两端各自只收到 `c__invite` / `c__sdp` / `c__hangup`，
+**整场 0 条 `c__broadcast`**。所以超时、拒接这类原因不能等广播，只能从挂断信令取。
+
+网关在 `peer_grpc.go` 组 `HangUpRequest` 时写 `req.Reason = UnwrapErr(e).Error()`，`c__hangup` 里带的就是这条错误串，
+取值与网关自己的中文码表（`type_error.go` 的 `I18nDefault`）对应：
+
+| `reason` | 网关中文 | 播报 |
+|---|---|---|
+| `timeout` | 无人接听 | 念 |
+| `rejected` | 对方拒接 | 念 |
+| `other_answer` | 其他设备接听 | 念 |
+| `is_calling` | 对方忙线中 | 念 |
+| 其它（正常挂断、已接听、空） | — | **不念**，否则每次挂断都多一句噪音 |
+
+鸿蒙拿不到 `errToGBK`（那是安卓在网关进程内调的），所以 `RtcBroadcastHistory.ets` 里
+`rtcHangupReasonText()` 只镜像上面四个码——**按业务文案要求处理，不是取代网关码表**；网关补上广播时两处会同时命中，宿主各自做了去重。
+
+方向门控和通路一（广播）一样在包内完成：`RtcWebRtcCallController` 解析到 `reason` 后，
+只在**本机是呼出方**（`session.incoming !== true`）时上抛 `onHangupNotice(text, sessionKey)`，宿主只负责念。
 
 ## 事件从哪来：`c__broadcast` HistoryBean
 
@@ -121,10 +146,11 @@
 ## 手工验收点
 
 1. 床旁开启自动接听、被叫：来电界面出现即听到"为您自动接听"，铃声立刻停止，通话仍能正常建立。
-2. 床旁呼出、对端不接直到网关超时：听到一次“无人接听”，日志 `bed_announce reason=no_response`；再次呼出同样超时会再播一次。
-3. 主机呼出、对方不接超时：主机播“无人接听”。
-4. 主机被叫、本机侧超时：主机同样播（安卓这条没有“必须呼出方”门控）。
-5. 与本机无关的第三方通话超时：主机和床旁都**不播**（`getInfo` 门控）。
-6. hold 广播只切保持状态，不触发任何播报。
-7. TTS 引擎未就绪或服务端合成不可达时，通话流程不受影响，且必须有失败日志，不能静默。
-8. 主机点“发送广播”：主机与床旁各念一遍，主机不念自己发出去的那条（防双声）。
+2. 床旁呼出、对端不接直到网关超时：听到一次"无人接听"，日志 `rtc_hangup_reason reason=timeout notice=无人接听 incoming=false` + `bed_announce reason=hangup_notice text=无人接听`；再次呼出同样超时会再播一次。
+3. 主机呼出、对方不接超时：主机播"无人接听"，日志 `host_hangup_notice text=无人接听`。
+4. 主机呼出、对方手动拒接：播"对方拒接"（`reason=rejected`）；被第三方接听：播"其他设备接听"（`reason=other_answer`）；对方忙线：播"对方忙线中"（`reason=is_calling`）。
+5. **本机作为被叫**挂断（`incoming=true`）或正常挂断/已接听：**不许播**任何一句，日志里 `notice=` 为空。
+6. 与本机无关的第三方通话超时：主机和床旁都**不播**（`getInfo` 门控）。
+7. hold 广播只切保持状态，不触发任何播报。
+8. TTS 引擎未就绪或服务端合成不可达时，通话流程不受影响，且必须有失败日志，不能静默。
+9. 主机点"发送广播"：主机与床旁各念一遍，主机不念自己发出去的那条（防双声）。

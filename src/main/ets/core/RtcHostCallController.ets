@@ -53,6 +53,9 @@ export interface RtcHostCallControllerOptions {
   onIncoming?: (session: RtcWebRtcCallSessionInfo) => void
   onAutoAnswerNotice?: (session: RtcWebRtcCallSessionInfo) => void
   onCallHistory?: (history: RtcBroadcastHistory) => void
+  // 网关不给呼叫方推通话记录广播，挂断原因只在 c__hangup 的 reason 里；
+  // 包内已按"本机是呼出方才上抛"折过，宿主只管念。
+  onHangupNotice?: (text: string, sessionKey: string) => void
   onConnected?: (sessionKey: string) => void
   onEnded?: (sessionKey: string, all: boolean, remainingCount?: number) => void
   onHold?: (session: RtcCallSession) => void | Promise<void>
@@ -227,6 +230,9 @@ export class RtcHostCallController {
       },
       onHangup: (sessionKey: string, all: boolean) => {
         this.handleRemoteHangup(sessionKey, all)
+      },
+      onHangupNotice: (text: string, sessionKey: string) => {
+        this.options.onHangupNotice?.(text, sessionKey)
       },
       onHoldChange: (sessionKey: string, isHold: boolean) => {
         this.handleRemoteHoldChange(sessionKey, isHold)
