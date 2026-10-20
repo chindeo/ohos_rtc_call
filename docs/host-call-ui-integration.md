@@ -253,7 +253,7 @@ this.callController.startCall({
 | `hold(sessionKey)` | 保持目标通话 |
 | `resume(sessionKey)` | 恢复目标通话 |
 | `hangup(sessionKey)` | 只挂断目标通话 |
-| `hangupAll()` | 挂断全部通话 |
+| `hangupAll()` | 挂断全部通话：对每一路各发一条带自己 `uuid` 的挂断（`is_all` 只作标记），不能只发一条 |
 | `toggleMute()` | 切换本机静音 |
 | `toggleSpeaker()` | 切换免提，或执行宿主切麦回调 |
 | `onUiModelChange(listener)` | 唯一 UI 状态输入 |

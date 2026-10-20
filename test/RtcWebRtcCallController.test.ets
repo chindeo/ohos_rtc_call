@@ -327,7 +327,7 @@ export default function rtcWebRtcCallControllerTest() {
       controller.dispose()
     })
 
-    it('sends all hangup apply only for hangupAll', 0, () => {
+    it('sends one hangup apply per session for hangupAll', 0, () => {
       const signalSession = new TestSignalSession()
       const controller = createController(signalSession)
       controller.registerOutgoingSession('call-a', { number: '1101' }, RtcCallMode.AUDIO)
@@ -335,10 +335,16 @@ export default function rtcWebRtcCallControllerTest() {
 
       controller.hangupAll()
 
-      expect(signalSession.sentSignals.length).assertEqual(1)
-      const apply = parseApply(signalSession.sentSignals[0])
-      expect(apply.applyType).assertEqual(3)
-      expect(apply.isAll).assertEqual(true)
+      // 网关按 uuid 关 chat，少一条就会把另一路床旁留在通话里。
+      expect(signalSession.sentSignals.length).assertEqual(2)
+      const first = parseApply(signalSession.sentSignals[0])
+      const second = parseApply(signalSession.sentSignals[1])
+      expect(first.applyType).assertEqual(3)
+      expect(first.isAll).assertEqual(true)
+      expect(first.commonRequest.uuid).assertEqual('call-a')
+      expect(second.applyType).assertEqual(3)
+      expect(second.isAll).assertEqual(true)
+      expect(second.commonRequest.uuid).assertEqual('call-b')
       expect(controller.getSession('call-a') === undefined).assertEqual(true)
       expect(controller.getSession('call-b') === undefined).assertEqual(true)
       controller.dispose()

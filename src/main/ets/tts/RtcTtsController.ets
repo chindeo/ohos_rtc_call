@@ -4,6 +4,8 @@ import fs from '@ohos.file.fs'
 import hilog from '@ohos.hilog'
 import common from '@ohos.app.ability.common'
 import { normalizeTtsText } from './RtcTtsText'
+import { clampSpeechRate, DEFAULT_SPEECH_RATE } from './RtcSpeechRate'
+import { writeWavFile } from '../audio/RtcWavFile'
 
 const TAG = 'RtcTts'
 
@@ -43,9 +45,6 @@ const ESPEAK_DIR = 'espeak-ng-data'
 const DEFAULT_NOISE_SCALE = 0.2
 const DEFAULT_LENGTH_SCALE = 1.0
 const DEFAULT_NUM_THREADS = 4
-// 语速固定 1.0，不做可调倍率：.61 实测 speed=0.85 时同一条"21床,正在呼叫。"会合成出
-// "211床正在呼呼叫"这种叠字和多余音素。sherpa 的 speed 是靠拉长 duration 实现的，
-// 这个模型被拉长后对齐就崩，所以宁可快一点，也不要念不清。
 
 let activePlayer: media.AVPlayer | undefined = undefined
 
@@ -130,45 +129,6 @@ async function ensureEspeakTree(ctx: common.Context, modelDir: string, base: str
 function ruleFstsArg(base: string): string {
   const present = RULE_FSTS.filter((name: string): boolean => fs.accessSync(`${base}/${name}`))
   return present.map((name: string): string => `${base}/${name}`).join(',')
-}
-
-function writeWav(path: string, samples: Float32Array, sampleRate: number): void {
-  const n = samples.length
-  const dataBytes = n * 2
-  const headerSize = 44
-  const total = headerSize + dataBytes
-  const buf = new ArrayBuffer(total)
-  const view = new DataView(buf)
-  const wr = (off: number, s: string): void => {
-    for (let i = 0; i < s.length; i++) {
-      view.setUint8(off + i, s.charCodeAt(i))
-    }
-  }
-  wr(0, 'RIFF')
-  view.setUint32(4, total - 8, true)
-  wr(8, 'WAVE')
-  wr(12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true)
-  view.setUint16(22, 1, true)
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * 2, true)
-  view.setUint16(32, 2, true)
-  view.setUint16(34, 16, true)
-  wr(36, 'data')
-  view.setUint32(40, dataBytes, true)
-  let off = 44
-  for (let i = 0; i < n; i++) {
-    let v = samples[i]
-    if (v > 1.0) v = 1.0
-    if (v < -1.0) v = -1.0
-    const int16 = v < 0 ? Math.round(v * 32768) : Math.round(v * 32767)
-    view.setInt16(off, int16, true)
-    off += 2
-  }
-  const file = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
-  fs.writeSync(file.fd, buf)
-  fs.closeSync(file)
 }
 
 async function stopActivePlayer(): Promise<void> {
@@ -291,6 +251,22 @@ export class RtcTtsController {
   private speaking: Promise<void> | undefined = undefined
   private generation: number = 0
   private wavPath: string = ''
+  private speed: number = DEFAULT_SPEECH_RATE
+
+  /** 语速在真正合成那一刻取值：排在队列里还没轮到的那条，会按改后的值念。 */
+  setSpeed(value: number): void {
+    const next = clampSpeechRate(value)
+    if (next === this.speed) {
+      return
+    }
+    this.speed = next
+    perf(`stage=speed value=${next}`)
+  }
+
+  /** 当前生效的语速，给宿主测试页只读显示用（不是它设置的那个值，而是引擎真正在用的）。 */
+  getSpeed(): number {
+    return this.speed
+  }
 
   init(ctx: common.Context, cfg: RtcTtsConfig = {}): Promise<void> {
     if (this.ready) {
@@ -353,7 +329,7 @@ export class RtcTtsController {
       const generation = this.generation
       const synthStartedAt = Date.now()
       try {
-        const generated = await sherpa.generateAsync(this.handle, fed, 0, 1.0)
+        const generated = await sherpa.generateAsync(this.handle, fed, 0, this.speed)
         const synthMs = Date.now() - synthStartedAt
         if (generation !== this.generation) {
           perf(`stage=skip seq=${seq} reason=cancelled synth_ms=${synthMs}`)
@@ -365,7 +341,7 @@ export class RtcTtsController {
         }
         const audioMs = generated.samples.length / generated.sampleRate * 1000
         perf(`stage=synth seq=${seq} ok=true synth_ms=${synthMs} audio_ms=${Math.round(audioMs)} queue=${queuedCount}`)
-        writeWav(this.wavPath, generated.samples, generated.sampleRate)
+        writeWavFile(this.wavPath, generated.samples, generated.sampleRate)
         const playStartedAt = Date.now()
         const attempts = await playWav(this.wavPath, audioMs)
         // rtf 只算合成耗时与音频时长之比，验收清单里 RTF<=2.0 看这个数，不看墙钟。

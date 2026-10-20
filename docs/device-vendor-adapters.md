@@ -31,12 +31,33 @@
 - Aurine 原始资料已归档到 `docs/archive/nurse/docs/aurine-hardware-services-ohos/`，公共实现只摘取必要能力，不复制示例站点结构到源码。
 - 调用 Aurine 硬件能力前应检查硬件服务绑定状态，并通过 adapter 给出失败原因。
 
+## JHC（主机手柄）
+
+- 手柄"拿起=接听、放下=挂断"的事件源是轮询 `/sys/module/snd_soc_sunxi_common/parameters/jack_state`
+  （`1`=拿起、`0`=放下，`-rw-r--r--`，不需要申请权限），落在主机 `NurseMainHome`。
+- 为什么不用标准通路：厂家自研 HDF HAL（`audio_host`）拿得到 jack 状态并切了自己的音频通路，
+  但**不向音频框架上报设备**，所以 `AudioRoutingManager.on('deviceChange')` 三种 flag 注册成功却 0 次回调，
+  `getDevices()` 恒为 `out=[2]SPEAKER in=[15]MIC`（2026-10-20 真机取证）。
+  `/dev/input/event3`（"audiocodec Headphones"）被 `audio_host` 独占 grab，应用侧读返回 13900010，也拿不到。
+- 策略：400ms 轮询；首帧只建基线不触发动作（开机手柄可能正压在听筒上）；连续两次读到同一个新值才认（挡抖动）；
+  节点不存在或读失败 → 停用轮询并只打一条日志；标准 `deviceChange` 保留注册，一旦哪天 HAL 补上设备上报，
+  标准路径生效、轮询当场让位。两条通路只喂同一个"已应用状态"入口，不会把同一次拿起触发两遍。
+- 日志前缀统一 `话筒状态-`，真机 `grep -a 话筒状态-` 即可看全链路。
+
 ## 原始资料归档
 
 - Dnake 原始文档：`docs/archive/vendor/dnake-v769-sdk.md`。
 - Shimeta 原始文档：`docs/archive/vendor/shimeta-openharmony-device-api.md`。
 - Aurine 原始文档：`docs/archive/vendor/aurine-hardware-services-ohos/`。
 - 原始文档只作为能力查证来源；实现和协作规则以本项目顶层 docs 与 `AGENTS.md` 为准。
+
+## JHC 手柄手工验收
+
+1. 床旁呼主机 → 拿起手柄接听、放下挂断，连续三次全对。
+2. 日志顺序必须是 `话筒状态-基线` → `话筒状态-变化生效, 来源=轮询, state=1, pickedUp=true`，
+   一次拿起只有一行"变化生效"；出现"忽略重复状态"或两行同值即为抖动/双触发。
+3. 手柄在位状态下冷启动，不得自动接听（只应有基线行）。
+4. 非 JHC 或未申请到节点的设备：只有一条"轮询不启用"，Dnake 按键通路与通话流程不受影响。
 
 ## Dnake 卸载前手工验收
 

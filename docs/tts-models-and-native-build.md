@@ -173,13 +173,28 @@ zh-en 的英文走 **espeak-ng**，与词表无关。
 标记，第二次启动直接跳过（355 个文件首次解包要几十秒）。`rawfile` 只读，所以模型一律先解到
 `ctx.filesDir` 再喂引擎。
 
-## 语速（固定 1.0，不做可调倍率）
+## 语速（后台可配，出货模型已验证）
 
 `generateAsync(handle, text, sid, speed)` 的 `speed` 是靠拉长 duration 实现倍率的（sherpa 内部
-`length_scale = 配置值 / speed`）。`.61` 实测 `speed=0.85` 时同一条「21床,正在呼叫。」会合成出
-「211床正在呼呼叫」这种叠字和多余音素，`.93` 的 1.0 干净。测试页滑条上线后现场唯一能接受的
-值就是 1.0，所以倍率已整条移除（`filesDir/tts-speed.txt`、`loadRtcTtsSpeed`/`saveRtcTtsSpeed`
-和两台测试页滑条都删了），引擎里硬编 1.0。觉得快也不要从这里加回来，只有换模型能解决。
+`length_scale = 配置值 / speed`，小于 1 就是放慢）。历史上 `.61` 用 `speed=0.85` 实测把同一条
+「21床,正在呼叫。」合成成「211床正在呼呼叫」——**那次是在中英混合模型 `matcha-icefall-zh-en` 上测的**，
+出货模型 `matcha-icefall-zh-baker` 没有这个问题，旧结论作废。
+
+现在取值来自后台"参数设置"的 `tts.TextToSpeechSpeechRate`（病区级，注册后随 `/config/list` 下发），
+链路：宿主 `refreshRuntimeConfig` → `parseSpeechRate(value)` → `RtcTtsController.setSpeed()`，
+下一次合成生效。真机试听（2026-10-20，测试页逐条听）：
+
+| 取值 | 现场判定 |
+| --- | --- |
+| 0.7 | 不叠字，但停顿很差、听着费劲，不要用 |
+| 0.9 | 流畅、不叠字不卡字，比 1.0 舒服，**推荐值** |
+| 1.0 | 正常（后台留空/填错时的回落值） |
+
+调节按 0.05~0.1 一档试听即可，0.01 的差别人耳在这条模型上分不出来。两端管理员设置里的 TTS 测试页
+会在顶部只读显示当前生效语速，并提示"无法播报英文字母"（baker 的 lexicon 只有汉字，带字母的文案会整段跳过）。
+
+取值口径在 `tts/RtcSpeechRate.ets`（单独成文件是为了能被 Hypium import，控制器本体挂着 `libsherpa_onnx.so`
+加载不了）：空/非数/越界一律回落 1.0，允许区间 0.5~2.0。后台填 `0` 或 `7`（少打小数点）不会把播报念成噪音。
 
 ## 停顿稳定性（noise_scale）
 

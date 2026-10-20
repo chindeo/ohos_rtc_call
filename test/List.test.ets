@@ -19,6 +19,7 @@ import rtcNetworkRequestRecoveryControllerTest from './RtcNetworkRequestRecovery
 import rtcPeerSessionRegistryTest from './RtcPeerSessionRegistry.test'
 import rtcRingtoneControllerTest from './RtcRingtoneController.test'
 import rtcRuntimeConfigControllerTest from './RtcRuntimeConfigController.test'
+import rtcSpeechRateTest from './RtcSpeechRate.test'
 import rtcStartupFallbackControllerTest from './RtcStartupFallbackController.test'
 import rtcStartupDataCacheTest from './RtcStartupDataCache.test'
 import rtcTtsTextTest from './RtcTtsText.test'
@@ -52,6 +53,7 @@ export default function testsuite() {
   rtcPeerSessionRegistryTest()
   rtcRingtoneControllerTest()
   rtcRuntimeConfigControllerTest()
+  rtcSpeechRateTest()
   rtcStartupFallbackControllerTest()
   rtcStartupDataCacheTest()
   rtcTtsTextTest()

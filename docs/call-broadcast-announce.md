@@ -129,7 +129,9 @@
 
 - 字段：`muteRingtone: boolean`，在 WS 注册成功响应 `eventName="c__register"`、`status=200` 的 `data` 里，
   与 `serveNumber` / `autoAnswer` / `enableMulti` 同层。`true` = 只播报不响铃。
-- **客户端默认口径（2026-10-17 用户定）：默认不响铃**。端上按 `server.muteRingtone !== false` 判定：
+- **作用范围（2026-10-20 用户定）：只管主机**。床旁不读这个字段——主机拨打床旁时这台就是被叫，
+  必须一直响铃，否则护士打过去整间房没有任何声音提示；床旁响不响由这通呼叫自带的 `isPlayRingtone` 决定。
+- **主机默认口径（2026-10-17 用户定）：默认不响铃**。端上按 `server.muteRingtone !== false` 判定：
   只有显式 `false` 才恢复响铃，字段缺省一律按静音处理。
 - **服务端配套义务（2026-10-17 定稿）**：既然缺省=静音，"开启响铃"就必须显式下发 `"muteRingtone":false`，
   不能靠 `omitempty` 把键省掉——否则开关变成单向（能静音、再也打不响）。
@@ -138,23 +140,48 @@
 - 生效时机：注册时下发，改配置后要设备重连/重注册才拿到新值，客户端不需要额外拉取接口。
 - 优先级：只有病区一层 + 内置默认；病区队列不存在时按"只播报"。紧急呼叫本期不豁免，与普呼同一字段。
 - 落点：`RtcServerInfo.muteRingtone` → `RtcHostCallController.options.onRegistered(server)` →
-  床旁/主机各自的 `RtcCallHost` 存 `muteIncomingRingtone`，在 `onIncoming` 里和原有 `isPlayRingtone` 门控并列决定是否 `playIncomingRingtone`。
-  床旁同时在 mute 时跳过铃声预热。
+  主机 `RtcCallHost` 存 `muteIncomingRingtone`，在 `onIncoming` 里决定是否 `playIncomingRingtone`。
+  床旁拿到同一个字段但**不用**，注册即预热铃声播放器。
 - 取值路径（已逐段核对）：`status===200` 才做 `JSON.parse(message.data) as RtcServerInfo`（`RtcWebRtcSignalSession.applyRegisterMessage`），
   经 `RtcWebRtcCallController.onRegister` → `RtcHostCallController.onRegistered` 透传给宿主。字段按**布尔**下发；
   下发成字符串 `"true"` 时当前写法仍会静音，但任何改成 `=== true` 判定的版本都会失效。
-- 日志锚点：两端都打 `rtc_ring raw=<下发原值> muted=<端上判定>`（TAG `RtcCallHost`）。
+- 日志锚点：主机打 `rtc_ring raw=<下发原值> muted=<端上判定>`，床旁打
+  `rtc_ring muted=false reason=bedIgnoresWardSwitch raw=<下发原值>`（TAG `RtcCallHost`）。
   `raw` 用 `String()` 打，能区分 `undefined`（服务端没带字段）和 `false`（显式响铃）。
 
 ### 手工验收点
 
-1. 后台"来电响铃"关闭 → 日志 `rtc_ring raw=true muted=true`；网关尚未下发该字段时同样是 `raw=undefined muted=true`，两种都只播报不响铃，接听/挂断流程不受影响。
-2. 后台打开响铃且网关显式下发 `false` → 日志 `raw=false muted=false`，铃声恢复。**若 `raw=undefined` 说明服务端还在用 omitempty 省键，响铃开关打不开。**
-3. 静音病区里播报失败时现场无任何提示，这是已知风险（服务端本期不豁免紧急呼叫），播报失败必须有日志。
+1. 后台"来电响铃"关闭 → 主机日志 `rtc_ring raw=true muted=true`，只播报不响铃；网关尚未下发该字段时同样是 `raw=undefined muted=true`。
+2. 后台打开响铃且网关显式下发 `false` → 主机日志 `raw=false muted=false`，铃声恢复。**若 `raw=undefined` 说明服务端还在用 omitempty 省键，响铃开关打不开。**
+3. 同一病区下主机呼床旁：不管后台这个开关开着还是关掉，床旁都要响铃（日志 `reason=bedIgnoresWardSwitch`）。
+4. 静音病区里播报失败时现场无任何提示，这是已知风险（服务端本期不豁免紧急呼叫），播报失败必须有日志。
+
+## 后台"参数设置"里的三个播报参数（2026-10-20 对接）
+
+- 来源是智慧病房后台的"参数设置"，走 `GET /app/config/list?mac=`。**后台自己按设备类型过滤**
+  （`CommonService.selectSysConfigList` 把这台设备的类型映射成 deviceClass，只返回 `deviceClasses`
+  包含它的行），所以**端上不判设备类型**：后台没勾这台，这台就取不到这个键。
+- `tts.TextToSpeechSpeechRate`（主机+床旁都勾）→ 语速倍率，取值口径见
+  `docs/tts-models-and-native-build.md` 的"语速"一节。
+- `device.maxCallNotifyCount`（只勾护士站主机）→ **同一条呼叫播报连念 N 遍**。弹窗只弹一次，
+  不跟着重复；接通或挂断时剩余遍数要被停掉（`stopNurseTts()` 会同时掐掉正在播和排队的）。
+- `call.noOneHearD`（只勾床旁屏）→ 「无人接听」这句的**文案**，非空即替换，空则用包内镜像的网关码表文案。
+  对齐安卓 `NoResponseUtils.setNoResponse`：床旁优先取后台，非床旁固定用内置。
+- 生效时机跟随 `/config/list` 的刷新节奏（主机：启动 + 周期轮询 + MQTT refreshConfig；床旁：启动 + MQTT）。
+
+## 主叫等待音（回铃音）
+
+- `audio/RtcRingbackTone.ets`：端上合成 450Hz 单音、响 1 秒停 4 秒的 5 秒 wav 落到 `filesDir`，
+  AVPlayer `loop=true` 播，钉 `STREAM_USAGE_RINGTONE`。不引入音频素材，改节奏只改三个常量。
+- 幅度固定 0.2 是刻意的：呼出阶段本机麦克风已经在采集，太响会从扬声器漏进上行，让对端听见嘟嘟声。
+- 起停由宿主接：发出 invite 起，`onConnected` / `onEnded` / `onError` / 页面销毁 停。
+  **手柄挂断不产生 `onError`，只产生 `onEnded`**，所以 stop 必须覆盖 `onEnded`。
+- 与来电铃声是两个播放器，不共用同一个 `RtcRingtoneController` 实例，否则 `playIncoming` 的
+  busy 门会把等待音直接吞掉。
 
 ## 手工验收点
 
-1. 床旁开启自动接听、被叫：来电界面出现即听到"为您自动接听"，铃声立刻停止，通话仍能正常建立。
+1. 床旁开启自动接听、被叫：**全程一声不响**（起铃直接被跳过，不再"响一下再停"），只听到"为您自动接听"，通话正常建立。
 2. 床旁呼出、对端不接直到网关超时：听到一次"无人接听"，日志 `rtc_hangup_reason reason=timeout notice=无人接听 incoming=false` + `bed_announce reason=hangup_notice text=无人接听`；再次呼出同样超时会再播一次。
 3. 主机呼出、对方不接超时：主机播"无人接听"，日志 `host_hangup_notice text=无人接听`。
 4. 主机呼出、对方手动拒接：播"对方拒接"（`reason=rejected`）；被第三方接听：播"其他设备接听"（`reason=other_answer`）；对方忙线：播"对方忙线中"（`reason=is_calling`）。
@@ -163,3 +190,11 @@
 7. hold 广播只切保持状态，不触发任何播报。
 8. TTS 引擎未就绪或服务端合成不可达时，通话流程不受影响，且必须有失败日志，不能静默。
 9. 主机点"发送广播"：主机与床旁各念一遍，主机不念自己发出去的那条（防双声）。
+10. 主机或床旁**呼出**、对方还没接：本机听到"嘟—嘟—"等待音（响 1 秒停 4 秒），接通/挂断/失败立刻停；
+    日志 `rtc_ringback stage=play ok=true` → `stage=stop`。**对端不能听到嘟嘟声**（幅度 0.2 就是为这个）。
+11. 后台 `tts.TextToSpeechSpeechRate=0.7`：两端日志出现 `rtc_tts_perf stage=speed value=0.7`，
+    之后每条播报都变慢；试听重点看短数字句有没有叠字（历史上 0.85 在中英模型会念成"211床正在呼呼叫"）。
+12. 后台 `device.maxCallNotifyCount=10`：主机收到一条呼叫 MQTT 播报，同一条话连念 10 遍；
+    弹窗只弹一次；念到一半被接听或挂断，剩余遍数当场停住。
+13. 后台 `call.noOneHearD=请稍后`：床旁呼出超时挂断时念"请稍后"而不是"无人接听"；
+    该键清空后回落"无人接听"。主机不受这个键影响。

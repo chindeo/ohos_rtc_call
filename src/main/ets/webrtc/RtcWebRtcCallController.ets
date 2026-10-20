@@ -203,9 +203,18 @@ export class RtcWebRtcCallController {
 
   hangupAll(): void {
     this.recentLocalSingleHangup = undefined
-    const first = this.sessions.values().next()
-    if (!first.done && this.server.serveNumber) {
-      this.sendApply(RTC_APPLY_HANGUP, first.value, true)
+    if (this.server.serveNumber) {
+      // 对齐安卓：挂断全部是"每一路各发一条带自己 uuid 的挂断"，is_all 只作标记。
+      // 网关按 commonRequest.uuid 定位 chat，只发一条会把另一路床旁留在通话里。
+      const targets: string[] = []
+      this.sessions.forEach((session: RtcWebRtcCallSessionInfo): void => {
+        this.sendApply(RTC_APPLY_HANGUP, session, true)
+        targets.push(this.getSessionHash(session.sessionKey))
+      })
+      if (targets.length > 0) {
+        this.listener.onLog?.('hangup_all sent count=' + targets.length +
+          ' sidHashes=' + targets.join(','))
+      }
     }
     this.closeAllLocalSessions('hangup all')
   }
@@ -457,7 +466,7 @@ export class RtcWebRtcCallController {
         // 只要本地还有其他会话就必须 keep_call_group，不能拆整组。
         if (payload && this.hasPayloadSessionIdentity(payload) && this.sessions.size > 0) {
           this.listener.onLog?.('ignore remote hangup for unresolved target; keeping other calls' +
-            ' remaining=' + this.sessions.size)
+            ' remaining=' + this.sessions.size + ' ' + this.payloadIdentityText(payload))
         } else if (this.sessions.size > 1) {
           this.listener.onLog?.('ignore terminal signal without target in multi-call')
         } else {
@@ -1094,6 +1103,14 @@ export class RtcWebRtcCallController {
         commonRequest.to || ''
       )
     }
+  }
+
+  /** 解析不到会话的挂断也要能在日志里对上号：只出哈希身份，不打报文原文（里面有病人姓名号码）。 */
+  private payloadIdentityText(payload?: RtcSignalPayload): string {
+    const sessionId = this.normalizeSessionId(payload?.commonRequest?.uuid || '')
+    const rtcUid = this.normalizeSessionId(payload?.rtcUid || '')
+    return 'sidHash=' + (sessionId === '' ? '' : this.getSessionHash(sessionId)) +
+      ' rtcUidHash=' + (rtcUid === '' ? '' : this.getSessionHash(rtcUid))
   }
 
   private hasPayloadSessionIdentity(payload: RtcSignalPayload): boolean {
