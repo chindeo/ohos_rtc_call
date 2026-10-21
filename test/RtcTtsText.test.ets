@@ -30,12 +30,12 @@ export default function rtcTtsTextTest() {
     })
 
     it('splits an upper-case run into letters with a pause on both sides', 0, () => {
-      expect(normalizeTtsText('ABCDEFGHIJ')).assertEqual('A, B, C, D, E, F, G, H, I, J, ')
-      expect(normalizeTtsText('JHC主机呼叫21床')).assertEqual('J, H, C, 主机呼叫21床')
+      expect(normalizeTtsText('ABCDEFGHIJ')).assertEqual('A、B、C、D、E、F、G、H、I、J、')
+      expect(normalizeTtsText('JHC主机呼叫21床')).assertEqual('J、H、C、主机呼叫21床')
     })
 
     it('keeps a normal english word as one word', 0, () => {
-      expect(normalizeTtsText('PICC维护')).assertEqual('P, I, C, C, 维护')
+      expect(normalizeTtsText('PICC维护')).assertEqual('P、I、C、C、维护')
       expect(normalizeTtsText('Nurse station')).assertEqual('Nurse station')
     })
 

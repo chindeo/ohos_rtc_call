@@ -35,13 +35,13 @@ function readDigitByDigit(digits: string): string {
  * espeak-ng 会把连续大写字母当成一个英文单词去拼读（"JHC" 念成生造词），
  * 拆成单字母它才念字母名。播报里的字母串基本都是缩略语（JHC/ICU/PICC），
  * 所以只处理全大写串；含小写的正常英文单词保持整词读法。
- * 用逗号而不是空格分隔：espeak 会把逗号编成韵律停顿，光用空格十个字母会连着念成一串，
- * 真机上听不出边界。
- * 串尾也要补一个逗号：`I, C, U三床…` 会和后面的汉字连读出一个多余鼻音（回读成 `i c u n`），
- * `I, C, U, 三床…` 才分得开（2026-10-20 五组写法对比试听定这一种）。
+ * 分隔必须用标点、不能用空格：光用空格十个字母会连着念成一串，真机上听不出边界。
+ * 串尾那个标点也不能少：`I, C, U三床…` 会把字母和汉字连读出多余鼻音（回读成 `i c u n`）。
+ * 标点选顿号：现场对比试听 `I, C, U, …`、`I、C、U、…`、`I,C,U,…` 后定顿号最清楚，
+ * 时长和普通逗号一样（逐字母念的 1.5 秒代价来自字母音素本身，不是停顿参数能压的）。
  */
 export function spellUpperRuns(text: string): string {
-  return text.replace(/[A-Z]{2,}/g, (run: string): string => `${run.split('').join(', ')}, `)
+  return text.replace(/[A-Z]{2,}/g, (run: string): string => `${run.split('').join('、')}、`)
 }
 
 /**
