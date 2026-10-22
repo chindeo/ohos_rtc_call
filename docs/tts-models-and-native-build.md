@@ -89,6 +89,35 @@ OHOS clang 对 `armv7-unknown-linux-ohos` 裸默认是 pure soft，而 MLAS 的 
 - `SherpaOnnxCreateOfflineTts` 要 mmap 上百 MB 模型，**跑在主线程会阻塞 ability 生命周期事务、被 sysfreeze `LIFECYCLE_TIMEOUT` 看门狗杀掉，表现像"启动就崩"**。因此 shim 提供 `createAsync`/`generateAsync`：`napi_create_async_work` 丢到 libuv 线程池、`napi_deferred` 回主线程 resolve，并用全局 `std::mutex` 串行化 create/generate（同一 `OfflineTts` 实例的 generate 非线程安全）。
 - 真机取证：`SherpaShim` 应出现四条 `dlopen ... ok` + `sherpa symbols bound`；合成期日志的 TID 与主进程 PID 不同即证明已离开 UI 线程。
 
+## arm64-v8a（视美泰 RK3576 大屏，2026-10-22）
+
+`AIOT-3576E`（ShiMetaOS-1.0.0，api 20）是**纯 64 位**：`const.product.cpu.abilist=arm64-v8a`、
+`abilist32` 取不到、`/system/lib/ld-musl-aarch64.so.1`、`appspawn` 是 ELF64。上面那套 32 位产物在这类机器上
+装不上也加载不了，所以 `libs/arm64-v8a/` 单独出一份。**模型、`.fst`、`espeak-ng-data` 与架构无关，仍是同一份文件**。
+
+| 文件 | 字节数 | sha256 |
+|---|---:|---|
+| `libsherpa_onnx.so`（napi shim） | 38,808 | `f61198b116ccdd9294f810a0d5eee7e5203fd5e003b09e152f3a59d8f571a9d1` |
+| `libsherpa-onnx-c-api.so` | 3,556,896 | `0da619dc05c8bb39d21f85037f3ae6a9d56b475fc76dc2facda393ac7fc38603` |
+| `libonnxruntime.so`（上游预构建，**非自研**） | 12,930,856 | `f9fd9080a10f2b93323d597225fbaa63d06f93b384bdfdd7285db9a9115fcc2b` |
+| `libcargs.so` | 6,816 | `1233646eea5e5c60037454bccca55c0c255b3d29671d9f87082647dfc3c40503` |
+
+重建（都只在 WSL 跑，Windows 侧 SDK 没有能出 ELF 的 clang）：
+
+- sherpa + CLI：参考仓 `build-arm64-ohos.sh`。本机 WSL 连不上 github，`FetchContent` 不能重新下载，
+  脚本改成从 `build-ohos-armeabi-v7a/_deps/*-src` 拷依赖源码树 + `-DFETCHCONTENT_FULLY_DISCONNECTED=ON`。
+  aarch64 没有软浮点那条坑，`"+g,w"` 那个 Eigen 补丁不需要。
+- shim：`bash tools/build-sherpa-shim.sh arm64-v8a`（默认仍是 `armeabi-v7a`，行为不变）。
+- 版本基线不变：`libsherpa-onnx-c-api.so` 里 `strings` 得 `1.12.18`，shim 结构体仍按该 tag 的 `c-api.h`。
+
+已验（CLI 直跑，未经 HAP）：推 `/data/local/tmp/tts64` 后合成三条，**RTF 0.236~0.358**、
+峰值约 22000/32767（非静音），SenseVoice 回读 `体温三十六点五度`、`二十一床正在呼叫`（fst 生效）全对，
+`I、C、U、三床请到护士站` 的字母对。同一次进程启动含模型加载约 6 秒，比 32 位那批的 12~16 秒低。
+
+**尚未验证的一项**：这份 `libonnxruntime.so` 是上游预构建，而 32 位当年正是预构建 ORT 在 HAP 应用命名空间
+`dlopen ... symbol not found` 才换成自研版。装进 HAP 时若重演，需要自研 arm64 ORT（`cpuid_info.cc`、
+`posix/env.cc` 两个补丁大概率仍要，float-abi 那条不适用）。
+
 ## 环境与版本基线（换机器先看这一节）
 
 | 项 | 值 | 怎么确认 |

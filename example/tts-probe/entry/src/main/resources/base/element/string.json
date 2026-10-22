@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "端侧离线 TTS 探针"
+    },
+    {
+      "name": "ability_desc",
+      "value": "TTS 探针页面"
+    },
+    {
+      "name": "ability_label",
+      "value": "TTS 探针"
+    }
+  ]
+}

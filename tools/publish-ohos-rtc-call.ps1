@@ -200,6 +200,13 @@ foreach ($Item in $IncludeItems) {
   Copy-Item -LiteralPath $Source -Destination $PackageRoot -Recurse -Force
 }
 
+# example/tts-probe is a throwaway single-page probe app: its signing material and its 143 MB
+# rawfile model must never enter the package (the scan below would also trip on storePassword).
+$ProbeStage = Join-Path $PackageRoot "example/tts-probe"
+if (Test-Path $ProbeStage) {
+  Remove-Item -LiteralPath $ProbeStage -Recurse -Force
+}
+
 $PublicDocs = @(
   "call-ui-reference.md",
   "host-call-ui-integration.md"

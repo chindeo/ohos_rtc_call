@@ -1,0 +1,7 @@
+{
+  "modelVersion": "5.0.1",
+  "description": "Minimal single-page TTS probe app used to validate the offline TTS HAR on a target device.",
+  "dependencies": {},
+  "devDependencies": {},
+  "dynamicDependencies": {}
+}
