@@ -192,6 +192,14 @@ $IncludeItems = @(
   "src"
 )
 
+# ohpm links the probe app to this package through symlinks under example/**/oh_modules. Once the
+# ohpm cache is cleaned they dangle and Copy-Item -Recurse aborts the whole staging copy (note
+# Test-Path reports True for a dangling link, so "skip broken ones" does not catch it). These are
+# local-only gitignored install artifacts; ohpm recreates them on install, so drop them outright.
+Get-ChildItem -LiteralPath (Join-Path $Root "example") -Recurse -Force -Directory -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -eq "oh_modules" } |
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
 foreach ($Item in $IncludeItems) {
   $Source = Join-Path $Root $Item
   if (-not (Test-Path $Source)) {
