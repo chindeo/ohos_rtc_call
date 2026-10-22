@@ -1,16 +1,32 @@
 import { common } from '@kit.AbilityKit'
+import { audio } from '@kit.AudioKit'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { RtcTtsController } from '@chindeo/ohos-rtc-call'
 
 const TAG = 'TtsProbe'
+
+function mediaVolumeState(phase: string): string {
+  try {
+    const group = audio.getAudioManager().getVolumeManager()
+      .getVolumeGroupManagerSync(audio.DEFAULT_VOLUME_GROUP_ID)
+    const type = audio.AudioVolumeType.MEDIA
+    const line = `media_volume ${phase} ${group.getVolumeSync(type)}/${group.getMaxVolumeSync(type)}`
+    hilog.info(0, TAG, line)
+    return line
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    hilog.error(0, TAG, `media_volume ${phase} readFailed: ${msg}`)
+    return `读取音量失败: ${msg}`
+  }
+}
 
 interface ProbeCase {
   label: string
   text: string
 }
 
-// 覆盖这几轮定下来的判据点：字母（espeak 顿号枚举）、带小数的数字（number-zh.fst）、
-// 轻声音节、以及已知在任何参数下都会丢字的无逗号长句。
+// 覆盖这几轮定下来的判据点：字母（espeak 分号逐个枚举）、带小数的数字（number-zh.fst，
+// 已确认加分隔符只会更糟）、轻声音节、以及需要端上自动插逗号切分的无标点长句。
 const CASES: ProbeCase[] = [
   { label: '字母 + 床号', text: 'ICU三床请到护士站' },
   { label: '字母 + 数字床号', text: 'A10床正在呼叫' },
@@ -33,12 +49,40 @@ struct Index {
     const context = getContext(this) as common.UIAbilityContext
     this.controller.init(context).then((): void => {
       this.ready = true
-      this.status = `TTS 引擎已就绪，语速 ${this.controller.getSpeed()}（中英混读档锁常速，后台值不生效）`
+      this.status = 'TTS 引擎已就绪'
+      this.raiseVolume()
+      const requested = AppStorage.get<number>('probeIndex')
+      if (requested !== undefined && requested >= 0 && requested < CASES.length) {
+        hilog.info(0, TAG, `probe auto-play index=${requested}`)
+        this.speak(CASES[requested].text)
+        return
+      }
       hilog.info(0, TAG, 'probe tts ready, waiting for manual test')
     }).catch((err: Error): void => {
       this.status = `TTS 引擎加载失败: ${err.message}`
       hilog.error(0, TAG, `probe tts init failed: ${err.message}`)
     })
+  }
+
+  // AudioVolumeGroupManager 只有 getter，可写的 AudioManager.setVolume 自 API 9 就废弃；
+  // 顶不上去时至少把档位打在状态行和日志里，别让现场以为探针没跑。
+  private raiseVolume(): void {
+    const before = mediaVolumeState('before')
+    try {
+      const group = audio.getAudioManager().getVolumeManager()
+        .getVolumeGroupManagerSync(audio.DEFAULT_VOLUME_GROUP_ID)
+      const target = group.getMaxVolumeSync(audio.AudioVolumeType.MEDIA)
+      audio.getAudioManager().setVolume(audio.AudioVolumeType.MEDIA, target).then((): void => {
+        this.status = `TTS 引擎已就绪｜${before} → ${mediaVolumeState('after')}`
+      }).catch((err: Error): void => {
+        this.status = `TTS 引擎已就绪（调音量失败）｜${before}`
+        hilog.error(0, TAG, `setVolume failed: ${err.message}`)
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      this.status = `TTS 引擎已就绪（调音量失败）｜${before}`
+      hilog.error(0, TAG, `volume group unavailable: ${msg}`)
+    }
   }
 
   private async speak(text: string): Promise<void> {

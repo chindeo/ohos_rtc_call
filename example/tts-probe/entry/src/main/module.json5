@@ -32,6 +32,19 @@
           }
         ]
       }
+    ],
+    "requestPermissions": [
+      {
+        // 探针要把媒体音量顶到最大，方便现场听清；这条权限 availableLevel=normal，装上即授予。
+        "name": "ohos.permission.MODIFY_AUDIO_SETTINGS",
+        "reason": "$string:module_desc",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      }
     ]
   }
 }

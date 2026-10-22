@@ -101,6 +101,21 @@ OHOS clang 对 `armv7-unknown-linux-ohos` 裸默认是 pure soft，而 MLAS 的 
 | `libsherpa-onnx-c-api.so` | 3,556,896 | `0da619dc05c8bb39d21f85037f3ae6a9d56b475fc76dc2facda393ac7fc38603` |
 | `libonnxruntime.so`（上游预构建，**非自研**） | 12,930,856 | `f9fd9080a10f2b93323d597225fbaa63d06f93b384bdfdd7285db9a9115fcc2b` |
 | `libcargs.so` | 6,816 | `1233646eea5e5c60037454bccca55c0c255b3d29671d9f87082647dfc3c40503` |
+| `libc++_shared.so`（**64 位必须随包**，见下） | 1,262,104 | `f823e88713d586dc23f4a653a5f0aec7a241f951ca48b8e88e9bd12e586a1035` |
+
+**`libc++_shared.so` 为什么要随包**：这类机型只有 `/system/lib64/libc++_shared.so`，**HAP 应用命名空间解析不到它**，
+于是一进页面就 `Cannot read property createAsync of undefined`，日志里是
+`Error loading shared library libc++_shared.so: No such file or directory (needed by .../libs/arm64/libsherpa_onnx.so)`，
+`SherpaShim` 一条日志都不会打（shim 自己没加载）。包里的 `libcurl_http.so` 同样依赖它，所以这一步也修掉了通话侧的隐患。
+32 位那批不需要：它们的 `/system/lib` 里有系统副本，现在的产物在真机已验证多年。
+
+**上游预构建 ORT 在 HAP 里能用（2026-10-22 装机实测，风险关闭）**：补上 `libc++_shared.so` 后
+`SherpaShim` 四条 `dlopen ... ok` + `sherpa symbols bound`、`RtcTts stage=init ok=true create_ms=6174 threads=4 noiseScale=1 fsts=3`，
+6 条话术全部 `attempts=1`、`rtf=0.20~0.39`。**不需要自研 arm64 onnxruntime**——32 位当年那个
+`symbol not found` 在这台 64 位上没有重演。
+
+内存账（同一台实测）：引擎未就绪时探针 Pss 128,877kB，就绪后 345,081kB → **TTS 净增约 211MB**，
+其中只有 26MB 是文件映射，其余是 onnxruntime 权重/arena 的匿名堆。
 
 重建（都只在 WSL 跑，Windows 侧 SDK 没有能出 ELF 的 clang）：
 
@@ -110,13 +125,10 @@ OHOS clang 对 `armv7-unknown-linux-ohos` 裸默认是 pure soft，而 MLAS 的 
 - shim：`bash tools/build-sherpa-shim.sh arm64-v8a`（默认仍是 `armeabi-v7a`，行为不变）。
 - 版本基线不变：`libsherpa-onnx-c-api.so` 里 `strings` 得 `1.12.18`，shim 结构体仍按该 tag 的 `c-api.h`。
 
-已验（CLI 直跑，未经 HAP）：推 `/data/local/tmp/tts64` 后合成三条，**RTF 0.236~0.358**、
+已验（CLI 直跑）：推 `/data/local/tmp/tts64` 后合成三条，**RTF 0.236~0.358**、
 峰值约 22000/32767（非静音），SenseVoice 回读 `体温三十六点五度`、`二十一床正在呼叫`（fst 生效）全对，
 `I、C、U、三床请到护士站` 的字母对。同一次进程启动含模型加载约 6 秒，比 32 位那批的 12~16 秒低。
-
-**尚未验证的一项**：这份 `libonnxruntime.so` 是上游预构建，而 32 位当年正是预构建 ORT 在 HAP 应用命名空间
-`dlopen ... symbol not found` 才换成自研版。装进 HAP 时若重演，需要自研 arm64 ORT（`cpuid_info.cc`、
-`posix/env.cc` 两个补丁大概率仍要，float-abi 那条不适用）。
+之后又用 `example/tts-probe` 装成 HAP 验过一遍（见上一节），CLI 与 HAP 两条路都通。
 
 ## 环境与版本基线（换机器先看这一节）
 
@@ -159,6 +171,8 @@ bash tools/build-sherpa-shim.sh          # OHOS_NATIVE=<sdk>/native 可覆盖
    `_ZTISt12length_error`、`_ZTV…` 这类**非 lazy 重定位**，加载期就要解析；构造函数里的
    `dlopen(libc++_shared.so)` 跑在重定位之后，救不回来，表现是模块直接加载失败。
    照旧产物那样正常链 libc++（`DT_NEEDED` 由系统侧的 `libc++_shared.so` 满足）。
+   **64 位不适用这条**：那类机型只有 `/system/lib64/libc++_shared.so`，HAP 命名空间解析不到，
+   必须把 `libc++_shared.so` 一起放进 `libs/arm64-v8a/` 随包分发，见上面「arm64-v8a」一节。
 2. 结构体字段**必须逐字段**照 v1.12.18 的 `c-api.h:1019-1100` 抄，少一个字段不会编译报错，
    只会让后面的字段整体错位。本项目踩的是 `SherpaOnnxOfflineTtsZipvoiceModelConfig` 少了
    `target_rms`/`guidance_scale`（40 字节写成 32 字节），外层 `silence_scale` 因此读成 0，
@@ -192,18 +206,29 @@ bash tools/build-sherpa-shim.sh          # OHOS_NATIVE=<sdk>/native 可覆盖
 
 1. `noise_scale` 取 0.5~1.0 这一段（现出厂 1.0；0.5 样本上最低，但和 0.8/1.0 的差距不足以作为改动依据）；
 2. **必须挂 fst**，不挂时整句崩（`体温36.5度`→"体温 forty six five度"、`A10床`→"a 探装正正在呼叫"）；
-3. 字母串用**顿号**枚举**并且首尾都要有标点**：`I、C、U、三床请到护士站`。少尾部那个标点会把字母和中文连读出多余鼻音，
-   整串不拆（`ICU`）则 espeak 当成一个英文单词拼读；只用空格分隔会连着念成一串。逗号、无空格逗号、顿号三种时长相同
-   （3.55~3.60 秒），现场试听判顿号最清楚。**逐字母念多出来的 1.4 秒是字母音素自身的时长，`silence_scale` 压不掉**
+3. 字母串用**分号**逐个枚举**并且首尾都要有标点**：`I;C;U;三床请到护士站`。少尾部那个标点会把字母和中文连读出多余鼻音，
+   整串不拆（`ICU`）则 espeak 当成一个英文单词拼读；只用空格分隔会连着念成一串、还会丢字母。
+   **2026-10-22 由顿号改成分号**：同一句各 8 次回读 + 现场耳朵，`I、C、U、…` 3585ms 且八次跑出七种结果，
+   `I;C;U;…` 只要 2481ms、八次回读完全一致；`JHC` 省 1.26 秒、`PICC` 省 1.35 秒。
+   逗号、无空格逗号、顿号、句号、问号、叹号都挤在 3.3~3.6 秒这一档，只有分号掉下来——
+   为什么分号更短**机制没查明**（`;` 在 `tokens.txt` 里 id=2，字母段走 espeak 那一段解释不了），按实测用。
+   **逐字母念的时长代价主要来自字母音素本身，`silence_scale` 压不掉**
    （0.2→0.05→0.01 实测 3721/3735/3735 毫秒，0 会被配置校验直接拒绝，合法区间 0.01~10）。
 4. **语速锁定 1.0，两个方向都不行**：`speed=0.9` 把 `体温36.5度` 念成"先三六点五度"、`为您自动接听` 念成
    "自自动接听"；`1.1` 把 36.5 念成"十六点五度"（丢"三"），`1.2` 把 `21床` 念成"床站呼叫"、`10:05` 丢"五"。
+5. **≥14 字且原文无标点的中文句子，在词与词之间插半角逗号，最多两刀**（`splitLongSentence`）。
+   `二十三床患者张三呼叫护士站请尽快前往处理` 不切是 **16/16 每次必错**（错在床号之后的 者/患/张，
+   真机耳朵也是"患、三没发音"），切成 `…张三,呼叫护士站,请尽快…` 后 8/8 只有一种回读，代价 +0.74 秒。
+   两条边界同样是测出来的，别越过：**不能按字数硬切**（每 4 字一刀把"护士站/请"切断后模型会把字序读乱，
+   回出现"护士战""情紧快"，12/12 仍全错还多花 2 秒）；**中文里别用分号**（同位置分号 8 次跑出 5 种结果，
+   现场听到"前往处理"的"往"偶发漏读）。**数字块前后都不能插**：`体温、36.5度` 比不切更差（6/12→9/12，
+   丢"六"），因为它和 `number-zh.fst` 打架；体温这类目前无解，维持原样。
 
 遗留，别当已解决：**内容错误率 25%~30%，集中在数字和轻声音节，可调项已穷尽**（noise / speed / silence /
 挂不挂 fst / 数字走 fst 还是走汉字都试过），没有"下一个参数"可找。上游也没有任何"matcha 数字读错已修复"
 的记录，自训 Matcha 踩同一个坑见 #3683。剩下的出路只有两条：高危话术在 PC 上多跑几次挑正确样音预合成，
-或者自己微调（投工之前先定"含数字/含字母/含轻声"的话术验收集和达标线）。另外 21 字无逗号长句在任何参数下
-都错；声码器只有 16kHz，高频比 baker 闷；`A10床` 过 `number-zh.fst` 念成"A**十**床"，现场已认可这个读法。
+或者自己微调（投工之前先定"含数字/含字母/含轻声"的话术验收集和达标线）。声码器只有 16kHz，高频比 baker 闷；
+`A10床` 过 `number-zh.fst` 念成"A**十**床"，现场已认可这个读法。
 
 两档的差异（模型目录名、声码器 16k/22k、fst 是否带 `-zh`、`noise_scale`、语速是否可调）现在集中在
 `RtcTtsController.ets` 的 `profileFor(modelDir)`，宿主只靠 `rawfile` 里放哪个目录来选档，不再散着改常量。

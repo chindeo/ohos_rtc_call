@@ -30,13 +30,36 @@ export default function rtcTtsTextTest() {
     })
 
     it('splits an upper-case run into letters with a pause on both sides', 0, () => {
-      expect(normalizeTtsText('ABCDEFGHIJ')).assertEqual('A、B、C、D、E、F、G、H、I、J、')
-      expect(normalizeTtsText('JHC主机呼叫21床')).assertEqual('J、H、C、主机呼叫21床')
+      expect(normalizeTtsText('ABCDEFGHIJ')).assertEqual('A;B;C;D;E;F;G;H;I;J;')
+      expect(normalizeTtsText('JHC主机呼叫21床')).assertEqual('J;H;C;主机呼叫21床')
     })
 
     it('keeps a normal english word as one word', 0, () => {
-      expect(normalizeTtsText('PICC维护')).assertEqual('P、I、C、C、维护')
+      expect(normalizeTtsText('PICC维护')).assertEqual('P;I;C;C;维护')
       expect(normalizeTtsText('Nurse station')).assertEqual('Nurse station')
+    })
+
+    it('cuts a long unpunctuated sentence at word anchors, at most twice', 0, () => {
+      // 不切的长句在这个模型上是每次必错（现场耳朵也听到"患、三"没发音）
+      expect(normalizeTtsText('二十三床患者张三呼叫护士站请尽快前往处理'))
+        .assertEqual('二十三床患者张三,呼叫护士站,请尽快前往处理')
+      // 短句不动
+      expect(normalizeTtsText('21床正在呼叫')).assertEqual('21床正在呼叫')
+      // 原文已经断过句就尊重原文
+      expect(normalizeTtsText('二十三床患者张三，呼叫护士站，请尽快前往处理'))
+        .assertEqual('二十三床患者张三，呼叫护士站，请尽快前往处理')
+      // 没有锚点的长句不硬切（按字数硬切会把词切断、听写成"护士战/情紧快"）
+      expect(normalizeTtsText('本楼层设备巡检已完成状态正常无需处理'))
+        .assertEqual('本楼层设备巡检已完成状态正常无需处理')
+      // 锚点离句首太近也不切，免得把"请按呼叫铃…"这类切碎
+      expect(normalizeTtsText('请按呼叫铃护士站马上过来处理一下'))
+        .assertEqual('请按呼叫铃护士站马上过来处理一下')
+      // 两个锚点挨太近只切一刀
+      expect(normalizeTtsText('二十八床患者请求呼叫护士站请尽快处理'))
+        .assertEqual('二十八床患者请求,呼叫护士站请尽快处理')
+      // 小数的点不算断句标点，带体温读数的长句照样要切
+      expect(normalizeTtsText('二十三床患者张三体温36.5度呼叫护士站请尽快前往处理'))
+        .assertEqual('二十三床患者张三体温36.5度,呼叫护士站,请尽快前往处理')
     })
 
     it('handles empty text', 0, () => {
