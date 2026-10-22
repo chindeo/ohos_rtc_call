@@ -4,6 +4,7 @@ import fs from '@ohos.file.fs'
 import { RtcCallDiagnosticsOptions } from '../model/RtcCallConfig'
 import { RtcWebRtcVideoSourceOptions } from '../webrtc/RtcWebRtcConfig'
 import { RTC_VIDEO_CAPTURE_STOP_TIMEOUT_MS, RtcVideoCaptureStopGate } from './RtcVideoCaptureStopGate'
+import { RtcDeviceVendorResolver } from '../device/RtcDeviceVendor'
 
 export interface RtcLocalAudioOptions {
   trackId: string
@@ -170,7 +171,13 @@ export class RtcAudioController {
     }
     this.localAudioSource = this.pcf.createAudioSource({
       echoCancellation: options.echoCancellation !== false,
-      noiseSuppression: options.noiseSuppression !== false
+      // NS 必须同时给到约束这一层：只改 APM 工厂会被引擎用这里的值写回（webrtc_voice_engine.cc:615），
+      // 实测 CONFIG 事件证实过。.so 现在把 NS 等级默认成 kVeryHigh，这里只负责"开"。
+      noiseSuppression: options.noiseSuppression !== false,
+      // 引擎在没人指定时默认开 AGC（webrtc_voice_engine.cc:443）。床旁外放时 AGC 会在对方
+      // 静音段抬增益、把房间里的回声整段放大，而且它会让"APM 输入/输出电平比"再也读不出
+      // 消除量。取证和听感都要它关掉，所以在这里显式压掉，不能靠默认值。
+      autoGainControl: false
     })
     this.localAudioTrack = this.pcf.createAudioTrack(options.trackId, this.localAudioSource)
     this.applyMute()
@@ -474,6 +481,10 @@ export class RtcAudioController {
     try {
       const prefix = this.diagnostics.aecDumpFilePrefix || 'rtc_call_debug'
       const path = `${this.diagnostics.aecDumpDirectory}/${prefix}_${Date.now()}.aecdump`
+      // 目录由宿主给，可能是第一次用（取证开关现场才打开），不存在就建出来，别让 dump 静默失败。
+      if (!fs.accessSync(this.diagnostics.aecDumpDirectory)) {
+        fs.mkdirSync(this.diagnostics.aecDumpDirectory, true)
+      }
       const file = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
       const ok = this.pcf.startAecDump(file.fd, -1)
       if (!ok) {
@@ -553,11 +564,35 @@ export class RtcAudioController {
     if (this.adm) {
       return
     }
+    const resamplePermille = RtcDeviceVendorResolver.captureResamplePermille()
+    const aecStreamDelayMs = RtcDeviceVendorResolver.aecStreamDelayMs()
+    this.log(`rtc_capture_resample permille=${resamplePermille} vendor=${RtcDeviceVendorResolver.getStoredVendor()} align=false stream_delay_ms=${aecStreamDelayMs}`)
     this.adm = new webrtc.AudioDeviceModule({
+      // MIC keeps the JHC bedside capture on its negotiated 48 kHz; VOICE_COMMUNICATION falls
+      // back to 44.1 kHz. The rescale ratio is a fixed device calibration, not the rate probe:
+      // the probe compares two delivery rates, while AEC3 needs the waveform time scale, and
+      // re-deciding it every 5 s kept the linear filter from ever converging.
+      audioSource: audio.SourceType.SOURCE_TYPE_MIC,
+      inputSampleRate: 48000,
+      // Native default is 16k (kAudioSampleRate_Default). A 16k renderer means AEC3's reference is
+      // upsampled out of a 48k APM and then resampled again by the HAL, so capture and playout are
+      // not on the same clock domain. Pin playout to the same 48k the capture and APM already use.
+      outputSampleRate: 48000,
+      captureRateAlign: false,
+      captureResamplePermille: resamplePermille,
+      aecStreamDelayMs: aecStreamDelayMs,
       useStereoInput: false,
       useStereoOutput: false,
       rendererUsage: audio.StreamUsage.STREAM_USAGE_VOICE_COMMUNICATION
     })
+    // 平台 3A 是"按音频场景给的"：官方文档说通话/语音聊天场景才会做 AEC/ANS/AGC。
+    // 应用侧只能读不能设（SDK 里没有 setAudioScene），所以把场景打出来，
+    // 用来判"HPAE 那句 scenetype 不支持"到底是场景没切起来，还是这台机器根本没实现。
+    try {
+      this.log(`rtc_audio_scene ${audio.getAudioManager().getAudioSceneSync()}`)
+    } catch (error) {
+      this.logError(`rtc_audio_scene read failed ${(error as Error).message}`)
+    }
     this.bindDiagnostics()
   }
 
@@ -566,7 +601,28 @@ export class RtcAudioController {
       return
     }
     const audioProcessingFactory = new webrtc.AudioProcessingFactory()
-    const audioProcessing = audioProcessingFactory.create()
+    // 归因取证：把 WebRTC 内部日志接到 hilog（native 一旦安装就按 LS_VERBOSE 全量输出）。
+    // 渲染缓冲实际被对齐到多少块、延迟何时变动，只有 AEC3 自己知道，而这代 aecdump 没有 raw 事件。
+    // 只在诊断包里开：通话期间每条 RTC_LOG 都会进 hilog，本身会拖慢音频线程。
+    webrtc.NativeLogging.enableLogToDebugOutput(1)
+    // Upstream leaves echo_canceller.enabled false and only flips it when the getUserMedia
+    // constraint reaches WebRtcVoiceEngine::Apply. State the intent here too, and log what was
+    // applied, so "AEC off by config" can be told apart from "AEC on but not converging".
+    const audioProcessing = audioProcessingFactory.create({
+      echoCancellation: true,
+      noiseSuppression: true,
+      highPassFilter: true,
+      autoGainControl: false,
+      logWarningOnDelayChanges: true,
+      // Off, per the offline m124 A/B: on a synthetic echo the internal matched filter reaches
+      // 54.6 dB while external-delay alignment only manages 21.8 dB, so making the reported
+      // delay the alignment is not the fix. Keep the internal estimator and feed it a stable clock.
+      useExternalDelayEstimator: false
+      // 不要在这里打开 exportLinearAecOutput：12:51 接听瞬间 SIGSEGV 就是它。fork 的
+      // EchoCanceller3 构造里把 linear_output_block_/sub_frame_view_ 硬写成 num_bands=1，
+      // 而本机 APM 跑在 48k（num_bands=3），ProcessCapture 逐 band 写入就越界踩堆。
+      // 要拿 AEC3 线性子块得先在 .so 里按 num_bands_ 分配，再回来开这个开关。
+    })
     this.pcf = new webrtc.PeerConnectionFactory({
       adm: this.adm,
       audioProcessing: audioProcessing

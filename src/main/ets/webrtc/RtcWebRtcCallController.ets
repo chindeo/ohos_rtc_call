@@ -415,15 +415,26 @@ export class RtcWebRtcCallController {
       const payload = this.parsePayload(message.data)
       if (payload?.commonRequest &&
         this.shouldIgnoreEndedSignal(message.eventName, payload.commonRequest, payload.rtcUid)) {
+        this.listener.onLog?.('rtc_answer_notice skipped reason=ended_signal_echo')
         return
       }
-      const session = payload?.commonRequest ? this.upsertSession(payload.commonRequest, true, payload.rtcUid) : undefined
+      // 床旁实测（12:45）：网关下发的 c__answer 顶层是话单结构（uuid/from/to/clientType/locId），
+      // 没有 commonRequest，所以原来这条主路径从来没生效过，上行门控只能等"远端音频到达"兜底解除。
+      // 按 c__hangup 同一套解析方式先认话单里的 uuid，两条形状都能解锁。
+      const session = payload?.commonRequest ? this.upsertSession(payload.commonRequest, true, payload.rtcUid) :
+        this.resolvePayloadSession(payload)
       if (session) {
         const scope = RtcWebRtcSignalStateMachine.decodeRtcScope(payload?.rtcUid || '')
         this.clearAnswerApplyRetry(session.sessionKey, 'answer notice')
         this.lifecycle.markPhase(session.uid || session.sessionId || session.sessionKey, 'answered', false)
+        this.mediaController.markSessionAnswered(session.sessionKey)
         this.listener.onLog?.(`rtc_answer_state channelType=${scope.channelType} state=notice`)
         this.listener.onAnswerNotice?.(this.copySession(session))
+      } else {
+        // 12:37 那通就是这里静默跳过、只能靠"远端音频到达"兜底解除上行门控的：
+        // 不打出为什么跳过，下一轮还是判不出是报文缺 commonRequest 还是会话没建起来。
+        this.listener.onLog?.(`rtc_answer_notice skipped reason=${payload ? (payload.commonRequest ? 'no_session' : 'no_commonRequest') : 'parse_failed'}` +
+          ` keys=${RtcWebRtcCallController.describeDataKeys(message.data)}`)
       }
       return
     }

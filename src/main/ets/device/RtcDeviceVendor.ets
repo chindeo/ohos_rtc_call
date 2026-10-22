@@ -101,6 +101,23 @@ export class RtcDeviceVendorResolver {
     return vendor === RtcDeviceVendor.SHIMETA
   }
 
+  // JHC Cdo-I101 (api23 bedside) delivers capture content at ~45000 labeled-48k samples/s, so
+  // AEC3's reference and its own echo slide apart. Two independent calibrations of the zero-drift
+  // value agree: a known click train played from the call gateway drifts +1.96%/s at 1089, giving
+  // 1089/1.0196 ~= 1068; and AEC3's own render/capture call-counter gap drifts -5.6 blocks/s at
+  // 1089 but +4.4 blocks/s at 1045, interpolating to ~1064. 0 = leave native alone.
+  static captureResamplePermille(vendor: string = RtcDeviceVendorResolver.getStoredVendor()): number {
+    return vendor === RtcDeviceVendor.JHC ? 1068 : 0
+  }
+
+  // Asserts the whole speaker->microphone loopback delay to the echo canceller instead of letting
+  // native sum its own two measurements. With useExternalDelayEstimator off this only seeds the
+  // alignment at reset; native can only see the 158~186 ms the platform reports, while the click
+  // train measured 216 ms. 0 would mean "use the measured sum".
+  static aecStreamDelayMs(): number {
+    return 216
+  }
+
   static isDnake(vendor: string = RtcDeviceVendorResolver.getStoredVendor()): boolean {
     return vendor === RtcDeviceVendor.DNAKE
   }

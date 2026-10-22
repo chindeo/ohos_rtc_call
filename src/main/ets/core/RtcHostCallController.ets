@@ -98,6 +98,8 @@ export class RtcHostCallController {
     if (options.diagnostics) {
       audioController.configureDiagnostics({
         enableAecDump: options.diagnostics.enableAecDump,
+        aecDumpDirectory: options.diagnostics.aecDumpDirectory,
+        aecDumpFilePrefix: options.diagnostics.aecDumpFilePrefix,
         enableAudioSampleStats: options.diagnostics.enableAudioSampleStats,
         logTag: options.diagnostics.logTag,
         onLog: (message: string) => {

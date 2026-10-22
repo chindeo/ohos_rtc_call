@@ -909,6 +909,19 @@ export interface AudioDeviceModuleOptions {
   // input sample rate, default is 48000.
   inputSampleRate?: number;
 
+  // Rescale the captured stream to match playout timing, in per mille. Omit or 1000 to
+  // disable. The JHC Cdo-I101 bedside captures ~8% off in time scale versus its own playout.
+  captureResamplePermille?: number;
+
+  // Measure how fast the capture and playout paths really run, and rescale capture to the
+  // labeled rate when the two disagree. Overrides captureResamplePermille while active.
+  captureRateAlign?: boolean;
+
+  // Total delay between a frame leaving WebRTC for the speaker and its echo arriving in the
+  // captured frame, in ms. Omit or 0 to use what the two streams measure on their own. Set it
+  // to sweep a device's real loopback delay without rebuilding the native library.
+  aecStreamDelayMs?: number;
+
   // Control if stereo input should be used or not. The default is mono.
   useStereoInput?: boolean;
 
@@ -971,8 +984,29 @@ declare var AudioDeviceModule: {
 // Hold a native webrtc.AudioProcessing instance
 export interface AudioProcessing {}
 
+// Anything omitted keeps the upstream WebRTC default, which leaves the echo canceller
+// disabled until a constraint turns it on.
+export interface AudioProcessingOptions {
+  echoCancellation?: boolean;
+  echoCancellationMobileMode?: boolean;
+  exportLinearAecOutput?: boolean;
+  autoGainControl?: boolean;
+  noiseSuppression?: boolean;
+  highPassFilter?: boolean;
+  // AEC3. hasClockDrift only softens the suppressor, it does not realign anything.
+  hasClockDrift?: boolean;
+  linearAndStableEchoPath?: boolean;
+  logWarningOnDelayChanges?: boolean;
+  delayDefaultBlocks?: number;
+  delayHeadroomSamples?: number;
+  // While false (upstream default) the audio device delay is used only as the initial value at
+  // reset and AEC3 realigns from its own matched filter every block. Set true to make the
+  // reported delay the alignment.
+  useExternalDelayEstimator?: boolean;
+}
+
 export interface AudioProcessingFactory {
-  create(): AudioProcessing;
+  create(options?: AudioProcessingOptions): AudioProcessing;
 }
 
 declare var AudioProcessingFactory: {

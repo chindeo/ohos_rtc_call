@@ -174,6 +174,8 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private activeSessionKey: string = ''
   private userMuted: boolean = false
   private heldSessionKeys: Map<string, boolean> = new Map()
+  private answeredSessionKeys: Map<string, boolean> = new Map()
+  private uplinkGatedUntilAnswer: boolean = false
   private sessionRemoteVideoRenderers: Map<string, RtcVideoRendererAdapter> = new Map()
   private onSendSignal?: (message: RtcSignalMessage, context: RtcWebRtcSignalContext) => void | Promise<void>
   private onMediaStateChange?: (state: RtcWebRtcMediaState) => void
@@ -282,6 +284,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       session = new RtcWebRtcMediaSession()
       session.sessionKey = key
       this.sessions.set(key, session)
+      this.refreshUplinkGate('register')
       this.resourceGeneration += 1
     }
     if (!session.sessionId) {
@@ -395,6 +398,36 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       this.applyLocalAudioState()
     }
     return true
+  }
+
+  // 预接听阶段不把本地麦送出去。铃声走的是 RINGTONE 独立渲染流，WebRTC 的远端参考里看不到它，
+  // 一旦被采集录进去，AEC3 只会把它当近端语音，线性滤波器直接发散。主机已在通话中时收到新来电
+  // 也不会被禁麦，因为那时已经有一路处于接听状态（采集是全局共享的）。
+  markSessionAnswered(sessionKey: string, reason: string = 'signal answer'): void {
+    const session = this.findSession(sessionKey)
+    const key = (session ? session.sessionKey : sessionKey).trim()
+    if (!key || this.answeredSessionKeys.get(key) === true) {
+      return
+    }
+    this.answeredSessionKeys.set(key, true)
+    this.refreshUplinkGate(reason)
+  }
+
+  private refreshUplinkGate(reason: string): void {
+    let hasAnswered = false
+    this.answeredSessionKeys.forEach((answered: boolean, key: string) => {
+      if (answered && this.sessions.has(key)) {
+        hasAnswered = true
+      }
+    })
+    const gated = !hasAnswered && this.sessions.size > 0
+    if (gated === this.uplinkGatedUntilAnswer) {
+      return
+    }
+    this.uplinkGatedUntilAnswer = gated
+    this.log(`rtc_uplink_gate state=${gated ? 'muted' : 'open'} reason=${reason} ` +
+      `sessions=${this.sessions.size} answered=${hasAnswered}`)
+    this.applyLocalAudioState()
   }
 
   getMediaState(sessionKey: string): RtcWebRtcMediaState | undefined {
@@ -589,6 +622,8 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     sessionIdRemovals.forEach((sessionId: string) => this.sessionIds.delete(sessionId))
     this.sessions.delete(session.sessionKey)
     this.heldSessionKeys.delete(session.sessionKey)
+    this.answeredSessionKeys.delete(session.sessionKey)
+    this.refreshUplinkGate('close session')
     this.clearSessionRemoteVideoRenderer(session.sessionKey)
     let hasVideoSession = false
     this.sessions.forEach((remainingSession: RtcWebRtcMediaSession) => {
@@ -636,6 +671,9 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
       this.sessions.clear()
       this.sessionIds.clear()
       this.heldSessionKeys.clear()
+      this.answeredSessionKeys.clear()
+      this.uplinkGatedUntilAnswer = false
+      this.applyLocalAudioState()
       this.sessionRemoteVideoRenderers.forEach((renderer: RtcVideoRendererAdapter) => {
         this.clearRenderer(renderer)
       })
@@ -1044,7 +1082,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
 
   private applyLocalAudioState(): void {
     const activeHeld = !!this.activeSessionKey && this.heldSessionKeys.get(this.activeSessionKey) === true
-    this.audioController.setMuted(this.userMuted || activeHeld)
+    this.audioController.setMuted(this.userMuted || activeHeld || this.uplinkGatedUntilAnswer)
   }
 
   private bindPeerEvents(record: RtcWebRtcPeerRecord): void {
@@ -1138,6 +1176,9 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     if (event.track.kind === 'audio') {
       session.remoteAudioTrack = event.track
       session.hasRemoteAudio = true
+      // 远端音频已经到达就说明这一路真的通了，即使接听信令还没对上；用它兜底解除上行门控，
+      // 避免信令缺失时把麦克风一直禁着（禁麦比漏音更难排查，也更早毁掉通话）。
+      this.markSessionAnswered(session.sessionKey, 'remote audio')
       this.peerRegistry.markAnsweredAudio(
         session.uid || session.targetNumber,
         this.peerRegistry.sessionKey(

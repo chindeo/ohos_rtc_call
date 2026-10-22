@@ -98,6 +98,9 @@ export class RtcCallSession {
 
 export interface RtcCallDiagnosticsOptions {
   enableAecDump?: boolean
+  // dump 落盘目录由宿主给（控制器本体拿不到 context），不填就只记一条跳过日志。
+  aecDumpDirectory?: string
+  aecDumpFilePrefix?: string
   enableAudioSampleStats?: boolean
   logTag?: string
 }
