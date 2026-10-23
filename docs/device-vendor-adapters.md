@@ -33,16 +33,27 @@
 
 ## JHC（主机手柄）
 
-- 手柄"拿起=接听、放下=挂断"的事件源是轮询 `/sys/module/snd_soc_sunxi_common/parameters/jack_state`
-  （`1`=拿起、`0`=放下，`-rw-r--r--`，不需要申请权限），落在主机 `NurseMainHome`。
-- 为什么不用标准通路：厂家自研 HDF HAL（`audio_host`）拿得到 jack 状态并切了自己的音频通路，
-  但**不向音频框架上报设备**，所以 `AudioRoutingManager.on('deviceChange')` 三种 flag 注册成功却 0 次回调，
-  `getDevices()` 恒为 `out=[2]SPEAKER in=[15]MIC`（2026-10-20 真机取证）。
-  `/dev/input/event3`（"audiocodec Headphones"）被 `audio_host` 独占 grab，应用侧读返回 13900010，也拿不到。
-- 策略：400ms 轮询；首帧只建基线不触发动作（开机手柄可能正压在听筒上）；连续两次读到同一个新值才认（挡抖动）；
-  节点不存在或读失败 → 停用轮询并只打一条日志；标准 `deviceChange` 保留注册，一旦哪天 HAL 补上设备上报，
-  标准路径生效、轮询当场让位。两条通路只喂同一个"已应用状态"入口，不会把同一次拿起触发两遍。
-- 日志前缀统一 `话筒状态-`，真机 `grep -a 话筒状态-` 即可看全链路。
+- 主事件源：厂家模块 `jhc-handset-napi`（原生 `libhandset.so` + `JhcHandsetMonitor` 封装），
+  在应用进程内直读 `/dev/input/event*` 的 `EV_SW/SW_HEADPHONE_INSERT`，设备名按
+  `Headphones/Headset` 匹配（实机 `audiocodec Headphones` = `event3`），不写死编号。
+  接入位置仍是主机 `NurseMainHome`，回调汇入既有的 `applyHandsetState` 单一入口。
+- 为什么事件路径还不通、但这条路可用：`audio_host` 长期 `EVIOCGRAB` 独占该节点，
+  事件读不到（应用侧读返回 13900010）；`EVIOCGSW` 这个 ioctl **不受 grab 影响**，
+  模块按 100ms tick 校验开关位、变化才上报，所以拿到的是电平而不是边沿。
+  电平意味着冷启动就能定基线（"启动时话筒已被拿起"不再需要等一次新事件），
+  厂家哪天放弃独占后事件路径自动生效、无需改代码。
+- 兜底顺序：原生通道（`getLastNativeRc()===0`）→ 轮询
+  `/sys/module/snd_soc_sunxi_common/parameters/jack_state`（400ms、首帧只建基线、连续两次同值才认）。
+  原生通道返回 `-13`（SELinux/节点权限）或 `-2`（设备名未匹配）时轮询顶上，不能只靠
+  `JhcHandsetMonitor` 自带的 `AudioRoutingManager` 兜底——这台板子 HAL 不上报设备，
+  该通道实测 0 回调、`getDevices()` 恒为 `out=[2]SPEAKER in=[15]MIC`。
+- 构建门槛：JHC api23 主机是 64 位内核 + **32 位应用运行时**（已装包只抽出 `libs/arm`），
+  `externalNativeOptions.abiFilters` 必须带 `armeabi-v7a`，只写 `arm64-v8a` 会出现
+  "页面能开、`import handset` 得到 undefined"。
+- 通路真源不变：界面显示哪一路仍以 HAL 写的 `/sys/kernel/mic_switch/select` 为准，
+  每 tick 对一次账，不一致只打一条日志；应用不写通路（HAL 未实现 `UpdateAudioRoute`）。
+- 日志前缀统一 `话筒状态-`，真机 `grep -a 话筒状态-` 即可看全链路；来源取值新增
+  `原生手柄监听`，与既有的 `轮询`/`dnake按键`/`deviceChange` 并列。
 
 ## 原始资料归档
 
@@ -53,11 +64,18 @@
 
 ## JHC 手柄手工验收
 
-1. 床旁呼主机 → 拿起手柄接听、放下挂断，连续三次全对。
-2. 日志顺序必须是 `话筒状态-基线` → `话筒状态-变化生效, 来源=轮询, state=1, pickedUp=true`，
-   一次拿起只有一行"变化生效"；出现"忽略重复状态"或两行同值即为抖动/双触发。
-3. 手柄在位状态下冷启动，不得自动接听（只应有基线行）。
-4. 非 JHC 或未申请到节点的设备：只有一条"轮询不启用"，Dnake 按键通路与通话流程不受影响。
+1. 启动后第一行必须是通道判定：`原生手柄监听已启用, nativeRc=0, channel=native jack event`；
+   出现 `nativeRc=-13/-2` 就是原生通道没通，此时必须同时看到"轮询顶上"那一行，否则这台设备没有任何手柄事件源。
+2. 拿起/放下各一次：日志顺序 `话筒状态-基线` → `话筒状态-变化生效, 来源=原生手柄监听, pickedUp=true`，
+   一次动作只有一行"变化生效"；出现"忽略重复状态"或两行同值即为抖动/双触发。
+3. 床旁呼主机 → 拿起手柄接听、放下挂断，连续三次全对。
+4. 手柄已被拿起（压在听筒上）时冷启动：只应有基线行，**不得自动接听**；
+   这一条是原生通道上线后的新风险点，厂家模块 `getState()` 会在启动瞬间就把"拿起"报上来。
+5. 未挂好检测不受影响：拿起不放满 30 分钟仍出常驻提示（见 `host-bed-project-notes.md`）。
+6. 非 JHC 设备（Dnake 主机、床旁）：只有一条"轮询不启用/原生通道不启用"，
+   Dnake 按键通路与通话流程不受影响。
+7. 装机后先确认 `libs/arm/libhandset.so` 真的被抽出来（`ls /data/app/el1/bundle/public/<包名>/libs/`）；
+   没有 `libs/` 或里面没有 `libhandset.so` 就是 ABI 漏了 `armeabi-v7a`，别看界面正不正常。
 
 ## Dnake 卸载前手工验收
 
