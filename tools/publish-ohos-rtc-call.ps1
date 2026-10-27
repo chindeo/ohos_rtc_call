@@ -192,7 +192,7 @@ $IncludeItems = @(
   "src"
 )
 
-# ohpm links the probe app to this package through symlinks under example/**/oh_modules. Once the
+# ohpm links example apps to this package through symlinks under example/**/oh_modules. Once the
 # ohpm cache is cleaned they dangle and Copy-Item -Recurse aborts the whole staging copy (note
 # Test-Path reports True for a dangling link, so "skip broken ones" does not catch it). These are
 # local-only gitignored install artifacts; ohpm recreates them on install, so drop them outright.
@@ -206,13 +206,6 @@ foreach ($Item in $IncludeItems) {
     throw "Required package item missing: $Source"
   }
   Copy-Item -LiteralPath $Source -Destination $PackageRoot -Recurse -Force
-}
-
-# example/tts-probe is a throwaway single-page probe app: its signing material and its 143 MB
-# rawfile model must never enter the package (the scan below would also trip on storePassword).
-$ProbeStage = Join-Path $PackageRoot "example/tts-probe"
-if (Test-Path $ProbeStage) {
-  Remove-Item -LiteralPath $ProbeStage -Recurse -Force
 }
 
 $PublicDocs = @(
@@ -254,7 +247,7 @@ $SensitivePatterns = @(
   "secret[_-]?key",
   "dgzyh\.server\.chindeo\.test",
   "@company/device_sdk",
-  '"file:(?!\./src/main/(?:libohos_webrtc|cpp/types/libcurl_http|cpp/types/libsherpa_onnx)")'
+  '"file:(?!\./src/main/libohos_webrtc)'
 )
 
 $ScanFiles = Get-ChildItem -Path $PackageRoot -Recurse -File -Include *.ets,*.ts,*.json,*.json5,*.md,*.txt

@@ -25,6 +25,9 @@
 
 ## 原生 curl HTTP 兼容验收
 
+> 该能力已拆到独立仓库 `@chindeo/ohos-curl-http`（`harmony/ohos_curl_http`），下面的验收点在独立仓库执行；
+> 本包不再携带 `libcurl_http.so`。
+
 当 OpenHarmony Network Kit 无法解析、但系统 libc 可以解析同一域名时，宿主可改用公共包提供的原生 curl 请求适配器。
 
 - 保留现有请求拦截器对 `baseURL`、请求头和重试字段的修改能力。

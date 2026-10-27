@@ -1,6 +1,6 @@
 {
   "name": "@chindeo/ohos-rtc-call",
-  "version": "0.1.4-rc3",
+  "version": "0.2.0",
   "description": "Reusable OpenHarmony WebRTC and SIP call utilities.",
   "main": "Index.ets",
   "author": "Chindeo",
@@ -19,9 +19,7 @@
     "call"
   ],
   "dependencies": {
-    "libohos_webrtc.so": "file:./src/main/libohos_webrtc",
-    "libcurl_http.so": "file:./src/main/cpp/types/libcurl_http",
-    "libsherpa_onnx.so": "file:./src/main/cpp/types/libsherpa_onnx"
+    "libohos_webrtc.so": "file:./src/main/libohos_webrtc"
   },
   "dynamicDependencies": {},
   "devDependencies": {

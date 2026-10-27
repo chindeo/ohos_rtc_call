@@ -1,8 +1,0 @@
-build/
-.dist/
-.hvigor/
-oh_modules/
-local.properties
-libs/*.har
-# 模型二进制与宿主工程同样不入库，来源与 sha256 见 docs/tts-models-and-native-build.md
-entry/src/main/resources/rawfile/matcha-icefall-zh-en/

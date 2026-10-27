@@ -1,5 +1,9 @@
 # TTS 模型来源与原生库构建记录
 
+> 代码与 `libs/*/{libsherpa_onnx,libsherpa-onnx-c-api,libonnxruntime,libcargs}.so` 已迁到独立仓库
+> `@chindeo/ohos-tts-sherpa`（`harmony/ohos_tts_sherpa`），本包不再携带。这里保留模型来源、sha256
+> 与构建过程记录，作为历史取证依据。
+
 模型**不进 Git**（放在宿主 HAP 的 `rawfile` 里，那边被 gitignore）；`libs/armeabi-v7a/*.so`
 在本仓库是**被 git 跟踪的**（`git ls-files libs/` 可见），所以下面这些 sha256 是核对产物有没有被
 覆盖过的依据，改完 shim 记得把新产物一起提交。

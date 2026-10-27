@@ -1,8 +1,8 @@
 import fs from '@ohos.file.fs'
 
 /**
- * 单声道 16bit PCM 的最小 WAV 封装，TTS 合成结果和端上生成的提示音都走它落文件再交给 AVPlayer。
- * 从 RtcTtsController 原样平移过来（逐字节等价），两处共用一份，避免等待音另写一个头部拼装。
+ * 单声道 16bit PCM 的最小 WAV 封装：端上合成的提示音先落文件，再交给 AVPlayer 播放。
+ * 离线 TTS 那份在 `@chindeo/ohos-tts-sherpa` 里，两个包各自带一份同一个头部拼装。
  */
 export function writeWavFile(path: string, samples: Float32Array, sampleRate: number): void {
   const n = samples.length
