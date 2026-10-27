@@ -14,11 +14,6 @@ export interface RtcRuntimeConfigControllerOptions {
   defaultRegisterAddress: string
   loader: RtcRuntimeConfigLoader
   handlers: RtcRuntimeSwitchHandlers
-  sipUser?: string
-  sipPassword?: string
-  ntpServer?: string
-  bindingCode?: string
-  deviceIp?: string
   rtcServerHostKey?: string
   applyMicSwitchingOnInitial?: boolean
 }
@@ -112,11 +107,6 @@ export class RtcRuntimeConfigController {
     )
     const refreshOptions: RtcRuntimeRefreshOptions = {
       registerAddress: resolved.registerAddress,
-      sipUser: this.options.sipUser,
-      sipPassword: this.options.sipPassword,
-      ntpServer: this.options.ntpServer,
-      bindingCode: this.options.bindingCode,
-      deviceIp: this.options.deviceIp,
       changedKeys,
       runtimeConfigMap: config,
       micSwitchingValue: resolved.micSwitchingValue,

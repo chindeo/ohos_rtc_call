@@ -134,10 +134,6 @@ export class RtcDeviceVendorResolver {
     return vendor === RtcDeviceVendor.DNAKE
   }
 
-  static supportsDnakeSip(vendor: string = RtcDeviceVendorResolver.getStoredVendor()): boolean {
-    return vendor === RtcDeviceVendor.DNAKE
-  }
-
   static isDnakeSdkAvailable(): boolean {
     return RtcDeviceVendorResolver.shouldUseDnakeSdk()
   }

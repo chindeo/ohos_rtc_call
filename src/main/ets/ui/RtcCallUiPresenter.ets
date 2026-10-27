@@ -65,7 +65,7 @@ export class RtcCallUiPresenter {
       title: RtcCallUiPresenter.resolveTitle(state),
       subtitle: RtcCallUiPresenter.resolveSubtitle(state, options),
       phaseText: RtcCallUiPresenter.resolvePhaseText(state),
-      protocolText: state.protocol === RtcTransportProtocol.SIP ? 'SIP' : 'WebRTC',
+      protocolText: 'WebRTC',
       mode: state.mode,
       protocol: state.protocol,
       showVideo: state.mode === RtcCallMode.VIDEO,

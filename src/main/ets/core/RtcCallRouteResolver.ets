@@ -1,44 +1,26 @@
 import { RtcRegisterAddressInfo, RtcRegisterAddressResolver, RtcTransportProtocol } from '../model/RtcProtocolConfig'
-import { RtcSipConfig } from '../sip/RtcSipConfig'
 
 export interface RtcCallRoute {
   protocol: RtcTransportProtocol
   registerAddress: RtcRegisterAddressInfo
   webrtcSignalUrl?: string
-  sipConfig?: RtcSipConfig
 }
 
 export interface RtcCallRouteOptions {
   registerAddress: string
-  sipUser?: string
-  sipPassword?: string
-  ntpServer?: string
-  bindingCode?: string
-  deviceIp?: string
 }
 
+/**
+ * 只有一个通路时仍然保留这层：地址不合法要在这里判掉并把 reason 带出去，
+ * 不能让调用方拿着一个空的 webrtcSignalUrl 去连信令。
+ */
 export class RtcCallRouteResolver {
   static resolve(options: RtcCallRouteOptions): RtcCallRoute {
     const registerAddress = RtcRegisterAddressResolver.resolve(options.registerAddress)
-    if (registerAddress.protocol === RtcTransportProtocol.WEBRTC) {
-      return {
-        protocol: RtcTransportProtocol.WEBRTC,
-        registerAddress,
-        webrtcSignalUrl: registerAddress.normalizedAddress
-      }
-    }
-
     return {
-      protocol: RtcTransportProtocol.SIP,
+      protocol: RtcTransportProtocol.WEBRTC,
       registerAddress,
-      sipConfig: {
-        sipUser: options.sipUser || '',
-        sipPassword: options.sipPassword || '',
-        sipServer: registerAddress.normalizedAddress,
-        ntpServer: options.ntpServer,
-        bindingCode: options.bindingCode,
-        deviceIp: options.deviceIp
-      }
+      webrtcSignalUrl: registerAddress.valid ? registerAddress.normalizedAddress : undefined
     }
   }
 }

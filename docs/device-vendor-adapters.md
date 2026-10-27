@@ -4,18 +4,17 @@
 
 - 厂家能力必须通过公共 adapter 或 `RtcDeviceCapabilityManager` 暴露。
 - 页面、业务组件、通话 controller 不直接散落 `@company/device_sdk`、`@ohos.shimeta`、`@mili/hardware_service_sdk` 等判断。
-- 未确认厂家默认 WebRTC；只有明确支持 SIP 的设备才进入 SIP 路径。
+- 未确认厂家默认 WebRTC；公共包只保留 WebRTC 一条通路（SIP 已于 2026-10-27 移出）。
 - 厂家能力缺失时应降级并记录低敏日志，不能阻塞基础 WebRTC 通话。
 
 ## Dnake
 
-- Dnake 可使用 Dnake SIP、DMsg、SIP 铃声、手柄、按键、IO 和设备 SDK 能力。
+- Dnake 可使用 DMsg、厂家铃声、手柄、按键、IO 和设备 SDK 能力；SIP 相关能力已不在公共包内。
 - Dnake 看门狗的正常停止只结束进程内屏幕唤醒定时器，不能在后台、窗口销毁或普通退出时自动移除生产看门狗。
 - 卸载受看门狗保护的宿主前，必须通过 `RtcDeviceCapabilityManager.releaseKeepAlive` 显式调用厂家 `removeDog`，确认成功后才能继续卸载。
 - 卸载前解除属于维护动作；远程控制服务不能冒充业务 bundle 调用 `feedDog`，也不能静默改变设备的生产重启策略。
-- WebRTC 模式必须关闭 Dnake SIP 铃声和 DMsg 干扰。
-- SIP 模式下由公共 SIP runtime/controller 统一注册、拨号、接听、挂断、禁用和铃声开关语义。
-- Dnake 按键和手柄事件只作为业务入口来源，最终仍调用公共通话接口。
+- WebRTC 通话期间必须关闭 Dnake 厂家铃声和 DMsg 干扰，避免厂家通道抢走音频和信令。
+- 厂家按键和手柄事件只作为业务入口来源，最终仍调用公共通话接口。
 
 ## Shimeta
 

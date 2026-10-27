@@ -1,6 +1,5 @@
 export enum RtcRingtoneChannel {
-  WEBRTC = 'webrtc',
-  SIP = 'sip'
+  WEBRTC = 'webrtc'
 }
 
 /**
@@ -21,7 +20,6 @@ export interface RtcRingtoneDriver {
 
 export interface RtcRingtonePolicy {
   webrtcEnabled?: boolean
-  sipEnabled?: boolean
   externalUrlEnabled?: boolean
   urlFallbackEnabled?: boolean
   urlFallbackTimeoutMs?: number
@@ -50,7 +48,6 @@ export class RtcRingtoneController {
   private logger?: (message: string) => void
   private policy: RtcRingtonePolicy = {
     webrtcEnabled: true,
-    sipEnabled: true,
     externalUrlEnabled: false
   }
   private urlFallbackTimeoutMs: number = DEFAULT_URL_FALLBACK_TIMEOUT_MS
@@ -66,7 +63,6 @@ export class RtcRingtoneController {
   configurePolicy(policy: RtcRingtonePolicy): void {
     this.policy = {
       webrtcEnabled: policy.webrtcEnabled !== false,
-      sipEnabled: policy.sipEnabled !== false,
       externalUrlEnabled: policy.externalUrlEnabled === true,
       urlFallbackEnabled: policy.urlFallbackEnabled === true
     }
@@ -77,17 +73,10 @@ export class RtcRingtoneController {
   }
 
   setChannelEnabled(channel: RtcRingtoneChannel, enabled: boolean): void {
-    if (channel === RtcRingtoneChannel.SIP) {
-      this.policy.sipEnabled = enabled
-    } else {
-      this.policy.webrtcEnabled = enabled
-    }
+    this.policy.webrtcEnabled = enabled
   }
 
   isChannelEnabled(channel: RtcRingtoneChannel): boolean {
-    if (channel === RtcRingtoneChannel.SIP) {
-      return this.policy.sipEnabled !== false
-    }
     return this.policy.webrtcEnabled !== false
   }
 

@@ -4,7 +4,6 @@ import {
   RtcCallRouteResolver,
   RtcRingtoneChannel,
   RtcRingtoneController,
-  RtcTransportProtocol,
   RtcWebRtcSignalSession,
   RtcWebRtcSignalStateMachine
 } from '@chindeo/ohos-rtc-call'
@@ -12,14 +11,9 @@ import {
 const registerAddress = 'wss://rtc.example.com/websocket'
 const deviceNumber = '1001'
 
-const route = RtcCallRouteResolver.resolve({
-  registerAddress,
-  sipUser: deviceNumber,
-  sipPassword: '',
-  deviceIp: ''
-})
+const route = RtcCallRouteResolver.resolve({ registerAddress })
 
-if (route.protocol === RtcTransportProtocol.WEBRTC) {
+if (route.registerAddress.valid) {
   const session = new RtcWebRtcSignalSession()
   const signalStateMachine = new RtcWebRtcSignalStateMachine({
     adapter: {
@@ -61,18 +55,12 @@ if (route.protocol === RtcTransportProtocol.WEBRTC) {
       displayName: 'Example Device'
     }
   })
-} else if (route.sipConfig) {
-  // Pass route.sipConfig to the host application's SIP vendor adapter.
-  console.info(`SIP server: ${route.sipConfig.sipServer}`)
 }
 
 const ringtone = new RtcRingtoneController()
 ringtone.configurePolicy({
-  webrtcEnabled: route.protocol === RtcTransportProtocol.WEBRTC,
-  sipEnabled: route.protocol === RtcTransportProtocol.SIP,
+  webrtcEnabled: route.registerAddress.valid,
   externalUrlEnabled: false
 })
 
-ringtone.playIncoming(
-  route.protocol === RtcTransportProtocol.WEBRTC ? RtcRingtoneChannel.WEBRTC : RtcRingtoneChannel.SIP
-)
+ringtone.playIncoming(RtcRingtoneChannel.WEBRTC)

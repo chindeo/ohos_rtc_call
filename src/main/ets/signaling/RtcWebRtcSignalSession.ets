@@ -1,5 +1,5 @@
 import webSocket from '@ohos.net.webSocket'
-import { RtcRegisterAddressResolver, RtcTransportProtocol } from '../model/RtcProtocolConfig'
+import { RtcRegisterAddressResolver } from '../model/RtcProtocolConfig'
 import { RtcServerInfo, RtcSignalMessage } from '../model/RtcSignalTypes'
 import {
   RtcWebRtcReconnectConfig,
@@ -279,8 +279,9 @@ export class RtcWebRtcSignalSession {
 
   static buildRegisterUrl(options: RtcWebRtcSignalConnectOptions): string {
     const addressInfo = RtcRegisterAddressResolver.resolve((options.serverUrl || '').trim())
-    const serverUrl = addressInfo.protocol === RtcTransportProtocol.WEBRTC && addressInfo.valid ?
-      addressInfo.normalizedAddress : (options.serverUrl || '').trim()
+    // 只认 ws/wss 信令地址；ip:port 这类地址不再退化成"拿原始串去连 WebSocket"，
+    // 直接由 connect() 以空 URL 拒绝，原因回到 registerAddress.reason。
+    const serverUrl = addressInfo.valid ? addressInfo.normalizedAddress : ''
     const number = (options.identity.number || '').trim()
     if (!serverUrl || !number) {
       return ''

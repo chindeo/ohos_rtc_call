@@ -4,15 +4,14 @@ Reusable OpenHarmony audio/video call utilities for ArkTS applications.
 
 ## Features
 
-- Register address routing: `ws://` and `wss://` use WebRTC, other `ip:port` addresses use SIP.
+- Register address routing: only `ws://` and `wss://` signaling addresses resolve; anything else comes
+  back invalid with the reason carried on the resolved address.
 - WebSocket signaling clients for WebRTC call flows, including shared registration URL building, connection-state tracking, and anti-thundering-herd reconnect backoff.
-- SIP config and adapter interfaces for host-provided Dnake SDK integration.
 - WebRTC audio helper for low-latency audio call setup.
 - Opt-in external NV21 video input for hosts that capture frames through a vendor UVC library instead of CameraKit.
-- call-gateway SDK client for uid-based call control, SDP/ICE routing, and host-injected transport adapters.
 - SDP utilities for Opus low-latency audio parameters.
 - Audio output routing helper for speaker/default routes.
-- Ringtone and call volume helpers, including WebRTC/SIP ringtone channel guards.
+- Ringtone and call volume helpers, including the WebRTC ringtone channel guard.
 - WebRTC answer audio policy helpers for screen speakerphone answers and handset non-speaker answers.
 - Runtime config coordinator for `call.rtcServerHost` and `call.micSwitching` changes.
 - Startup data cache and network recovery state helpers for startup pages that must continue with cached data while business APIs recover.
@@ -26,20 +25,22 @@ Reusable OpenHarmony audio/video call utilities for ArkTS applications.
 
 ## Separated packages
 
-Two capabilities that used to live here are now standalone ohpm packages, and this package no longer
-carries their native libraries:
+Three capabilities that used to live here are now standalone, and this package no longer carries their
+native libraries:
 
 - `@chindeo/ohos-curl-http` — the libcurl-backed `CurlAxios` HTTP client.
 - `@chindeo/ohos-tts-sherpa` — the offline sherpa-onnx TTS engine, its text frontend, speech-rate
   helpers and the `example/tts-probe` app.
+- `@chindeo/ohos-call-gateway-client` — the call-gateway signalling client (`uid`-scoped call control,
+  SDP/ICE forwarding, session store). It lives in the gateway repository at `call-gateway/client-ohos/`
+  and depends back on this package for the signaling state machine, lifecycle store and shared models.
 
-Hosts import them from their own package name; see each repository's README.
+Hosts import them from their own package name; see each project's README.
 
 ## Ringtone Policy
 
-- Normal WebRTC incoming calls: `ringtone/ring1.wav`
-- Normal SIP incoming calls: `ringtone/ring1.wav`
-- WebRTC/SIP outgoing ringback: `ringtone/ringback.wav`
+- Normal incoming calls: `ringtone/ring1.wav`
+- Outgoing ringback: `ringtone/ringback.wav`
 - Transfer ringback: `ringtone/transfer_ringback.wav`
 - Call hold: `ringtone/hold.wav`
 - Presence calls: use `ringtone/presence_normal_ring.wav`, `ringtone/presence_bluecode_ring.wav`, or `ringtone/presence_sanitary_ring.wav` by event type.
@@ -88,17 +89,12 @@ acceptance checks are documented in
 More complete examples are available in the `example` directory.
 
 ```ts
-import { RtcAudioController, RtcCallRouteResolver, RtcTransportProtocol, RtcWebRtcSignalSession } from '@chindeo/ohos-rtc-call'
+import { RtcAudioController, RtcCallRouteResolver, RtcWebRtcSignalSession } from '@chindeo/ohos-rtc-call'
 
-const route = RtcCallRouteResolver.resolve({
-  registerAddress: 'wss://your-signaling.example/ws',
-  sipUser: '1001',
-  sipPassword: '',
-  deviceIp: ''
-})
-
-if (route.protocol === RtcTransportProtocol.SIP) {
-  // Configure the host app's Dnake SIP adapter with route.sipConfig.
+const route = RtcCallRouteResolver.resolve({ registerAddress: 'wss://your-signaling.example/ws' })
+if (!route.registerAddress.valid) {
+  // Only ws:// and wss:// signaling addresses resolve. Anything else (including the old
+  // `ip:port` SIP form) comes back invalid with the reason in route.registerAddress.reason.
 }
 
 const signal = new RtcWebRtcSignalSession()

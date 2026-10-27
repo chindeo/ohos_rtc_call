@@ -38,7 +38,9 @@
 
 ## 项目结构
 
-- `src/main/ets/` 存放 ArkTS 源码，按 `audio`、`core`、`device`、`model`、`signaling`、`sip`、`ui`、`webrtc` 分域组织。
+- `src/main/ets/` 存放 ArkTS 源码，按 `audio`、`callsetting`、`core`、`device`、`model`、`signaling`、`ui`、`webrtc` 分域组织。
+- 端侧离线 TTS 与 libcurl HTTP 客户端已拆到 `@chindeo/ohos-tts-sherpa`、`@chindeo/ohos-curl-http` 两个独立仓库；call-gateway 信令客户端拆到 `call-gateway/client-ohos`（`@chindeo/ohos-call-gateway-client`，反向依赖本包），都不在本包内。
+- SIP 通路（含 Dnake SIP runtime/controller 与 `ip:port` 地址判定）已于 2026-10-27 从本包移除；本包只剩 WebRTC 一条通路。
 - `Index.ets` 是公共导出入口；新增对外 SDK、类型或控制器时必须确认是否需要从这里导出。
 - `test/*.test.ets` 是 Hypium 单元测试。
 - `example/` 存放最小接入示例；`docs/` 存放发布、验收和说明文档；`tools/` 存放打包发布脚本。
@@ -65,8 +67,8 @@
 ## 设备和业务项目接入
 
 - Dnake、Shimeta、Aurine 等厂家能力必须经 `RtcDeviceCapabilityManager` 或专用 adapter 暴露；页面、业务组件和通话 controller 不直接散落厂家 SDK 判断。
-- 只有确认的 Dnake 设备可以启用 Dnake SIP、DMsg、Dnake 铃声、手柄和按键事件；未知厂家和未支持 SIP 的厂家默认走 WebRTC。
-- WebRTC 与 SIP 由服务端地址和设备能力共同决定：`ws://`、`wss://` 走 WebRTC，明确支持的 `ip:port` SIP 地址才进入 SIP 路径。
+- 只有确认的 Dnake 设备可以启用 Dnake DMsg、Dnake 铃声、手柄和按键事件；未知厂家与未登记的厂家一律走 WebRTC。
+- 通话只走 WebRTC：注册地址必须是 `ws://` 或 `wss://`，`ip:port` 形式不再判定为其它协议，而是直接判为无效地址并把原因带出，不允许退化成拿原始串去连 WebSocket。
 - 主机、床旁差异通过 `deviceRole`、配置、回调或 adapter 注入，不能通过复制一套通话状态机解决。
 - 主机/床旁 `AGENTS.md`、`todo.md` 和历史 docs 已统一迁入本项目 `docs/`；后续协作规则以本文件和本项目 docs 为准。
 

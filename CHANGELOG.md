@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **拆包（call-gateway 客户端）**：`gateway/` 三文件（`RtcCallGatewayClient`、`RtcCallGatewaySessionStore`、
+  `RtcCallGatewayTypes`）、`test/RtcCallGatewayClient.test.ets` 与 `example/call-gateway-basic.ets` 迁到
+  `call-gateway/client-ohos`（`@chindeo/ohos-call-gateway-client`），信令契约与网关放在同一个仓。
+  新包反向依赖本包（取 `RtcWebRtcSignalStateMachine`、`RtcCallLifecycleStore` 和 model 类型），实现逐行未改，
+  只把那 5 处相对 import 合成从 `@chindeo/ohos-rtc-call` 取。本包 `Index.ets` 摘掉这 3 行导出；
+  床旁、主机、门口三个宿主此前都未引用这些符号，因此不受影响。
+
+- **Breaking（去掉 SIP 通路）**：`sip/` 整域删除（`RtcSipConfig`、`RtcDnakeSipRuntime`、`SipDnakeAdapter`、
+  `SipDnakeController`、`RtcSipCallStateMapper`），包内只剩 WebRTC 一条通路。连带清掉
+  `RtcTransportProtocol.SIP`、`RtcRingtoneChannel.SIP` 与 `RtcRingtonePolicy.sipEnabled`、
+  `RtcRuntimeSwitchHandlers.prepareSip`、`RtcDeviceVendorResolver.supportsDnakeSip`，以及
+  `RtcCallRouteOptions` / `RtcBusinessRuntimeConfig` / `RtcRuntimeConfigControllerOptions` 里只为 SIP 注册
+  服务的 `sipUser`、`sipPassword`、`ntpServer`、`bindingCode`、`deviceIp` 字段。
+  地址判定改为：非 `ws://` / `wss://` 一律 `valid=false` 并把原因带出；
+  `RtcWebRtcSignalSession.buildRegisterUrl` 不再拿原始串退化成 WebSocket 地址，直接以空 URL 拒绝。
+  Dnake 厂家能力（DMsg、厂家铃声、手柄、按键、IO、MAC、看门狗）按决定保留在 `device/`。
+  宿主侧 `utils/sip/`（床旁、主机）与设置页的 SIP 分支需要各自接手或删除，本包不再提供运行时。
+
 - **Breaking（拆包）**：`CurlAxios` 与端侧离线 TTS 已移出本包，`Index.ets` 不再导出，本 HAR 也不再携带
   `libcurl_http.so`、`libsherpa_onnx.so`、`libsherpa-onnx-c-api.so`、`libonnxruntime.so`、`libcargs.so`、
   `libc++_shared.so`。新仓库：`@chindeo/ohos-curl-http`（`harmony/ohos_curl_http`）与

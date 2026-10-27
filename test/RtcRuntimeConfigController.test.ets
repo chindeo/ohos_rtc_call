@@ -13,15 +13,10 @@ import { RtcCallRoute } from '../src/main/ets/core/RtcCallRouteResolver'
 
 class MemoryRuntimeHandlers implements RtcRuntimeSwitchHandlers {
   webRtcPrepareCount: number = 0
-  sipPrepareCount: number = 0
   micApplyCount: number = 0
 
   async prepareWebRtc(_route: RtcCallRoute, _plan: RtcRuntimeSwitchPlan): Promise<void> {
     this.webRtcPrepareCount += 1
-  }
-
-  async prepareSip(_route: RtcCallRoute, _plan: RtcRuntimeSwitchPlan): Promise<void> {
-    this.sipPrepareCount += 1
   }
 
   async applyMicSwitching(_plan: RtcRuntimeSwitchPlan): Promise<void> {

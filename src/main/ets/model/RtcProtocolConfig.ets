@@ -1,6 +1,5 @@
 export enum RtcTransportProtocol {
-  WEBRTC = 'webrtc',
-  SIP = 'sip'
+  WEBRTC = 'webrtc'
 }
 
 export interface RtcRegisterAddressInfo {
@@ -48,7 +47,7 @@ export class RtcRegisterAddressResolver {
   static resolve(address: string): RtcRegisterAddressInfo {
     const rawAddress = (address || '').trim()
     if (!rawAddress) {
-      return createInfo(rawAddress, RtcTransportProtocol.SIP, '', '', 0, false, false, 'empty address')
+      return createInfo(rawAddress, RtcTransportProtocol.WEBRTC, '', '', 0, false, false, 'empty address')
     }
 
     const lowerAddress = rawAddress.toLowerCase()
@@ -56,15 +55,12 @@ export class RtcRegisterAddressResolver {
       return RtcRegisterAddressResolver.resolveWebRtc(rawAddress)
     }
 
-    return RtcRegisterAddressResolver.resolveSip(rawAddress)
+    return createInfo(rawAddress, RtcTransportProtocol.WEBRTC, rawAddress, '', 0, false, false,
+      'only websocket signaling addresses (ws://, wss://) are supported')
   }
 
   static isWebRtcAddress(address: string): boolean {
     return RtcRegisterAddressResolver.resolve(address).protocol === RtcTransportProtocol.WEBRTC
-  }
-
-  static isSipAddress(address: string): boolean {
-    return RtcRegisterAddressResolver.resolve(address).protocol === RtcTransportProtocol.SIP
   }
 
   private static resolveWebRtc(address: string): RtcRegisterAddressInfo {
@@ -98,24 +94,6 @@ export class RtcRegisterAddressResolver {
       secure,
       valid,
       valid ? 'websocket signaling address' : 'invalid websocket signaling address'
-    )
-  }
-
-  private static resolveSip(address: string): RtcRegisterAddressInfo {
-    const normalizedAddress = address.replace(/^sip:/i, '')
-    const hostParts = normalizedAddress.split(':')
-    const host = hostParts[0] || ''
-    const port = hostParts.length > 1 ? parsePort(hostParts[1]) : 5060
-    const valid = host.length > 0 && port > 0
-    return createInfo(
-      address,
-      RtcTransportProtocol.SIP,
-      normalizedAddress,
-      host,
-      port,
-      false,
-      valid,
-      valid ? 'sip server address' : 'invalid sip server address'
     )
   }
 }

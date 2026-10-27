@@ -5,10 +5,6 @@ import { RtcCallRuntimeConfig } from './RtcCallService'
 export interface RtcBusinessRuntimeConfig {
   registerAddress: string
   local: RtcPeerIdentity
-  sipPassword?: string
-  ntpServer?: string
-  bindingCode?: string
-  deviceIp?: string
   autoAnswer?: boolean
   metadata?: Record<string, string>
 }
@@ -21,11 +17,6 @@ export class RtcConfigAdapter {
   static fromBusinessConfig(source: RtcBusinessRuntimeConfig): RtcCallRuntimeConfig {
     return {
       registerAddress: source.registerAddress,
-      sipUser: source.local.number,
-      sipPassword: source.sipPassword || '',
-      ntpServer: source.ntpServer,
-      bindingCode: source.bindingCode,
-      deviceIp: source.deviceIp,
       local: source.local,
       autoAnswer: source.autoAnswer,
       protocol: undefined,

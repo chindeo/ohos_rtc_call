@@ -3,7 +3,6 @@ import rtcAppVersionTest from './RtcAppVersion.test'
 import rtcAudioControllerTest from './RtcAudioController.test'
 import rtcBroadcastHistoryTest from './RtcBroadcastHistory.test'
 import rtcCallAudioPolicyControllerTest from './RtcCallAudioPolicyController.test'
-import rtcCallGatewayClientTest from './RtcCallGatewayClient.test'
 import rtcCallLifecycleStoreTest from './RtcCallLifecycleStore.test'
 import rtcCallSessionStoreTest from './RtcCallSessionStore.test'
 import rtcCallSettingControllerTest from './RtcCallSettingController.test'
@@ -35,7 +34,6 @@ export default function testsuite() {
   rtcAudioControllerTest()
   rtcBroadcastHistoryTest()
   rtcCallAudioPolicyControllerTest()
-  rtcCallGatewayClientTest()
   rtcCallLifecycleStoreTest()
   rtcCallSessionStoreTest()
   rtcCallSettingControllerTest()

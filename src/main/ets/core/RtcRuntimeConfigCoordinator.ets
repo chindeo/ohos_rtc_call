@@ -30,7 +30,6 @@ export interface RtcRuntimeSwitchPlan {
 
 export interface RtcRuntimeSwitchHandlers {
   prepareWebRtc(route: RtcCallRoute, plan: RtcRuntimeSwitchPlan): Promise<void>
-  prepareSip(route: RtcCallRoute, plan: RtcRuntimeSwitchPlan): Promise<void>
   applyMicSwitching?(plan: RtcRuntimeSwitchPlan): Promise<void>
 }
 
@@ -116,11 +115,7 @@ export class RtcRuntimeConfigCoordinator {
     if (!plan.shouldPrepare) {
       return
     }
-    if (plan.protocol === RtcTransportProtocol.WEBRTC) {
-      await handlers.prepareWebRtc(plan.route, plan)
-      return
-    }
-    await handlers.prepareSip(plan.route, plan)
+    await handlers.prepareWebRtc(plan.route, plan)
   }
 
   static async applyMicSwitching(plan: RtcRuntimeSwitchPlan, handlers: RtcRuntimeSwitchHandlers): Promise<void> {
