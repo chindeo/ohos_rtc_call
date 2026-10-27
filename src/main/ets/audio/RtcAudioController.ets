@@ -4,12 +4,22 @@ import fs from '@ohos.file.fs'
 import { RtcCallDiagnosticsOptions } from '../model/RtcCallConfig'
 import { RtcWebRtcVideoSourceOptions } from '../webrtc/RtcWebRtcConfig'
 import { RTC_VIDEO_CAPTURE_STOP_TIMEOUT_MS, RtcVideoCaptureStopGate } from './RtcVideoCaptureStopGate'
-import { RtcDeviceVendorResolver } from '../device/RtcDeviceVendor'
 
 export interface RtcLocalAudioOptions {
   trackId: string
   echoCancellation?: boolean
   noiseSuppression?: boolean
+}
+
+/**
+ * 采集侧的整机校准值。这些数只能由认得自己设备的宿主给出：
+ * permille 校正 JHC 床旁采集时钟与协商 48k 的固定偏差，streamDelayMs 直接声明扬声器到麦克风的整环延时。
+ * 不给就是 0，表示让原生自己判定。
+ */
+export interface RtcAudioCaptureCalibration {
+  captureResamplePermille?: number
+  aecStreamDelayMs?: number
+  vendorLabel?: string
 }
 
 export interface RtcLocalVideoOptions extends RtcWebRtcVideoSourceOptions {
@@ -90,6 +100,11 @@ export class RtcAudioController {
   private localVideoCapturerReadyHandler?: () => void
   private localVideoGeneration: number = 0
   private localVideoStopGate: RtcVideoCaptureStopGate = new RtcVideoCaptureStopGate()
+  private captureCalibration: RtcAudioCaptureCalibration = {}
+
+  configureCaptureCalibration(options: RtcAudioCaptureCalibration): void {
+    this.captureCalibration = options
+  }
 
   configureDiagnostics(options: RtcMediaDiagnosticsOptions): void {
     this.diagnostics = options
@@ -564,9 +579,9 @@ export class RtcAudioController {
     if (this.adm) {
       return
     }
-    const resamplePermille = RtcDeviceVendorResolver.captureResamplePermille()
-    const aecStreamDelayMs = RtcDeviceVendorResolver.aecStreamDelayMs()
-    this.log(`rtc_capture_resample permille=${resamplePermille} vendor=${RtcDeviceVendorResolver.getStoredVendor()} align=false stream_delay_ms=${aecStreamDelayMs}`)
+    const resamplePermille = this.captureCalibration.captureResamplePermille || 0
+    const aecStreamDelayMs = this.captureCalibration.aecStreamDelayMs || 0
+    this.log(`rtc_capture_resample permille=${resamplePermille} vendor=${this.captureCalibration.vendorLabel || 'unknown'} align=false stream_delay_ms=${aecStreamDelayMs}`)
     this.adm = new webrtc.AudioDeviceModule({
       // MIC keeps the JHC bedside capture on its negotiated 48 kHz; VOICE_COMMUNICATION falls
       // back to 44.1 kHz. The rescale ratio is a fixed device calibration, not the rate probe:

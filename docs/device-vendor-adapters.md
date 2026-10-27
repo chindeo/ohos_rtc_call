@@ -1,9 +1,25 @@
 # 设备厂家适配说明
 
+## device/ 已移出公共包（2026-10-27）
+
+- 范围：`src/main/ets/device/` 六个文件（厂家判定、能力 adapter/manager、硬件按键与手柄、Shimeta 适配、启动引导）整体出库，线上包不再带任何厂家能力和 `@ohos.shimeta` 依赖。
+- 包内只留两个注入点，由宿主在 `RtcHostCallControllerOptions` 传入：
+  - `captureResamplePermille` / `aecStreamDelayMs`：采集重采样千分比与 AEC 整环延时（原先按厂家查表，现在宿主按自己的设备判定）。
+  - `handsetMode`：接听通路切换（原先直接调能力 manager 的 `setHandsetMode`）。
+- 宿主落地按各自需要：床旁保留 Shimeta + Dnake + JHC 需要的那部分，主机保留 Dnake + JHC 需要的那部分，门旁不使用厂家能力域。
+- 未注入时包内取原生默认（千分比 0、延时 0、手柄模式不动作）并记一条日志，不阻塞 WebRTC 通话。
+
+## 手工验收（出库后）
+
+1. 床旁 JHC：通话日志必须仍出现 `rtc_capture_resample permille=1068 ... stream_delay_ms=216`；出现 `permille=0` 就是宿主没把校准值传进来，回声消除会退回未对齐状态。
+2. 主机/床旁手柄接听再挂断各一次：`话筒状态-` 与 `handset_mode` 日志成对出现，且后台音量档位不变；缺 `handset_mode` 说明注入断了。
+3. 三台宿主的静默安装、看门狗、MAC、开机自启、LED、硬件按键行为与出库前一致（这些现在只在宿主自己的适配里）。
+4. `@chindeo/ohos-rtc-call` 的 HAR 里不再出现 `device/`、`@ohos.shimeta`：解包 `tar -tzf` 复核。
+
 ## 总原则
 
-- 厂家能力必须通过公共 adapter 或 `RtcDeviceCapabilityManager` 暴露。
-- 页面、业务组件、通话 controller 不直接散落 `@company/device_sdk`、`@ohos.shimeta`、`@mili/hardware_service_sdk` 等判断。
+- 厂家能力在宿主侧收口：床旁 `common/src/main/ets/utils/device/`、主机 `nurse/src/main/ets/utils/device/`，各留自己设备上真正用到的部分；本包不再有设备能力层。
+- 页面、业务组件、通话 controller 不直接散落 `@company/device_sdk`、`@ohos.shimeta`、`@mili/hardware_service_sdk` 等判断，统一走宿主那层的 adapter / manager。
 - 未确认厂家默认 WebRTC；公共包只保留 WebRTC 一条通路（SIP 已于 2026-10-27 移出）。
 - 厂家能力缺失时应降级并记录低敏日志，不能阻塞基础 WebRTC 通话。
 

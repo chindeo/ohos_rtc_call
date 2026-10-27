@@ -2,7 +2,6 @@ import {
   RTC_CALL_CONTROL_SOURCE_HANDSET,
   RTC_CALL_CONTROL_SOURCE_SCREEN
 } from '../core/RtcCallControlCommand'
-import { RtcDeviceCapabilityManager } from '../device/RtcDeviceCapabilityManager'
 import { RtcAudioRoute } from './RtcAudioRoute'
 import {
   RtcCallAnswerAudioPolicy,
@@ -25,7 +24,8 @@ export interface RtcCallAudioPolicyDriver {
 
 export interface RtcCallAudioPolicyOptions {
   deviceRole?: string
-  vendor?: string
+  // 手柄/听筒通路只由认得自家设备的宿主落地，包内不再直接触厂家能力。
+  setHandsetMode?: (enabled: boolean, reason: string) => void
   driver?: RtcCallAudioPolicyDriver
   screenAnswerVolumePercent?: number
   handsetAnswerVolumePercent?: number
@@ -46,10 +46,10 @@ export class RtcCallAudioPolicyState {
 
 class RtcDefaultCallAudioPolicyDriver implements RtcCallAudioPolicyDriver {
   private route: RtcAudioRoute = new RtcAudioRoute()
-  private vendor?: string
+  private handsetModeHandler?: (enabled: boolean, reason: string) => void
 
-  constructor(vendor?: string) {
-    this.vendor = vendor
+  constructor(handsetModeHandler?: (enabled: boolean, reason: string) => void) {
+    this.handsetModeHandler = handsetModeHandler
   }
 
   readVoiceCallVolumeSnapshot(): RtcCallVolumeSnapshot {
@@ -65,10 +65,7 @@ class RtcDefaultCallAudioPolicyDriver implements RtcCallAudioPolicyDriver {
   }
 
   setHandsetMode(enabled: boolean, reason: string): void {
-    RtcDeviceCapabilityManager.setHandsetMode({
-      mode: enabled ? 1 : 0,
-      reason
-    }, this.vendor)
+    this.handsetModeHandler?.(enabled, reason)
   }
 }
 
@@ -79,13 +76,13 @@ export class RtcCallAudioPolicyController {
 
   constructor(options?: RtcCallAudioPolicyOptions) {
     this.options = options || {}
-    this.driver = this.options.driver || new RtcDefaultCallAudioPolicyDriver(this.options.vendor)
+    this.driver = this.options.driver || new RtcDefaultCallAudioPolicyDriver(this.options.setHandsetMode)
     this.state.deviceRole = this.options.deviceRole || RTC_DEVICE_ROLE_BEDSIDE
   }
 
   configure(options: RtcCallAudioPolicyOptions): void {
     this.options = options
-    this.driver = options.driver || new RtcDefaultCallAudioPolicyDriver(options.vendor)
+    this.driver = options.driver || new RtcDefaultCallAudioPolicyDriver(options.setHandsetMode)
     this.state.deviceRole = options.deviceRole || RTC_DEVICE_ROLE_BEDSIDE
   }
 

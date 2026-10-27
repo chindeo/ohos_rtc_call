@@ -1,4 +1,4 @@
-import { RtcAudioController, RtcVideoRendererAdapter } from '../audio/RtcAudioController'
+import { RtcAudioCaptureCalibration, RtcAudioController, RtcVideoRendererAdapter } from '../audio/RtcAudioController'
 import {
   RTC_DEVICE_ROLE_NURSE_HOST,
   RtcCallAudioPolicyController
@@ -66,6 +66,9 @@ export interface RtcHostCallControllerOptions {
   speakerActionEnabled?: boolean
   speakerActionVisible?: boolean
   onMicSwitch?: () => boolean | void | Promise<boolean | void>
+  // 采集校准与手柄通路由认得自家设备的宿主注入；不给就按原生默认，包内不再判厂家。
+  captureCalibration?: RtcAudioCaptureCalibration
+  setHandsetMode?: (enabled: boolean, reason: string) => void
   diagnostics?: RtcCallDiagnosticsOptions
   reconnect?: RtcWebRtcReconnectOptions
   onError?: (message: string) => void
@@ -89,12 +92,14 @@ export class RtcHostCallController {
     this.options = options
     this.audioPolicyController = new RtcCallAudioPolicyController({
       deviceRole: RTC_DEVICE_ROLE_NURSE_HOST,
+      setHandsetMode: options.setHandsetMode,
       screenAnswerVolumePercent: options.screenAnswerVolumePercent,
       handsetAnswerVolumePercent: options.handsetAnswerVolumePercent,
       restoreVolumeOnEnd: false
     })
     this.applyServerVolume('controller created')
     const audioController = new RtcAudioController()
+    audioController.configureCaptureCalibration(options.captureCalibration || {})
     if (options.diagnostics) {
       audioController.configureDiagnostics({
         enableAecDump: options.diagnostics.enableAecDump,

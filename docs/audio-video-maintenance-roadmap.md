@@ -16,7 +16,7 @@
 
 ### P0 盘点与接口冻结
 
-- 冻结公共入口：`RtcCallService`、`RtcCallViewState`、`RtcHostCallController`、`RtcDeviceCapabilityManager`、`RtcRuntimeConfigCoordinator`。
+- 冻结公共入口：`RtcCallService`、`RtcCallViewState`、`RtcHostCallController`、`RtcRuntimeConfigCoordinator`。厂家能力入口（原 `RtcDeviceCapabilityManager`）已移出本包，由宿主自己维护。
 - 业务层只通过配置和回调接入：本机信息、被叫列表、权限结果、MQTT `refreshConfig`、硬件按键和手柄事件。
 
 ### P1 WebRTC 能力统一

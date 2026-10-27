@@ -41,7 +41,7 @@
 - WebRTC 媒体资源管理：统一 `PeerConnectionFactory`、`AudioDeviceModule`、本地音频 / 视频 track、renderer、AEC dump 和 PCM 采集统计。已扩展 `RtcAudioController` 提供本地媒体准备、远端 track 绑定、renderer 清理、AEC dump 开关、PCM 统计回调和统一 cleanup。
 - 通话会话控制：统一发起、接听、挂断、自动接听、保持 / 恢复和 `RtcCallSession` 状态同步。已新增 `RtcDefaultCallService`，通过业务侧 handlers 注入实际 WebRTC/SIP 行为，公共层负责状态同步和 `RtcCallControlCommand` 分发。
 - 音频策略：统一屏幕 / 手柄接听音频路由、音量提升 / 恢复、禁音和设备角色差异。已新增 `RtcCallAudioPolicyController`，支持 `bedside`、`nurseHost`、`doorHost` 策略参数，屏幕接听默认免提和 90% 音量，手柄接听默认非免提和 40% 音量，并支持通话结束恢复原音量。
-- 硬件事件适配：通过设备能力层统一按键、呼叫键和手柄事件通话控制。已新增 `RtcHardwareCallController`，基于 `RtcDeviceCapabilityManager` 订阅 / 取消订阅硬件事件，业务侧可注入 payload parser，并通过 `RtcCallControlCommand` 统一分发接听、挂断和呼叫键事件。
+- 硬件事件适配：按键、呼叫键和手柄事件的设备能力层已移出本包，由宿主在自己项目内订阅和分发；本包只接宿主的 `setHandsetMode` 注入，并通过 `RtcCallControlCommand` 统一承载接听、挂断和呼叫键事件。
 - 启动页管理员入口：封装长按进入管理员设置、启动暂停 / 恢复和状态检查完成后延迟进入主界面的辅助控制。已新增 `RtcAdminEntryController`，长按期间暂停自动进入主页，状态检查完成后默认等待 2 秒再导航，避免多入口重复跳转。
 - 运行时配置加载：补齐 RTC server host 选择、WebRTC / SIP 判断、refresh 切换计划和 `micSwitching` 应用流程。已新增 `RtcRuntimeConfigController`，业务侧只需注入 runtime config loader 和 WebRTC/SIP prepare handler。
 - 启动数据缓存：新增 `RtcStartupDataCache`，业务侧可对启动页依赖的配置、床旁配置、床旁详情、运行时配置等数据做成功缓存和失败回退，后台业务接口短时不可用时仍可使用最近一次成功数据进入主界面，通话链路继续由独立 RTC / SIP 服务保障。

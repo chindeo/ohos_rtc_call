@@ -1,7 +1,7 @@
 {
   "name": "@chindeo/ohos-rtc-call",
   "version": "0.2.0",
-  "description": "Reusable OpenHarmony WebRTC and SIP call utilities.",
+  "description": "Reusable OpenHarmony ArkTS WebRTC call library: signaling session, call state, host controller, ringtone and audio policies, shared call UI.",
   "main": "Index.ets",
   "author": "Chindeo",
   "license": "Apache-2.0",

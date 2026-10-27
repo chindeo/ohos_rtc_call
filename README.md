@@ -1,63 +1,10 @@
 # @chindeo/ohos-rtc-call
 
-Reusable OpenHarmony audio/video call utilities for ArkTS applications.
+Reusable OpenHarmony (ArkTS) audio/video call library for WebRTC hosts: signaling session, call state
+store, host call controller, ringtone and audio-route policies, and shared call UI building blocks.
 
-## Features
-
-- Register address routing: only `ws://` and `wss://` signaling addresses resolve; anything else comes
-  back invalid with the reason carried on the resolved address.
-- WebSocket signaling clients for WebRTC call flows, including shared registration URL building, connection-state tracking, and anti-thundering-herd reconnect backoff.
-- WebRTC audio helper for low-latency audio call setup.
-- Opt-in external NV21 video input for hosts that capture frames through a vendor UVC library instead of CameraKit.
-- SDP utilities for Opus low-latency audio parameters.
-- Audio output routing helper for speaker/default routes.
-- Ringtone and call volume helpers, including the WebRTC ringtone channel guard.
-- WebRTC answer audio policy helpers for screen speakerphone answers and handset non-speaker answers.
-- Runtime config coordinator for `call.rtcServerHost` and `call.micSwitching` changes.
-- Startup data cache and network recovery state helpers for startup pages that must continue with cached data while business APIs recover.
-- Incoming-call queue helpers for nurse hosts that need to display multiple bedside calls without replacing the active call session.
-- Device capability adapters for vendor-specific MAC, boot, power, LED, and hardware key actions.
-- Server-driven audio/video call settings (`callsetting`): resolution and bitrate profile, answer-volume setting, local override storage, change detection, and periodic re-fetch.
-- Shared audio/video settings page and panel for host and bedside admin UIs.
-- UI helpers for RTC status hints, admin-entry countdowns, API endpoint settings, and host/bed call view presentation models.
-- Process-local system navigation-bar visibility and window application helpers.
-- Shared call state and signal models.
-
-## Separated packages
-
-Three capabilities that used to live here are now standalone, and this package no longer carries their
-native libraries:
-
-- `@chindeo/ohos-curl-http` — the libcurl-backed `CurlAxios` HTTP client.
-- `@chindeo/ohos-tts-sherpa` — the offline sherpa-onnx TTS engine, its text frontend, speech-rate
-  helpers and the `example/tts-probe` app.
-- `@chindeo/ohos-call-gateway-client` — the call-gateway signalling client (`uid`-scoped call control,
-  SDP/ICE forwarding, session store). It lives in the gateway repository at `call-gateway/client-ohos/`
-  and depends back on this package for the signaling state machine, lifecycle store and shared models.
-
-Hosts import them from their own package name; see each project's README.
-
-## Ringtone Policy
-
-- Normal incoming calls: `ringtone/ring1.wav`
-- Outgoing ringback: `ringtone/ringback.wav`
-- Transfer ringback: `ringtone/transfer_ringback.wav`
-- Call hold: `ringtone/hold.wav`
-- Presence calls: use `ringtone/presence_normal_ring.wav`, `ringtone/presence_bluecode_ring.wav`, or `ringtone/presence_sanitary_ring.wav` by event type.
-
-## Call setting
-
-`callsetting/` owns everything about the server-pushed `call_setting.json` so host and bedside applications do not parse it twice:
-
-- `RtcCallSettingPolicy` — pure matching and sanitizing. Beans are matched by `mac`, then `packageName`, then `deviceType`; `deviceVolume` is a **percentage** in `-1..100`, not an absolute stream level.
-- `RtcCallSettingPorts` — the host injects `fetcher` (remote + bundled), `logger` and `identity`. The default override store uses `dataPreferences`; tests can substitute both.
-- `RtcCallSettingController` — `load(reason)` is single-flight and falls back remote → bundled → code default, then applies the local **resolution** override; audio has no override path, the server value is what applies. `onChange` fires only on a real diff. `startAutoRefresh()` re-fetches every 3 minutes by default and keeps the previous snapshot when the fetch fails. Hosts may also call `load()` right before a call so the per-call volume tracks the server.
-
-`RtcWebRtcMediaController.setVideoSource` and `RtcHostCallController.setVideoSource` apply an updated profile to the next track without re-registering. `setScreenAnswerVolumePercent` additionally writes the device level straight away, so a server change lands without waiting for the next call. `RtcCallControllerKey` tells a host whether the device identity really changed and the controller must be rebuilt.
-
-`audio.deviceVolume` is a percentage written to the device's `VOICE_CALL` level, and it stays applied: the only working setter on this SDK is the deprecated `AudioManager.setVolume`, which needs `ohos.permission.ACCESS_NOTIFICATION_POLICY` (availableLevel `normal`, so a normal-APL app gets it at install). Every write is followed by a read-back and both are logged, because "no exception" does not prove the level moved. There is no revert on hangup — a bedside panel is shared equipment with no user-tuned call volume to protect.
-
-Two fields are intentionally not implemented because this WebRTC build exposes no API for them: `audio.streamVolume` (playback already runs on the `VOICE_CALL` stream through the default `rendererUsage`, so there is no separate remote-track gain to set — the settings page shows the value and says so) and `startKbps` (no start bitrate).
+One transport only — WebRTC over `ws://` / `wss://` signaling. Vendor SDK bindings and device-specific
+behavior are expected to stay in the host application and be injected as configuration.
 
 ## Install
 
@@ -65,142 +12,144 @@ Two fields are intentionally not implemented because this WebRTC build exposes n
 ohpm install @chindeo/ohos-rtc-call
 ```
 
-The host application must also provide a compatible `@ohos/webrtc` dependency and request the required runtime permissions. Vendor SDK implementations such as Dnake or Shimeta are injected by the host application through adapters and are not bundled in this package.
+The host must provide a compatible `@ohos/webrtc` dependency and the runtime permissions it uses.
 
-## Host WebRTC UI Policies
+## Features
 
-- Use `RtcCallSessionGuard.isWebRtcCallInProgress(session)` before refreshing WebRTC registration from a host page. If it returns true, skip background prepare work that would reset call visibility.
-- Use `RtcCallControlCommandCodec.build(action, sequence, source)` for hardware or UI control events. Use `RTC_CALL_CONTROL_SOURCE_HANDSET` when the handset is lifted, and `RTC_CALL_CONTROL_SOURCE_SCREEN` for on-screen answer buttons.
-- Use `RtcCallAnswerAudioPolicy.resolve(source)` to map answer source to local audio policy. Screen answers use speakerphone and 90% voice-call volume; handset answers use non-speaker output and 40% voice-call volume.
-- Use `RtcSystemBarController.setNavigationBarVisible(...)` from settings pages and `applyNavigationBarPreference(...)` from each ability/window lifecycle to keep system navigation-bar visibility consistent across pages in the current app process. This state is for temporary remote debugging and resets to hidden after app exit or restart.
+- Register address resolution: `ws://` and `wss://` resolve to a signaling URL; any other address comes
+  back invalid with the reason attached.
+- WebSocket signaling session and state machine: registration, connection-state tracking, and reconnect
+  backoff with per-device spreading and jitter.
+- Host call controller: multi-call sessions, answer/hold/hangup per `uid`, media gates, UI model output.
+- Local media: low-latency audio setup, SDP Opus parameters, CameraKit sources, and opt-in external NV21
+  frames when the host owns camera capture.
+- Ringtone and ringback helpers with a channel guard, plus server-driven ringtone URLs with local fallback.
+- Answer audio policy: screen answer on speaker, handset answer off speaker, per-source volume percent.
+- Host-injected device behavior (see below): capture clock/delay calibration and handset route switching.
+- Server-driven call settings (`callsetting`): resolution and bitrate profile, answer volume, local
+  override store, change detection, periodic re-fetch.
+- Runtime config coordination for `call.rtcServerHost` and `call.micSwitching`.
+- Startup data cache, network recovery state, and incoming-call queue helpers.
+- UI helpers: call status hint, admin-entry countdown, API endpoint settings dialog, reference call layout.
+- Shared call state and signal models.
 
-## Reference Call UI
+## Separated packages
 
-`RtcHostMultiCallLayout` keeps its existing API and now delegates to the Android-aligned
-`RtcReferenceCallLayout`. The host should keep `RtcHostCallController.onUiModelChange()` as the only
-call-state source.
+These used to live in this package and are now standalone; the HAR no longer carries their native
+libraries:
 
-Host lifecycle, layout callbacks, per-session video surfaces, device-role behavior, state gates, and
-acceptance checks are documented in
-[音视频通话 UI 宿主对接文档](docs/host-call-ui-integration.md).
+- `@chindeo/ohos-curl-http` — libcurl-backed HTTP client (`CurlAxios`).
+- `@chindeo/ohos-tts-sherpa` — offline sherpa-onnx TTS engine with its text frontend.
+- `@chindeo/ohos-gw-client` — call-gateway client (`uid`-scoped call control, SDP/ICE
+  forwarding, session store). It depends back on this package.
 
-## Basic Usage
+Vendor device capabilities (MAC, boot app, power schedule, silent install, LED, hardware keys, handset
+events) are also out of this package: each host keeps only the adapters its own devices need.
 
-More complete examples are available in the `example` directory.
+## Host integration
+
+### Injected device behavior
+
+The controller does not probe devices. The host passes what it knows about its own hardware:
+
+```ts
+const controller = new RtcHostCallController({
+  serverUrl,
+  local,
+  appVersion: 'v1.0.0_hmos_20261027120000',
+  // Clock/scale calibration for the capture path and the declared render→mic loopback delay.
+  // Omit both to keep native defaults (0).
+  captureCalibration: {
+    captureResamplePermille: 1068,
+    aecStreamDelayMs: 216,
+    vendorLabel: 'some-vendor'
+  },
+  // Route the call audio to the handset earpiece / back to the board.
+  setHandsetMode: (enabled: boolean, reason: string): void => {
+    applyHandsetRoute(enabled, reason)
+  }
+})
+```
+
+### Call rules to keep
+
+- `uid` / `signalUID` is the business session key, `rtcUID` is the channel key, `channelType` is
+  `publish` or `subscribe`; treat them as opaque strings and return the same triple on answer and ICE.
+- Answering is confirmed only by the gateway answer API; `OnTrack`, ICE connected, or a remote
+  description being applied do not count as answered.
+- Dialing establishes `publish` only; the `subscribe` channel is created after a successful answer.
+- Numbers and display names are for presentation and contact lookup, never as a call key.
+
+### UI policies
+
+- Check `RtcCallSessionGuard.isWebRtcCallInProgress(session)` before any background registration refresh,
+  so a re-prepare cannot hide an active call view.
+- Build control events with `RtcCallControlCommandCodec.build(action, sequence, source)` and keep the
+  handset and screen sources distinct.
+- Map answer source to local audio with `RtcCallAnswerAudioPolicy.resolve(source)`.
+- `RtcSystemBarController` keeps navigation-bar visibility consistent within one app process; it resets
+  on app exit.
+- Keep `RtcHostCallController.onUiModelChange()` as the only call-state source for the call layout.
+
+### Ringtone resources
+
+Normal incoming `ringtone/ring1.wav`, outgoing `ringtone/ringback.wav`, transfer
+`ringtone/transfer_ringback.wav`, hold `ringtone/hold.wav`, and presence events
+`ringtone/presence_normal_ring.wav`, `ringtone/presence_bluecode_ring.wav`,
+`ringtone/presence_sanitary_ring.wav`.
+
+### Call settings
+
+`RtcCallSettingController.load(reason)` is single-flight and falls back remote → bundled → code default,
+then applies the local resolution override; `onChange` fires only on a real diff, and
+`startAutoRefresh()` re-fetches periodically while keeping the previous snapshot on failure. Beans match
+by `mac`, then `packageName`, then `deviceType`. `audio.deviceVolume` is a percentage (`-1..100`) written
+to the device call stream level; `audio.streamVolume` and `startKbps` have no effect in this build.
+
+## Basic usage
+
+More complete examples are in the `example` directory.
 
 ```ts
 import { RtcAudioController, RtcCallRouteResolver, RtcWebRtcSignalSession } from '@chindeo/ohos-rtc-call'
 
 const route = RtcCallRouteResolver.resolve({ registerAddress: 'wss://your-signaling.example/ws' })
 if (!route.registerAddress.valid) {
-  // Only ws:// and wss:// signaling addresses resolve. Anything else (including the old
-  // `ip:port` SIP form) comes back invalid with the reason in route.registerAddress.reason.
+  console.warn(`invalid signaling address: ${route.registerAddress.reason}`)
 }
 
 const signal = new RtcWebRtcSignalSession()
-
 signal.setListener({
-  onRegister: (_message, server) => {
-    console.info(`registered to ${server?.serveNumber || ''}`)
-  },
-  onReconnectScheduled: (attempt, delayMs, reason) => {
-    console.info(`rtc reconnect attempt=${attempt} delayMs=${delayMs} reason=${reason}`)
-  },
-  onMessage: message => {
-    console.info(`rtc signal ${message.eventName}`)
-  }
+  onRegister: (_message, server) => console.info(`registered to ${server?.serveNumber || ''}`),
+  onReconnectScheduled: (attempt, delayMs, reason) =>
+    console.info(`reconnect attempt=${attempt} delayMs=${delayMs} reason=${reason}`)
 })
-
-// Reconnect is enabled by default. The balanced policy uses exponential
-// backoff, per-device cohort spreading, and random jitter. Explicit close()
-// or controller dispose() cancels all pending reconnect work.
-
 signal.connect({
   serverUrl: route.webrtcSignalUrl || '',
-  // RtcAppVersion.build(versionName, buildTime) -> v1.0.0_hmos_20261019153813
-  appVersion: 'your_app_webrtc',
-  identity: {
-    number: '1001',
-    clientType: 'client',
-    displayName: 'RTC Client'
-  }
+  appVersion: 'v1.0.0_hmos_20261027120000',
+  identity: { number: '1001', clientType: 'client', displayName: 'RTC Client' }
 })
 
 const audio = new RtcAudioController()
 audio.ensureReady()
 ```
 
-For a host-owned UVC capture pipeline, prepare an external source and forward each tightly packed
-NV21 frame. The package does not open or own the UVC device, so camera lifecycle remains in the host:
+With a host-owned capture pipeline, prepare an external source and forward frames; the package never
+opens the device:
 
 ```ts
-audio.prepareLocalVideo({
-  trackId: 'local-video',
-  width: 640,
-  height: 480,
-  frameRate: 15,
-  externalNv21: true
-})
-
-// Call from the host UVC frame listener.
-audio.pushLocalVideoNv21Frame(frame, width, height)
+audio.prepareLocalVideo({ trackId: 'local-video', width: 640, height: 480, frameRate: 15, externalNv21: true })
+audio.pushLocalVideoNv21Frame(frame, 640, 480)
 ```
 
-`RtcHostCallController` can drive the same host-owned pipeline for complete call-scoped cleanup:
-
-```ts
-const controller = new RtcHostCallController({
-  // Other registration and identity options omitted.
-  serverUrl,
-  local,
-  appVersion: 'host',
-  localVideoEnabled: true,
-  videoSource: { width: 640, height: 480, frameRate: 15, externalNv21: true },
-  onExternalVideoCaptureStateChange: (active: boolean) => {
-    active ? startUvcCapture() : stopAndCloseUvcCapture()
-  }
-})
-
-// Forward each NV21 frame from the UVC listener.
-controller.pushLocalVideoNv21Frame(frame, width, height)
-
-// After the host has exhausted its UVC open retries, remove the external track
-// and replace existing publish senders with a CameraKit-backed track.
-await controller.fallbackExternalVideoToCameraKit()
-```
-
-The callback becomes inactive when the final video session closes and during controller disposal.
-The host must stop preview, detach callbacks, and close its UVC device in the inactive callback.
-Select `externalNv21` only after the host has confirmed that a UVC device is actually present; an
-API version alone is not a camera capability check. Keep proven CameraKit constraints for legacy
-devices, throttle forwarded frames to the configured frame rate, and treat UVC startup or detach as
-a local-video failure rather than hanging up unrelated active calls. A host must not keep an external
-track live after UVC open has failed; retry the real UVC device for a bounded number of attempts, then
-call `fallbackExternalVideoToCameraKit()`. If CameraKit recovery also fails, the package removes the
-failed video track from active publish senders instead of advertising an empty live source.
-
-## call-gateway SDK
-
-Use `RtcCallGatewayClient` when a host app integrates with call-gateway audio/video callbacks. The host app owns the concrete gateway transport and injects it through `RtcCallGatewayAdapter`; this package keeps only SDK state, uid routing, and WebRTC SDP/ICE handling.
-
-```ts
-import { RtcCallGatewayClient } from '@chindeo/ohos-rtc-call'
-
-const client = new RtcCallGatewayClient({
-  adapter: hostGatewayAdapter,
-  peerAdapter: hostWebRtcPeerAdapter,
-  local: { number: 'host-1001', displayName: 'Host Device' }
-})
-
-client.handleOpenMultiActivity('bed-1002', 'Bed 1002', 'signal-uid-1002', false)
-client.answer('signal-uid-1002')
-```
-
-Call operations must use call-gateway `uid` / `signalUID`. SDP and ICE routing must preserve `rtcUID` and `channelType`; numbers are display and lookup fields only.
+Choose `externalNv21` only after the host has confirmed the capture device exists. If opening fails,
+call `controller.fallbackExternalVideoToCameraKit()` rather than leaving an empty live track, and do not
+hang up unrelated active calls over a local-video failure.
 
 ## Security
 
-This package does not include business server addresses, signing credentials, private keys, device identifiers, Dnake SDK binaries, or application bundle names. Inject all deployment-specific values from the host application.
+The package ships no server addresses, credentials, private keys, device identifiers, vendor SDK
+binaries, or bundle names. Inject deployment-specific values from the host application.
 
 ## License
 
