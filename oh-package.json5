@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "Reusable OpenHarmony ArkTS WebRTC call library: signaling session, call state, host controller, ringtone and audio policies, shared call UI.",
   "main": "Index.ets",
-  "author": "Chindeo",
+  "author": { "name": "Chindeo", "url": "", "email": "" },
   "license": "Apache-2.0",
   "homepage": "https://ohpm.openharmony.cn/#/cn/home",
   "compatibleSdkVersion": "12",
