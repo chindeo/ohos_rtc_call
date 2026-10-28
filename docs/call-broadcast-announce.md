@@ -99,7 +99,7 @@
 
 ## 文案口径
 
-- 自动接听：固定 `为您自动接听`，与安卓 `AutoAnswerUtils.textToast` 一致。
+- 自动接听：鸿蒙床旁固定 `自动为您接听`（2026-10-28 现场改口径），安卓 `AutoAnswerUtils.textToast` 仍是 `为您自动接听`，两边故意不一致。
 - 无人接听 / 忙线 / 离线：取安卓 `RtcConstants` 的中文 desc 固定值。
 - 床旁自定义无人接听：安卓优先服务端 `ConfigEnum.noOneHeard`。该枚举在 `repository` 依赖里，本仓库读不到真实配置键名，鸿蒙不猜键；先用固定“无人接听”，命中时把 `runtimeConfigMap` 的 key 列表打进日志，取证后再决定接不接。
 
@@ -181,7 +181,7 @@
 
 ## 手工验收点
 
-1. 床旁开启自动接听、被叫：**全程一声不响**（起铃直接被跳过，不再"响一下再停"），只听到"为您自动接听"，通话正常建立。
+1. 床旁开启自动接听、被叫：**全程一声不响**（起铃直接被跳过，不再"响一下再停"），只听到"自动为您接听"，通话正常建立。
 2. 床旁呼出、对端不接直到网关超时：听到一次"无人接听"，日志 `rtc_hangup_reason reason=timeout notice=无人接听 incoming=false` + `bed_announce reason=hangup_notice text=无人接听`；再次呼出同样超时会再播一次。
 3. 主机呼出、对方不接超时：主机播"无人接听"，日志 `host_hangup_notice text=无人接听`。
 4. 主机呼出、对方手动拒接：播"对方拒接"（`reason=rejected`）；被第三方接听：播"其他设备接听"（`reason=other_answer`）；对方忙线：播"对方忙线中"（`reason=is_calling`）。
