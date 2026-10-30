@@ -31,6 +31,8 @@ The host must provide a compatible `@ohos/webrtc` dependency and the runtime per
 - Runtime config coordination for `call.rtcServerHost` and `call.micSwitching`.
 - Startup data cache, network recovery state, and incoming-call queue helpers.
 - UI helpers: call status hint, admin-entry countdown, API endpoint settings dialog, reference call layout.
+- Live subtitles from `c__broadcast` (`asr_subtitle` frames): per-`uid` containers, per-speaker color,
+  sequence de-duplication, 200 ms coalescing, follow/scroll-back panel. See `docs/asr-subtitle.md`.
 - Shared call state and signal models.
 
 ## Separated packages

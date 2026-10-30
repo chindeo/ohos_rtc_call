@@ -31,6 +31,7 @@ import {
 import { RtcWebRtcMediaController, RtcWebRtcMediaSessionOptions } from './RtcWebRtcMediaController'
 import { RtcWebRtcTrackIdentityCodec } from './RtcWebRtcTrackIdentity'
 import { RtcCallLifecycleStore } from '../core/RtcCallLifecycleStore'
+import { RtcSubtitleStore } from '../subtitle/RtcSubtitleStore'
 
 export interface RtcWebRtcCallControllerConfig extends RtcWebRtcSignalConnectOptions {
   local: RtcPeerIdentity
@@ -114,6 +115,7 @@ export class RtcWebRtcCallController {
   private teardownGeneration: number = 0
   private closedTeardownGeneration: number = -1
   private closeAllInProgress: boolean = false
+  private subtitleStore: RtcSubtitleStore
 
   constructor(
     mediaController: RtcWebRtcMediaController,
@@ -122,6 +124,9 @@ export class RtcWebRtcCallController {
   ) {
     this.mediaController = mediaController
     this.listener = listener
+    this.subtitleStore = new RtcSubtitleStore({
+      onLog: (message: string) => this.listener.onLog?.(message)
+    })
     this.signalSession = signalSession || new RtcWebRtcSignalSession()
     this.signalStateMachine = new RtcWebRtcSignalStateMachine({
       adapter: mediaController,
@@ -236,6 +241,11 @@ export class RtcWebRtcCallController {
     return session ? this.copySession(session) : undefined
   }
 
+  /** 字幕是旁路能力：宿主只取 store 挂载渲染，不参与通话状态机。 */
+  getSubtitleStore(): RtcSubtitleStore {
+    return this.subtitleStore
+  }
+
   markMediaConnected(sessionKey: string): void {
     const session = this.findSession(sessionKey)
     if (!session) {
@@ -253,6 +263,7 @@ export class RtcWebRtcCallController {
     this.stop()
     this.sessions.clear()
     this.sessionIds.clear()
+    this.subtitleStore.dispose()
     this.config = undefined
   }
 
@@ -267,6 +278,8 @@ export class RtcWebRtcCallController {
           return
         }
         this.server = server
+        // 重新注册后网关的字幕计数可能从头开始，不清基线会把新帧整批判成乱序丢掉。
+        this.subtitleStore.resetSeqEpochs('register')
         if (server.iceConf) {
           try {
             this.mediaController.setIceServers(JSON.parse(server.iceConf))
@@ -536,6 +549,11 @@ export class RtcWebRtcCallController {
           return
         }
       }
+      // 字幕帧只在保持切换和通话记录都没认领时才尝试，非 asr_subtitle 载荷原路上抛，
+      // 字幕这条旁路不吃任何既有业务分支的帧。
+      if (this.subtitleStore.ingestBroadcastData(message.data)) {
+        return
+      }
       this.listener.onBroadcast?.(message)
     }
   }
@@ -631,6 +649,7 @@ export class RtcWebRtcCallController {
     if (!session) {
       return
     }
+    this.subtitleStore.closeCall(session.uid || '', 'session ended')
     this.mediaController.closeSession(session.sessionKey, 'signal session ended', { preservePublish })
     this.lifecycle.remove(session.uid || session.sessionId || session.sessionKey)
     if (session.sessionKey !== session.uid && session.sessionKey !== session.sessionId) {
@@ -669,6 +688,9 @@ export class RtcWebRtcCallController {
     this.closeAllInProgress = true
     try {
       this.recentLocalSingleHangup = undefined
+      this.sessions.forEach((session: RtcWebRtcCallSessionInfo): void => {
+        this.subtitleStore.closeCall(session.uid || '', 'close all')
+      })
       this.mediaController.closeAll(reason)
       this.sessions.clear()
       this.sessionIds.clear()

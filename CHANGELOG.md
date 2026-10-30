@@ -22,6 +22,12 @@ Breaking — this package is now WebRTC-only and carries no vendor-specific code
 - Added `RtcAppVersion.build(versionName, buildTime)` for the register payload version marker.
 - Added observable ringtone decisions (`configureLogger`, `ring_local_gate` / `ring_url_gate`) and an
   opt-in URL-ringtone fallback to the local ring on `error`, refusal, or timeout.
+- Added live subtitles on the existing `c__broadcast` downlink: `RtcSubtitleStore` parses the nested
+  `asr_subtitle` frame, keeps one container per `uid` and one line per speaker, drops stale `seq`,
+  coalesces partial updates to one render per 200 ms, and finalizes open lines when the call ends.
+  `RtcSubtitleOverlay` / `RtcSubtitlePanel` render the per-call region with follow-latest and
+  jump-to-latest; `RtcHostCallController.getSubtitleStore()` hands the store to the host. Non-subtitle
+  broadcasts keep their existing branches. See `docs/asr-subtitle.md`.
 
 ## 0.1.4-rc3
 

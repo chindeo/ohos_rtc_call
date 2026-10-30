@@ -37,6 +37,7 @@ import { RtcCallStatusNotifier } from '../model/RtcCallStatusMessage'
 import { RtcWebRtcReconnectOptions } from '../signaling/RtcWebRtcReconnectPolicy'
 import { RtcBroadcastHistory } from '../signaling/RtcBroadcastHistory'
 import { RtcServerInfo } from '../model/RtcSignalTypes'
+import { RtcSubtitleStore } from '../subtitle/RtcSubtitleStore'
 
 export interface RtcHostCallControllerOptions {
   serverUrl: string
@@ -424,6 +425,10 @@ export class RtcHostCallController {
 
   getUiModel(): RtcHostCallUiModel {
     return this.multiCallController.getUiModel()
+  }
+
+  getSubtitleStore(): RtcSubtitleStore {
+    return this.webRtcController.getSubtitleStore()
   }
 
   pushLocalVideoNv21Frame(data: Uint8Array, width: number, height: number,
