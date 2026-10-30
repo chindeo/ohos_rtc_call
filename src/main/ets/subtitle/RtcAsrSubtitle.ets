@@ -128,6 +128,53 @@ export function hasRtcSubtitleSayableText(text: string): boolean {
   return false
 }
 
+const RTC_SUBTITLE_SENTENCE_ENDS: string = '。！？.!?…；;\n'
+
+function isRtcSubtitleDigit(ch: string): boolean {
+  return ch.length === 1 && ch >= '0' && ch <= '9'
+}
+
+/** 半角点只在前后都是数字时当小数点，其余按句末处理（中文 ASR 偶尔吐 "3." 这种）。 */
+function isRtcSubtitleSentenceEnd(text: string, index: number): boolean {
+  const ch = text.charAt(index)
+  if (RTC_SUBTITLE_SENTENCE_ENDS.indexOf(ch) < 0) {
+    return false
+  }
+  if (ch === '.') {
+    return !(isRtcSubtitleDigit(text.charAt(index - 1)) && isRtcSubtitleDigit(text.charAt(index + 1)))
+  }
+  return true
+}
+
+/** 已说完整的整句（含句末标点）占开头多少个字符；一句都没说完返回 0。 */
+export function rtcSubtitleSettledLength(text: string): number {
+  const value = text || ''
+  let cut = 0
+  for (let i = 0; i < value.length; i += 1) {
+    if (isRtcSubtitleSentenceEnd(value, i)) {
+      cut = i + 1
+    }
+  }
+  return cut
+}
+
+/** 按句末标点断行；末尾不足一句的残句单独成段，不丢掉。 */
+export function rtcSubtitleSplitSentences(text: string): string[] {
+  const value = text || ''
+  const parts: string[] = []
+  let start = 0
+  for (let i = 0; i < value.length; i += 1) {
+    if (isRtcSubtitleSentenceEnd(value, i)) {
+      parts.push(value.substring(start, i + 1))
+      start = i + 1
+    }
+  }
+  if (start < value.length) {
+    parts.push(value.substring(start))
+  }
+  return parts
+}
+
 export function rtcSubtitleSpeakerLabel(clientType: string, sourceNumber: string): string {
   const number = (sourceNumber || '').trim()
   if (number.length === 0) {

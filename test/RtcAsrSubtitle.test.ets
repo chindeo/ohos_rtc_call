@@ -2,8 +2,10 @@ import { describe, it, expect } from '@ohos/hypium'
 import {
   hasRtcSubtitleSayableText,
   parseRtcAsrSubtitleFrame,
+  rtcSubtitleSettledLength,
   rtcSubtitleSpeakerColor,
-  rtcSubtitleSpeakerLabel
+  rtcSubtitleSpeakerLabel,
+  rtcSubtitleSplitSentences
 } from '../src/main/ets/subtitle/RtcAsrSubtitle'
 import {
   RtcSubtitleLine,
@@ -175,6 +177,43 @@ export default function rtcAsrSubtitleTest() {
       expect(rtcSubtitleSpeakerColor('1022').length).assertEqual(9)
     })
 
+    it('splits the cumulative text into one final line per completed sentence', 0, () => {
+      const store = new RtcSubtitleStore()
+      feed(store, { uid: 'u1', seq: 1, text: '你好', source_number: '1022' })
+      feed(store, { uid: 'u1', seq: 2, text: '你好吗', source_number: '1022' })
+      feed(store, { uid: 'u1', seq: 3, text: '你好吗？今天', source_number: '1022' })
+      feed(store, { uid: 'u1', seq: 4, text: '你好吗？今天怎么样', source_number: '1022' })
+      expect(lineTexts(snapshotLines(store, 'u1'))).assertEqual('你好吗？[f] / 今天怎么样[p]')
+      feed(store, { uid: 'u1', seq: 5, state: 'final', text: '你好吗？今天怎么样。', source_number: '1022' })
+      expect(lineTexts(snapshotLines(store, 'u1'))).assertEqual('你好吗？[f] / 今天怎么样。[f]')
+      store.dispose()
+    })
+
+    it('commits several sentences at once and keeps the trailing fragment open', 0, () => {
+      const store = new RtcSubtitleStore()
+      feed(store, { uid: 'u1', seq: 1, text: '第一句。第二句。第三', source_number: '1022' })
+      expect(lineTexts(snapshotLines(store, 'u1'))).assertEqual('第一句。[f] / 第二句。[f] / 第三[p]')
+      feed(store, { uid: 'u1', seq: 2, text: '第一句。第二句。第三句。', source_number: '1022' })
+      expect(lineTexts(snapshotLines(store, 'u1')))
+        .assertEqual('第一句。[f] / 第二句。[f] / 第三句。[f]')
+      store.dispose()
+    })
+
+    it('splits on sentence ends but not on a decimal point', 0, () => {
+      expect(rtcSubtitleSettledLength('你好吗')).assertEqual(0)
+      expect(rtcSubtitleSettledLength('3.5米')).assertEqual(0)
+      expect(rtcSubtitleSettledLength('你好。3.5')).assertEqual(3)
+      expect(rtcSubtitleSettledLength('第一句、第二句')).assertEqual(0)
+      const parts = rtcSubtitleSplitSentences('第一句。第二句，还没完')
+      expect(parts.length).assertEqual(2)
+      expect(parts[0]).assertEqual('第一句。')
+      expect(parts[1]).assertEqual('第二句，还没完')
+      const store = new RtcSubtitleStore()
+      feed(store, { uid: 'u1', seq: 1, text: '体温3.5度', source_number: '1022' })
+      expect(lineTexts(snapshotLines(store, 'u1'))).assertEqual('体温3.5度[p]')
+      store.dispose()
+    })
+
     it('replaces the open line while the cumulative text keeps its prefix', 0, () => {
       const store = new RtcSubtitleStore()
       feed(store, { uid: 'u1', seq: 1, text: '你好', source_number: '1022' })
@@ -187,10 +226,10 @@ export default function rtcAsrSubtitleTest() {
       const store = new RtcSubtitleStore()
       feed(store, { uid: 'u1', seq: 1, text: '你好', source_number: '1022' })
       feed(store, { uid: 'u1', seq: 2, text: '再见', source_number: '1022' })
-      expect(lineTexts(snapshotLines(store, 'u1'))).assertEqual('你好[p] / 再见[p]')
+      expect(lineTexts(snapshotLines(store, 'u1'))).assertEqual('你好[f] / 再见[p]')
       feed(store, { uid: 'u1', seq: 3, state: 'final', text: '再见。', source_number: '1022' })
       feed(store, { uid: 'u1', seq: 4, text: '下一句', source_number: '1022' })
-      expect(lineTexts(snapshotLines(store, 'u1'))).assertEqual('你好[p] / 再见。[f] / 下一句[p]')
+      expect(lineTexts(snapshotLines(store, 'u1'))).assertEqual('你好[f] / 再见。[f] / 下一句[p]')
       store.dispose()
     })
 
@@ -296,7 +335,7 @@ export default function rtcAsrSubtitleTest() {
       expect(lineTexts(snapshotLines(store, 'u1'))).assertEqual('你好[p]')
       store.resetSeqEpochs('register')
       feed(store, { uid: 'u1', seq: 1, text: '新一句', source_number: '1022' })
-      expect(lineTexts(snapshotLines(store, 'u1'))).assertEqual('你好[p] / 新一句[p]')
+      expect(lineTexts(snapshotLines(store, 'u1'))).assertEqual('你好[f] / 新一句[p]')
       store.dispose()
     })
 

@@ -2,8 +2,10 @@ import {
   hasRtcSubtitleSayableText,
   parseRtcAsrSubtitleFrame,
   rtcSubtitleIdHash,
+  rtcSubtitleSettledLength,
   rtcSubtitleSpeakerColor,
   rtcSubtitleSpeakerLabel,
+  rtcSubtitleSplitSentences,
   RtcAsrSubtitleFrame
 } from './RtcAsrSubtitle'
 
@@ -59,6 +61,10 @@ class RtcSubtitleStream {
   label: string = ''
   color: string = ''
   currentLine?: RtcSubtitleLine
+  /** 最近一帧的整场累计文本，用来判断这一帧是不是接着上一句往下说 */
+  accum: string = ''
+  /** accum 里已经落成行的前缀长度，剩下的才是正在说的残句 */
+  settledLen: number = 0
   hasSeq: boolean = false
   lastSeq: number = 0
   lastFlushAt: number = 0
@@ -234,56 +240,120 @@ export class RtcSubtitleStore {
     }
 
     const text = frame.text
-    const current = stream.currentLine
-    const target = this.resolveTargetLine(stream, current, text)
-    if (target === undefined) {
-      if (!hasRtcSubtitleSayableText(text)) {
-        // 只有标点或空文本：不产生新行，但 final 要把当前行收尾。
-        if (frame.isFinal && current) {
-          current.isFinal = true
-          current.updatedAt = this.scheduler.now()
-          this.markDirty(session, stream, true)
-        } else {
-          this.droppedCount += 1
-        }
-        return
+    // 空文本和只有标点的帧不带词，不碰已累计文本也不动行；final 只负责把残句收尾。
+    if (text.length === 0 || !hasRtcSubtitleSayableText(text)) {
+      if (frame.isFinal) {
+        this.finishStream(session, stream)
+      } else {
+        this.droppedCount += 1
       }
-      const line = this.appendLine(session, stream, frame)
-      line.text = text
-      line.isFinal = frame.isFinal
-      this.markDirty(session, stream, frame.isFinal)
       return
     }
-    if (text.length > 0) {
-      target.text = text
+
+    // 累计文本必须是上一次的延长；被改写或换了一段话就重新起一段，老残句当场收尾。
+    if (!this.continuesAccum(stream, text)) {
+      this.freezeCurrentLine(stream)
+      stream.accum = ''
+      stream.settledLen = 0
     }
-    target.updatedAt = this.scheduler.now()
+    stream.accum = text
+    if (text.length < stream.settledLen) {
+      stream.settledLen = text.length
+    }
+    let cut = rtcSubtitleSettledLength(text)
+    if (cut < stream.settledLen) {
+      cut = stream.settledLen
+    }
     if (frame.isFinal) {
-      target.isFinal = true
+      cut = text.length
     }
-    this.markDirty(session, stream, frame.isFinal)
+    let committed = false
+    if (cut > stream.settledLen) {
+      this.commitSentences(session, stream, text.substring(stream.settledLen, cut))
+      stream.settledLen = cut
+      committed = true
+    }
+
+    const tail = text.substring(cut)
+    if (!frame.isFinal && tail.length > 0 && hasRtcSubtitleSayableText(tail)) {
+      const line = stream.currentLine ? stream.currentLine : this.appendLine(session, stream)
+      stream.currentLine = line
+      line.text = tail
+      line.updatedAt = this.scheduler.now()
+      this.markDirty(session, stream, false)
+      return
+    }
+    if (frame.isFinal) {
+      this.finishStream(session, stream)
+      return
+    }
+    // 刚好落在句末标点上的 partial：整句已经成行但没有残句，也要让这一行刷到界面上。
+    if (committed) {
+      this.markDirty(session, stream, false)
+      return
+    }
+    // 只有标点或空白：界面不变，也不新起一行。
+    this.droppedCount += 1
+  }
+
+  /** 同一句话的连续累计：新文本把旧文本整段包在里面才算接得上。 */
+  private continuesAccum(stream: RtcSubtitleStream, text: string): boolean {
+    const accum = stream.accum
+    if (accum.length === 0) {
+      return true
+    }
+    if (text.length >= accum.length) {
+      return text.startsWith(accum)
+    }
+    return accum.startsWith(text)
   }
 
   /**
-   * 帧文本是累计语义：与当前行互为前缀（含 ASR 回改缩短）就整行替换，
-   * 当前行已收尾或前缀断开才新起一行。
+   * 落定的整句各自成一行，这样底部字幕像正常视频字幕一样一句一句往前走，
+   * 不会攒成一大坨。第一句复用在显示的那行，避免残句和整句重复出现。
    */
-  private resolveTargetLine(stream: RtcSubtitleStream,
-    current: RtcSubtitleLine | undefined, text: string): RtcSubtitleLine | undefined {
-    if (!current) {
-      return undefined
+  private commitSentences(session: RtcSubtitleSession, stream: RtcSubtitleStream, part: string): void {
+    const sentences = rtcSubtitleSplitSentences(part)
+    for (let i = 0; i < sentences.length; i += 1) {
+      const sentence = sentences[i]
+      if (!hasRtcSubtitleSayableText(sentence)) {
+        continue
+      }
+      const open = stream.currentLine
+      if (i === 0 && open && !open.isFinal) {
+        open.text = sentence
+        open.isFinal = true
+        open.updatedAt = this.scheduler.now()
+        stream.currentLine = undefined
+        continue
+      }
+      const line = this.appendLine(session, stream)
+      line.text = sentence
+      line.isFinal = true
     }
-    if (current.isFinal) {
-      return undefined
-    }
-    if (text.length === 0 || current.text.startsWith(text) || text.startsWith(current.text)) {
-      return current
-    }
-    return undefined
   }
 
-  private appendLine(session: RtcSubtitleSession, stream: RtcSubtitleStream,
-    frame: RtcAsrSubtitleFrame): RtcSubtitleLine {
+  /**
+   * 这一路说完了：残句转终态，下一段话从新行开始。
+   * accum 和 settledLen 要留着 —— 网关的 text 是整场累计，下一帧还会把已显示的句子带上，
+   * 清掉就会把同一批句子再落一遍行。
+   */
+  private finishStream(session: RtcSubtitleSession, stream: RtcSubtitleStream): void {
+    this.freezeCurrentLine(stream)
+    this.markDirty(session, stream, true)
+  }
+
+  private freezeCurrentLine(stream: RtcSubtitleStream): void {
+    const current = stream.currentLine
+    if (!current) {
+      return
+    }
+    current.isFinal = true
+    current.updatedAt = this.scheduler.now()
+    stream.currentLine = undefined
+  }
+
+  private appendLine(session: RtcSubtitleSession, stream: RtcSubtitleStream): RtcSubtitleLine {
     this.lineSeq += 1
     const line = new RtcSubtitleLine()
     line.id = stream.speaker + '#' + this.lineSeq
@@ -292,7 +362,6 @@ export class RtcSubtitleStore {
     line.color = stream.color
     line.updatedAt = this.scheduler.now()
     session.lines.push(line)
-    stream.currentLine = line
     if (session.lines.length > this.maxLinesPerSession) {
       session.lines.splice(0, session.lines.length - this.maxLinesPerSession)
     }
