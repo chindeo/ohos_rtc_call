@@ -144,6 +144,9 @@ export class RtcWebRtcCallController {
 
   start(config: RtcWebRtcCallControllerConfig): void {
     this.config = config
+    // 网关把自己这路的麦克风也转了字推回来，界面上就成了自说自话；字幕只该显对方。
+    const localNumber = config.local.number || config.identity.number || ''
+    this.subtitleStore.setLocalSpeakers(localNumber.length > 0 ? [localNumber] : [], 'controller start')
     this.signalSession.connect({
       serverUrl: config.serverUrl,
       identity: config.identity,

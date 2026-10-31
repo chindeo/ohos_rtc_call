@@ -2,10 +2,9 @@ import {
   hasRtcSubtitleSayableText,
   parseRtcAsrSubtitleFrame,
   rtcSubtitleIdHash,
-  rtcSubtitleSettledLength,
   rtcSubtitleSpeakerColor,
   rtcSubtitleSpeakerLabel,
-  rtcSubtitleSplitSentences,
+  rtcSubtitleUtteranceKey,
   RtcAsrSubtitleFrame
 } from './RtcAsrSubtitle'
 
@@ -35,6 +34,8 @@ export interface RtcSubtitleStoreOptions {
   maxRetainedClosedCalls?: number
   scheduler?: RtcSubtitleScheduler
   onLog?: (message: string) => void
+  /** 帧日志是否带识别原文。默认不带：那是病床上说出来的话，会留在设备日志里。 */
+  logFrameText?: boolean
 }
 
 export class RtcSubtitleLine {
@@ -60,11 +61,8 @@ class RtcSubtitleStream {
   speaker: string = ''
   label: string = ''
   color: string = ''
-  currentLine?: RtcSubtitleLine
-  /** 最近一帧的整场累计文本，用来判断这一帧是不是接着上一句往下说 */
-  accum: string = ''
-  /** accum 里已经落成行的前缀长度，剩下的才是正在说的残句 */
-  settledLen: number = 0
+  /** v2 一句一帧：按 utterance 主键索引到行，同一句再来帧就原地替换这一行的内容 */
+  lines: Map<string, RtcSubtitleLine> = new Map()
   hasSeq: boolean = false
   lastSeq: number = 0
   lastFlushAt: number = 0
@@ -98,10 +96,13 @@ export class RtcSubtitleStore {
   private maxLinesPerSession: number
   private maxRetainedClosedCalls: number
   private onLog?: (message: string) => void
+  private logFrameText: boolean = false
+  private localSpeakers: Set<string> = new Set()
   private lineSeq: number = 0
   private disposed: boolean = false
   private receivedCount: number = 0
   private droppedCount: number = 0
+  private missedCount: number = 0
   private notifyCount: number = 0
 
   constructor(options?: RtcSubtitleStoreOptions) {
@@ -113,6 +114,7 @@ export class RtcSubtitleStore {
     this.maxRetainedClosedCalls = RtcSubtitleStore.positiveOr(
       options ? options.maxRetainedClosedCalls : undefined, RtcSubtitleStore.DEFAULT_RETAINED_CLOSED_CALLS)
     this.onLog = options ? options.onLog : undefined
+    this.logFrameText = !!(options && options.logFrameText)
   }
 
   private static positiveOr(value: number | undefined, fallback: number): number {
@@ -137,6 +139,23 @@ export class RtcSubtitleStore {
       this.onLog?.(`rtc_subtitle ingest failed error=${String(error)}`)
       return false
     }
+  }
+
+  /**
+   * 本机自己的号码：网关会把每一路的麦克风都转字下发，自己这路的原文也会推回来，
+   * 摆在面前就是自说自话，所以按 source_number 丢掉，只留对方的。
+   * 由控制器 start() 配置，那时还没有任何字幕帧到达，不需要回头清理已显示的行。
+   */
+  setLocalSpeakers(numbers: string[], reason: string): void {
+    const next: Set<string> = new Set()
+    numbers.forEach((item: string): void => {
+      const key = (item || '').trim()
+      if (key.length > 0) {
+        next.add(key)
+      }
+    })
+    this.localSpeakers = next
+    this.onLog?.(`rtc_subtitle local speakers=${next.size} reason=${reason}`)
   }
 
   subscribe(listener: RtcSubtitleSnapshotListener): () => void {
@@ -178,7 +197,8 @@ export class RtcSubtitleStore {
       line.isFinal = true
     })
     session.streams.forEach((stream: RtcSubtitleStream): void => {
-      stream.currentLine = undefined
+      // 会话已经关了，索引留着也没人再覆盖；只保留 lines 数组给回看。
+      stream.lines.clear()
       stream.dirty = false
     })
     this.clearFlushTimer(session)
@@ -228,129 +248,80 @@ export class RtcSubtitleStore {
       return
     }
     const stream = this.ensureStream(session, frame)
-    if (frame.hasSeq && stream.hasSeq && frame.seq <= stream.lastSeq) {
+    if (!this.trackSeq(stream, frame)) {
+      return
+    }
+    this.logFrame(frame)
+    if (this.localSpeakers.has(frame.speaker)) {
+      // 自己这路的帧：照样进对表日志，只是不上屏，好让网关侧看得见"发到了但被端上抑制"。
       this.droppedCount += 1
-      this.onLog?.(`rtc_subtitle drop reason=stale_seq uid=${rtcSubtitleIdHash(frame.uid)}` +
-        ` speaker=${rtcSubtitleIdHash(frame.speaker)} seq=${frame.seq} last=${stream.lastSeq}`)
       return
     }
-    if (frame.hasSeq) {
-      stream.hasSeq = true
-      stream.lastSeq = frame.seq
-    }
 
-    const text = frame.text
-    // 空文本和只有标点的帧不带词，不碰已累计文本也不动行；final 只负责把残句收尾。
-    if (text.length === 0 || !hasRtcSubtitleSayableText(text)) {
-      if (frame.isFinal) {
-        this.finishStream(session, stream)
-      } else {
+    const key = rtcSubtitleUtteranceKey(frame)
+    let line = stream.lines.get(key)
+    if (!line) {
+      if (!hasRtcSubtitleSayableText(frame.sentenceText)) {
+        // 一句还没出字就来的占位帧：不建行，等同一 utterance_id 的下一帧覆盖。
         this.droppedCount += 1
+        return
       }
-      return
+      line = this.appendLine(session, stream)
+      stream.lines.set(key, line)
     }
-
-    // 累计文本必须是上一次的延长；被改写或换了一段话就重新起一段，老残句当场收尾。
-    if (!this.continuesAccum(stream, text)) {
-      this.freezeCurrentLine(stream)
-      stream.accum = ''
-      stream.settledLen = 0
-    }
-    stream.accum = text
-    if (text.length < stream.settledLen) {
-      stream.settledLen = text.length
-    }
-    let cut = rtcSubtitleSettledLength(text)
-    if (cut < stream.settledLen) {
-      cut = stream.settledLen
-    }
-    if (frame.isFinal) {
-      cut = text.length
-    }
-    let committed = false
-    if (cut > stream.settledLen) {
-      this.commitSentences(session, stream, text.substring(stream.settledLen, cut))
-      stream.settledLen = cut
-      committed = true
-    }
-
-    const tail = text.substring(cut)
-    if (!frame.isFinal && tail.length > 0 && hasRtcSubtitleSayableText(tail)) {
-      const line = stream.currentLine ? stream.currentLine : this.appendLine(session, stream)
-      stream.currentLine = line
-      line.text = tail
-      line.updatedAt = this.scheduler.now()
-      this.markDirty(session, stream, false)
-      return
-    }
-    if (frame.isFinal) {
-      this.finishStream(session, stream)
-      return
-    }
-    // 刚好落在句末标点上的 partial：整句已经成行但没有残句，也要让这一行刷到界面上。
-    if (committed) {
-      this.markDirty(session, stream, false)
-      return
-    }
-    // 只有标点或空白：界面不变，也不新起一行。
-    this.droppedCount += 1
-  }
-
-  /** 同一句话的连续累计：新文本把旧文本整段包在里面才算接得上。 */
-  private continuesAccum(stream: RtcSubtitleStream, text: string): boolean {
-    const accum = stream.accum
-    if (accum.length === 0) {
-      return true
-    }
-    if (text.length >= accum.length) {
-      return text.startsWith(accum)
-    }
-    return accum.startsWith(text)
-  }
-
-  /**
-   * 落定的整句各自成一行，这样底部字幕像正常视频字幕一样一句一句往前走，
-   * 不会攒成一大坨。第一句复用在显示的那行，避免残句和整句重复出现。
-   */
-  private commitSentences(session: RtcSubtitleSession, stream: RtcSubtitleStream, part: string): void {
-    const sentences = rtcSubtitleSplitSentences(part)
-    for (let i = 0; i < sentences.length; i += 1) {
-      const sentence = sentences[i]
-      if (!hasRtcSubtitleSayableText(sentence)) {
-        continue
-      }
-      const open = stream.currentLine
-      if (i === 0 && open && !open.isFinal) {
-        open.text = sentence
-        open.isFinal = true
-        open.updatedAt = this.scheduler.now()
-        stream.currentLine = undefined
-        continue
-      }
-      const line = this.appendLine(session, stream)
-      line.text = sentence
+    line.text = frame.sentenceText
+    line.updatedAt = this.scheduler.now()
+    // 一句说完只认 sentence_end；state=final 是会话收尾，同样不该再让这行变动。
+    if (frame.sentenceEnd || frame.sessionFinal) {
       line.isFinal = true
     }
+    this.markDirty(session, stream, frame.sessionFinal)
   }
 
   /**
-   * 这一路说完了：残句转终态，下一段话从新行开始。
-   * accum 和 settledLen 要留着 —— 网关的 text 是整场累计，下一帧还会把已显示的句子带上，
-   * 清掉就会把同一批句子再落一遍行。
+   * seq 按 (uid, source_number) 只数真正下发的帧。v2 一句一帧，
+   * 漏一帧就是永久少一句：网关不补发，端上也不补拉，只把缺口记进日志好对表。
    */
-  private finishStream(session: RtcSubtitleSession, stream: RtcSubtitleStream): void {
-    this.freezeCurrentLine(stream)
-    this.markDirty(session, stream, true)
+  /** 返回 false 表示这一帧是迟到或重复的，已经丢掉，不能再覆盖界面上的行。 */
+  private trackSeq(stream: RtcSubtitleStream, frame: RtcAsrSubtitleFrame): boolean {
+    if (!frame.hasSeq) {
+      return true
+    }
+    if (stream.hasSeq) {
+      if (frame.seq <= stream.lastSeq) {
+        this.droppedCount += 1
+        this.onLog?.(`rtc_subtitle drop reason=stale_seq uid=${rtcSubtitleIdHash(frame.uid)}` +
+          ` src=${frame.speaker} seq=${frame.seq} last=${stream.lastSeq}`)
+        return false
+      }
+      if (frame.seq > stream.lastSeq + 1) {
+        const missed = frame.seq - stream.lastSeq - 1
+        this.missedCount += missed
+        this.onLog?.(`rtc_subtitle gap uid=${rtcSubtitleIdHash(frame.uid)} src=${frame.speaker}` +
+          ` from=${stream.lastSeq} to=${frame.seq} missed=${missed}`)
+      }
+    }
+    stream.hasSeq = true
+    stream.lastSeq = frame.seq
+    return true
   }
 
-  private freezeCurrentLine(stream: RtcSubtitleStream): void {
-    const current = stream.currentLine
-    if (!current) {
+  /** 网关对表用的一行帧日志；原文默认不进日志（里面是病床上说出来的话），要排查时打开 logFrameText。 */
+  private logFrame(frame: RtcAsrSubtitleFrame): void {
+    if (!this.onLog) {
       return
     }
-    current.isFinal = true
-    current.updatedAt = this.scheduler.now()
-    stream.currentLine = undefined
+    const head = `rtc_subtitle: uid=${frame.uid} src=${frame.speaker} seq=${frame.seq}` +
+      ` utt=${frame.utteranceId} end=${frame.sentenceEnd ? 'true' : 'false'} gen=${frame.generation}` +
+      ` self=${this.localSpeakers.has(frame.speaker) ? 'true' : 'false'}` +
+      ` begin_ms=${frame.beginMs} end_ms=${frame.endMs} ts=${frame.ts}` +
+      ` local_recv_ms=${this.scheduler.now()}`
+    if (this.logFrameText) {
+      this.onLog(`${head} text=${frame.sentenceText}`)
+      return
+    }
+    this.onLog(`${head} text_len=${frame.sentenceText.length}` +
+      ` text_hash=${rtcSubtitleIdHash(frame.sentenceText)}`)
   }
 
   private appendLine(session: RtcSubtitleSession, stream: RtcSubtitleStream): RtcSubtitleLine {
@@ -390,14 +361,15 @@ export class RtcSubtitleStore {
   private ensureStream(session: RtcSubtitleSession, frame: RtcAsrSubtitleFrame): RtcSubtitleStream {
     const existing = session.streams.get(frame.speaker)
     if (existing) {
+      // 第一帧可能还没带 role，只显了裸号码；后面拿到 role 再补成「主机 1001」这类文案。
       if (existing.label.length === 0 || existing.label === frame.speaker) {
-        existing.label = rtcSubtitleSpeakerLabel(frame.clientType, frame.speaker)
+        existing.label = rtcSubtitleSpeakerLabel(frame.role, frame.speaker)
       }
       return existing
     }
     const stream = new RtcSubtitleStream()
     stream.speaker = frame.speaker
-    stream.label = rtcSubtitleSpeakerLabel(frame.clientType, frame.speaker)
+    stream.label = rtcSubtitleSpeakerLabel(frame.role, frame.speaker)
     stream.color = rtcSubtitleSpeakerColor(frame.speaker)
     stream.lastFlushAt = 0
     session.streams.set(frame.speaker, stream)
@@ -484,7 +456,7 @@ export class RtcSubtitleStore {
     if (this.notifyCount % RtcSubtitleStore.HEARTBEAT_EVERY_NOTIFIES === 0) {
       // 帧数远大于刷新次数才是 200ms 合并真的生效的证据，光看界面判不出来。
       this.onLog?.(`rtc_subtitle heartbeat frames=${this.receivedCount} renders=${this.notifyCount}` +
-        ` dropped=${this.droppedCount} calls=${this.sessions.size}`)
+        ` dropped=${this.droppedCount} missed=${this.missedCount} calls=${this.sessions.size}`)
     }
     const snapshots = this.getSnapshots()
     this.listeners.slice().forEach((listener: RtcSubtitleSnapshotListener): void => {

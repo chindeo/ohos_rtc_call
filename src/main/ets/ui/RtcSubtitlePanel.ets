@@ -115,26 +115,11 @@ export struct RtcSubtitlePanel {
   }
 
   /**
-   * 字幕区挂在对应那一路通话的画面上，名称和区域标题重复，默认不带前缀；
-   * 只有一路里真的出现两个以上发言号码时才分色加名，展开的历史同样按这条规则。
+   * 字幕区挂在对应那一路通话的画面上，名称和区域标题重复，所以当前句和上一句都不加前缀，
+   * 只靠分色区分发言人；展开成完整记录时才带名称，否则多方通话的历史回看分不清谁说的。
    */
-  private captionSpeakers(): number {
-    const speakers: string[] = []
-    this.view.lines.forEach((line: RtcSubtitleLine): void => {
-      if (line.speaker.length > 0 && speakers.indexOf(line.speaker) < 0) {
-        speakers.push(line.speaker)
-      }
-    })
-    return speakers.length
-  }
-
-  private showCaptionLabel(): boolean {
-    return this.captionSpeakers() > 1
-  }
-
-  /** 空 Span 比在 Text 子块里写条件渲染稳妥。 */
-  private captionLabel(line: RtcSubtitleLine): string {
-    return this.showCaptionLabel() ? line.label + ' ' : ''
+  private transcriptLabel(line: RtcSubtitleLine): string {
+    return line.label + ' '
   }
 
   private captionSize(index: number, total: number): string {
@@ -166,7 +151,7 @@ export struct RtcSubtitlePanel {
             Column({ space: this.compact ? '4vp' : '8vp' }) {
               ForEach(this.view.lines, (line: RtcSubtitleLine) => {
                 Text() {
-                  Span(this.captionLabel(line))
+                  Span(this.transcriptLabel(line))
                     .fontColor(line.color)
                   Span(line.text)
                     .fontColor('#FFFFFFFF')
@@ -223,8 +208,6 @@ export struct RtcSubtitlePanel {
         } else {
           ForEach(this.captionLines(), (line: RtcSubtitleLine, index: number) => {
             Text() {
-              Span(this.captionLabel(line))
-                .fontColor(line.color)
               Span(line.text)
                 .fontColor(line.color)
               Span(this.cursorFor(line))
@@ -252,7 +235,7 @@ export struct RtcSubtitlePanel {
         top: this.compact ? '6vp' : '10vp',
         bottom: this.compact ? '6vp' : '10vp'
       })
-      .backgroundColor(this.expanded ? '#B3000000' : Color.Transparent)
+      .backgroundColor(this.expanded ? '#B3000000' : '#73000000')
       .borderRadius(this.compact ? '10vp' : '14vp')
     } else {
       Blank()

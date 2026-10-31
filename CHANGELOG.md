@@ -22,15 +22,21 @@ Breaking — this package is now WebRTC-only and carries no vendor-specific code
 - Added `RtcAppVersion.build(versionName, buildTime)` for the register payload version marker.
 - Added observable ringtone decisions (`configureLogger`, `ring_local_gate` / `ring_url_gate`) and an
   opt-in URL-ringtone fallback to the local ring on `error`, refusal, or timeout.
-- Added live subtitles on the existing `c__broadcast` downlink: `RtcSubtitleStore` parses the nested
-  `asr_subtitle` frame, keeps one container per `uid`, splits the cumulative `text` into one line per
-  completed sentence (decimal points do not break a sentence), drops stale `seq`, coalesces partial
-  updates to one render per 200 ms, and finalizes open lines when the call ends.
-  `RtcSubtitleOverlay` / `RtcSubtitlePanel` show the current sentence bottom-center over that call's
-  image, one sentence above the previous one, with an expandable transcript, follow-latest and
-  jump-to-latest; `RtcHostCallController.getSubtitleStore()` hands the store to the host. Speaker names
-  are not repeated as a prefix unless one call really has several speakers. Non-subtitle
-  broadcasts keep their existing branches. See `docs/asr-subtitle.md`.
+- Added live subtitles on the existing `c__broadcast` downlink, against the gateway's **v2 one-sentence-per-frame
+  contract**: `RtcSubtitleStore` parses the nested `asr_subtitle` frame (`sentence_text`, `utterance_id`,
+  `sentence_end`, `begin_ms` / `end_ms` / `generation`, `role`), keeps one container per `uid` and one line
+  per `(uid, source_number, utterance_id)`, replaces a line in place when the same utterance is revised,
+  freezes it only on `sentence_end`, drops stale `seq`, counts a `seq` jump as sentences lost for good
+  (`rtc_subtitle gap ... missed=n`, no re-fetch), coalesces renders to one per 200 ms, and finalizes open
+  lines when the call ends. `RtcSubtitleOverlay` / `RtcSubtitlePanel` show the current sentence
+  bottom-center over that call's image, one sentence above the previous one, over a faint band so light
+  video backgrounds stay readable, with an expandable transcript, follow-latest and jump-to-latest;
+  `RtcHostCallController.getSubtitleStore()` hands the store to the host. Captions never repeat the
+  speaker name (the region already is that call); the transcript labels by `role`. The local device's own
+  speech is dropped (`setLocalSpeakers`, wired in `RtcWebRtcCallController.start()`), so a screen never
+  shows your own words; suppressed frames still log with `self=true`. Every frame emits one
+  reconciliation log line; raw recognized text stays out of the log unless `logFrameText` is set.
+  Non-subtitle broadcasts keep their existing branches. See `docs/asr-subtitle.md`.
 
 ## 0.1.4-rc3
 

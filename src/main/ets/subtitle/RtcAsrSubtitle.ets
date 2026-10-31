@@ -9,9 +9,15 @@ interface RtcAsrSubtitleFrameJson {
   uid?: string
   seq?: number
   state?: string
-  text?: string
+  utterance_id?: number
+  sentence_end?: boolean
+  sentence_text?: string
+  begin_ms?: number
+  end_ms?: number
+  generation?: number
   source_number?: string
   client_type?: string
+  role?: string
   language?: string
   ts?: string
 }
@@ -21,15 +27,38 @@ interface RtcAsrSubtitleBroadcastWrapper {
   data?: string | Object
 }
 
+/**
+ * v2 契约：一句一帧。text（整场累计）已从帧里删除，显示内容只有 sentence_text。
+ * state 是会话级（partial=会话进行中，final=会话收尾），一句是否说完只看 sentence_end。
+ */
 export class RtcAsrSubtitleFrame {
   uid: string = ''
   speaker: string = ''
-  text: string = ''
+  sentenceText: string = ''
   clientType: string = ''
+  role: string = ''
   language: string = ''
-  isFinal: boolean = false
+  ts: string = ''
+  sessionFinal: boolean = false
   hasSeq: boolean = false
   seq: number = 0
+  hasUtterance: boolean = false
+  utteranceId: number = 0
+  sentenceEnd: boolean = false
+  hasBeginMs: boolean = false
+  beginMs: number = 0
+  hasEndMs: boolean = false
+  endMs: number = 0
+  generation: number = 0
+}
+
+/** 一行的主键：v2 按 (uid, source_number, utterance_id) 定位，缺 utterance_id 时退回用 seq。 */
+export function rtcSubtitleUtteranceKey(frame: RtcAsrSubtitleFrame): string {
+  return frame.hasUtterance ? 'utt' + frame.utteranceId : 'seq' + frame.seq
+}
+
+function readNumber(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 /** 哈希取固定 6 位，日志用它代替完整 uid 和号码：里面是病人信息，日志要在现场看。 */
@@ -62,14 +91,35 @@ function toFrame(candidate: RtcAsrSubtitleFrameJson | undefined): RtcAsrSubtitle
   const frame = new RtcAsrSubtitleFrame()
   frame.uid = uid
   frame.speaker = speaker
-  frame.text = typeof candidate.text === 'string' ? candidate.text : ''
+  frame.sentenceText = typeof candidate.sentence_text === 'string' ? candidate.sentence_text : ''
   frame.clientType = typeof candidate.client_type === 'string' ? candidate.client_type.trim() : ''
+  frame.role = typeof candidate.role === 'string' ? candidate.role.trim().toLowerCase() : ''
   frame.language = typeof candidate.language === 'string' ? candidate.language.trim() : ''
-  frame.isFinal = typeof candidate.state === 'string' && candidate.state.trim().toLowerCase() === 'final'
-  if (typeof candidate.seq === 'number' && Number.isFinite(candidate.seq)) {
+  frame.ts = typeof candidate.ts === 'string' ? candidate.ts.trim() : ''
+  frame.sessionFinal = typeof candidate.state === 'string' && candidate.state.trim().toLowerCase() === 'final'
+  frame.sentenceEnd = candidate.sentence_end === true
+  const seq = readNumber(candidate.seq)
+  if (seq !== undefined) {
     frame.hasSeq = true
-    frame.seq = candidate.seq
+    frame.seq = seq
   }
+  const utterance = readNumber(candidate.utterance_id)
+  if (utterance !== undefined) {
+    frame.hasUtterance = true
+    frame.utteranceId = utterance
+  }
+  const beginMs = readNumber(candidate.begin_ms)
+  if (beginMs !== undefined) {
+    frame.hasBeginMs = true
+    frame.beginMs = beginMs
+  }
+  const endMs = readNumber(candidate.end_ms)
+  if (endMs !== undefined) {
+    frame.hasEndMs = true
+    frame.endMs = endMs
+  }
+  const generation = readNumber(candidate.generation)
+  frame.generation = generation === undefined ? 0 : generation
   return frame
 }
 
@@ -105,92 +155,75 @@ export function parseRtcAsrSubtitleFrame(data: string): RtcAsrSubtitleFrame | un
   }
 }
 
+function isRtcSubtitleSayableCode(code: number): boolean {
+  if (code >= 0x4E00 && code <= 0x9FFF) {
+    return true
+  }
+  if (code >= 0x0041 && code <= 0x005A) {
+    return true
+  }
+  if (code >= 0x0061 && code <= 0x007A) {
+    return true
+  }
+  return code >= 0x0030 && code <= 0x0039
+}
+
 /** 空文本和只有标点/符号的帧不产生新行。 */
 export function hasRtcSubtitleSayableText(text: string): boolean {
   if (!text) {
     return false
   }
   for (let i = 0; i < text.length; i += 1) {
-    const code = text.charCodeAt(i)
-    if (code >= 0x4E00 && code <= 0x9FFF) {
-      return true
-    }
-    if (code >= 0x0041 && code <= 0x005A) {
-      return true
-    }
-    if (code >= 0x0061 && code <= 0x007A) {
-      return true
-    }
-    if (code >= 0x0030 && code <= 0x0039) {
+    if (isRtcSubtitleSayableCode(text.charCodeAt(i))) {
       return true
     }
   }
   return false
 }
 
-const RTC_SUBTITLE_SENTENCE_ENDS: string = '。！？.!?…；;\n'
-
-function isRtcSubtitleDigit(ch: string): boolean {
-  return ch.length === 1 && ch >= '0' && ch <= '9'
+function rtcSubtitleRolePrefix(role: string): string {
+  if (role === 'host') {
+    return '主机'
+  }
+  if (role === 'door') {
+    return '门口'
+  }
+  if (role === 'doctor') {
+    return '医生'
+  }
+  if (role === 'nurse' || role === 'nurses') {
+    return '护士站'
+  }
+  if (role === 'watch') {
+    return '手表'
+  }
+  if (role === 'pda') {
+    return 'PDA'
+  }
+  if (role === 'monitor') {
+    return '监护屏'
+  }
+  if (role === 'web') {
+    return '网页'
+  }
+  return ''
 }
 
-/** 半角点只在前后都是数字时当小数点，其余按句末处理（中文 ASR 偶尔吐 "3." 这种）。 */
-function isRtcSubtitleSentenceEnd(text: string, index: number): boolean {
-  const ch = text.charAt(index)
-  if (RTC_SUBTITLE_SENTENCE_ENDS.indexOf(ch) < 0) {
-    return false
-  }
-  if (ch === '.') {
-    return !(isRtcSubtitleDigit(text.charAt(index - 1)) && isRtcSubtitleDigit(text.charAt(index + 1)))
-  }
-  return true
-}
-
-/** 已说完整的整句（含句末标点）占开头多少个字符；一句都没说完返回 0。 */
-export function rtcSubtitleSettledLength(text: string): number {
-  const value = text || ''
-  let cut = 0
-  for (let i = 0; i < value.length; i += 1) {
-    if (isRtcSubtitleSentenceEnd(value, i)) {
-      cut = i + 1
-    }
-  }
-  return cut
-}
-
-/** 按句末标点断行；末尾不足一句的残句单独成段，不丢掉。 */
-export function rtcSubtitleSplitSentences(text: string): string[] {
-  const value = text || ''
-  const parts: string[] = []
-  let start = 0
-  for (let i = 0; i < value.length; i += 1) {
-    if (isRtcSubtitleSentenceEnd(value, i)) {
-      parts.push(value.substring(start, i + 1))
-      start = i + 1
-    }
-  }
-  if (start < value.length) {
-    parts.push(value.substring(start))
-  }
-  return parts
-}
-
-export function rtcSubtitleSpeakerLabel(clientType: string, sourceNumber: string): string {
+/**
+ * 显示名只按 role 取，不再枚举 client_type：真机上 1033 显示成裸号码就是漏了 nurses 这类取值。
+ * role=other 或没给 role 时回落到裸号码；bed 单独处理成「1022床」这种更自然的说法。
+ */
+export function rtcSubtitleSpeakerLabel(role: string, sourceNumber: string): string {
   const number = (sourceNumber || '').trim()
-  if (number.length === 0) {
-    return '对方'
+  const key = (role || '').trim().toLowerCase()
+  if (key === 'bed') {
+    return number.length === 0 ? '床旁' : number + '床'
   }
-  const type = (clientType || '').trim().toLowerCase()
-  if (type === 'bed') {
-    return number + '床'
+  const prefix = rtcSubtitleRolePrefix(key)
+  if (prefix.length === 0) {
+    return number.length === 0 ? '对方' : number
   }
-  if (type === 'host') {
-    return '主机 ' + number
-  }
-  if (type === 'door') {
-    return '门口 ' + number
-  }
-  return number
+  return number.length === 0 ? prefix : prefix + ' ' + number
 }
 
 const RTC_SUBTITLE_SPEAKER_COLORS: string[] = [
