@@ -186,6 +186,8 @@ $IncludeItems = @(
   "README.md",
   "CHANGELOG.md",
   "LICENSE",
+  "NOTICE",
+  "licenses",
   "oh-package.json5",
   "example",
   "libs",
