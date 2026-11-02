@@ -1,0 +1,55 @@
+@chindeo/ohos-rtc-call
+Copyright (c) 2026 Chindeo
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This package checks a prebuilt shared object into `libs/<abi>/`. It is not
+original work of this repository. The ArkTS layer in `src/main/ets/` is
+Apache-2.0; the native layer is a WebRTC build produced from a source checkout
+outside this repository.
+
+  libs/<abi>/libohos_webrtc.so
+      WebRTC, BSD-3-Clause — https://webrtc.googlesource.com/src, text in
+      licenses/webrtc.txt. Built from an OpenHarmony port of WebRTC whose
+      build glue carries a "Copyright (c) 2023 Huawei Device Co., Ltd."
+      Apache-2.0 header. That checkout declares its base as WebRTC "m120" in
+      its own `README.OpenSource`; the version is not stamped into the
+      shipped binary, so treat m120 as declared, not verified.
+
+      Statically linked into the same binary, with licence text in `licenses/`:
+        BoringSSL      — licenses/boringssl.txt
+        Opus           — BSD-3-Clause plus a patent grant, licenses/opus.txt
+        libvpx         — BSD-3-Clause plus a patent grant, licenses/libvpx.txt
+        protobuf       — BSD-3-Clause, licenses/protobuf.txt
+        abseil-cpp     — Apache-2.0, licenses/abseil.txt
+        libyuv         — BSD-3-Clause, licenses/libyuv.txt
+
+      How much of the above is evidence and how much is inference: the
+      binary retains `../../third_party/boringssl/…`,
+      `../../third_party/opus/…`, `../../third_party/protobuf/…` and
+      `../../third_party/abseil-cpp/…` source paths, and `libyuv::` mangled
+      names. libvpx is present only through WebRTC's own
+      `libvpx_vp8_encoder.cc` / `libvpx_vp9_encoder.cc` wrappers. Its symbol
+      table is stripped and localised, so the codec set cannot be confirmed
+      library-by-library from the shipped file — to check it, read the build
+      arguments of the checkout instead of this binary.
+
+Load-time dependencies
+----------------------
+`armeabi-v7a/libohos_webrtc.so` has `DT_NEEDED libc++_shared.so`, which this
+package does not ship. On a 32-bit device the LLVM C++ runtime
+(Apache-2.0 WITH LLVM-exception, https://github.com/llvm/llvm-project) has to
+come from another dependency or from the host application; the arm64 build
+links it statically and needs none.
+
+System libraries
+----------------
+Everything else in the `DT_NEEDED` list is resolved from the device's
+OpenHarmony SDK and is not shipped here: `libc.so`, `libc++_shared.so`,
+`libace_napi.z.so`, `libhilog_ndk.z.so`, `libohaudio.so`, `libohcamera.so`,
+`libohimage.so`, `libimage_receiver.so`, `libnative_buffer.so`,
+`libnative_window.so`, `libnative_image.so`, `libEGL.so`, `libGLESv3.so`,
+`libnative_media_codecbase.so`, `libnative_media_core.so`,
+`libnative_media_venc.so`, `libnative_media_vdec.so`,
+`libnative_avscreen_capture.so`, `libnative_drawing.so` and
+`libnative_display_manager.so`.

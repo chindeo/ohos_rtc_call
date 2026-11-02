@@ -155,4 +155,5 @@ binaries, or bundle names. Inject deployment-specific values from the host appli
 
 ## License
 
-Apache-2.0
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE) for the upstream versions and licences of the
+WebRTC code in the shipped `libs/<abi>/libohos_webrtc.so`.
