@@ -7,11 +7,17 @@ import {
 } from '../subtitle/RtcSubtitleStore'
 import {
   rtcSubtitleBackgroundArgb,
-  rtcSubtitleLineHeightFp,
+  rtcSubtitleLineHeightFromFp,
   rtcSubtitleStrokeArgb,
   rtcSubtitleWithAlpha,
   RtcSubtitleStyleSpec
 } from '../subtitle/RtcSubtitleStyle'
+
+/** 右侧窄栏只有 300vp，字号超过这个值就一行放不下几个字。 */
+const SIDE_FONT_SIZE_FP: number = 16
+
+/** 字幕静默多久后自动收起整块（秒级轮询，下一帧到达立即恢复）。 */
+const SUBTITLE_SILENCE_HIDE_MS: number = 12000
 
 @Component
 export struct RtcSubtitlePanel {
@@ -19,28 +25,73 @@ export struct RtcSubtitlePanel {
   @Prop title: string = ''
   @Prop showTitle: boolean = false
   @Prop compact: boolean = false
+  /**
+   * 面板挂在右侧窄栏还是主区。窄栏只有 300vp，按网关下发的字号一行只放得下十来个汉字，
+   * 所以这一路端上降一档；主区仍完全照网关值。创建后不变，不需要响应式。
+   */
+  side: boolean = false
   store?: RtcSubtitleStore
 
   @State private view: RtcSubtitleSessionView = new RtcSubtitleSessionView()
   @State private followLatest: boolean = true
   @State private expanded: boolean = false
+  @State private stale: boolean = false
   private scroller: Scroller = new Scroller()
   private unsubscribe?: () => void
   private programmaticScroll: boolean = false
   private releaseScrollGuard: number = -1
+  private staleTimer: number = -1
 
   aboutToAppear(): void {
     this.attach()
+    this.startStaleTimer()
   }
 
   aboutToDisappear(): void {
     this.detach()
+    this.stopStaleTimer()
+  }
+
+  /**
+   * 没人说话时最后两句不该一直糊在画面上：静默超过 SUBTITLE_SILENCE_HIDE_MS 就把字幕态整块收起，
+   * 下一帧到达立即恢复（订阅一直在，不重新拉历史）。展开态是用户主动点开回看的，不自动收。
+   */
+  private startStaleTimer(): void {
+    if (this.staleTimer >= 0) {
+      return
+    }
+    this.refreshStale()
+    this.staleTimer = setInterval((): void => {
+      this.refreshStale()
+    }, 1000)
+  }
+
+  private stopStaleTimer(): void {
+    if (this.staleTimer >= 0) {
+      clearInterval(this.staleTimer)
+      this.staleTimer = -1
+    }
+  }
+
+  private lastActivityMs(): number {
+    const lines = this.view.lines
+    let last = 0
+    for (let i = 0; i < lines.length; i += 1) {
+      last = Math.max(last, lines[i].updatedAt)
+    }
+    return last
+  }
+
+  private refreshStale(): void {
+    const last = this.lastActivityMs()
+    this.stale = last <= 0 || Date.now() - last > SUBTITLE_SILENCE_HIDE_MS
   }
 
   private onUidChange(): void {
     // 通话切换时不能沿用上一路的跟随状态和历史行。
     this.followLatest = true
     this.expanded = false
+    this.stale = false
     this.view = new RtcSubtitleSessionView()
     this.attach()
   }
@@ -77,6 +128,8 @@ export struct RtcSubtitlePanel {
       return
     }
     this.view = next
+    // 新帧到了立刻把"静默已收起"状态清掉，不等下一次秒级轮询。
+    this.refreshStale()
     if (this.followLatest) {
       this.scrollToEnd()
     }
@@ -105,6 +158,11 @@ export struct RtcSubtitlePanel {
     return this.compact ? '132vp' : '208vp'
   }
 
+  /** 字幕态的净高：给标题 chip 和上下内边距留出位置后，剩下的就是这两句的空间。 */
+  private captionMaxHeight(): string {
+    return this.compact ? '104vp' : '160vp'
+  }
+
   private captionLines(): RtcSubtitleLine[] {
     const lines = this.view.lines
     if (lines.length <= 1) {
@@ -121,13 +179,21 @@ export struct RtcSubtitlePanel {
     return line.label + ' '
   }
 
-  /** 字号直接按网关给的 fp 用：不乘缩放系数，也不跟随页面字号设置。 */
+  /**
+   * 生效字号：主区照网关下发值，窄栏那一路压到 SIDE_FONT_SIZE_FP 以内。
+   * 行高跟着生效字号走，否则 16fp 的字配 28fp 的行高会散。
+   */
+  private effectiveFontSizeFp(style: RtcSubtitleStyleSpec): number {
+    return this.side ? Math.min(style.fontSize, SIDE_FONT_SIZE_FP) : style.fontSize
+  }
+
+  /** 字号按网关给的 fp 用（窄栏见上）：不乘缩放系数，也不跟随页面字号设置。 */
   private styleFontSize(style: RtcSubtitleStyleSpec): string {
-    return style.fontSize + 'fp'
+    return this.effectiveFontSizeFp(style) + 'fp'
   }
 
   private styleLineHeight(style: RtcSubtitleStyleSpec): string {
-    return rtcSubtitleLineHeightFp(style) + 'fp'
+    return rtcSubtitleLineHeightFromFp(this.effectiveFontSizeFp(style)) + 'fp'
   }
 
   private styleBackground(style: RtcSubtitleStyleSpec): string {
@@ -184,7 +250,7 @@ export struct RtcSubtitlePanel {
   }
 
   build() {
-    if (this.view.lines.length > 0) {
+    if (this.view.lines.length > 0 && !(this.stale && !this.expanded)) {
       Column() {
         if (this.showTitle && this.title.length > 0) {
           Text(this.title)
@@ -262,26 +328,34 @@ export struct RtcSubtitlePanel {
               })
           }
         } else {
-          ForEach(this.captionLines(), (line: RtcSubtitleLine, index: number) => {
-            Text() {
-              Span(line.text)
-                .fontColor(rtcSubtitleWithAlpha(line.style.textColor,
-                  this.captionAlpha(index, this.captionLines().length)))
-              Span(this.cursorFor(line))
-                .fontColor(rtcSubtitleWithAlpha(line.color,
-                  this.captionAlpha(index, this.captionLines().length)))
-            }
-            .constraintSize({ maxWidth: '100%' })
-            .fontSize(this.styleFontSize(line.style))
-            .lineHeight(this.styleLineHeight(line.style))
-            .textAlign(TextAlign.Center)
-            .backgroundColor(this.styleBackground(line.style))
-            .borderRadius(this.compact ? 8 : 10)
-            .padding(this.entryPadding())
-            .textShadow(this.styleStroke(line.style))
-            .maxLines(this.compact ? 2 : 3)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }, (line: RtcSubtitleLine) => line.id + '|' + line.updatedAt + '|' + (line.isFinal ? 'f' : 'p'))
+          Column({ space: this.compact ? '4vp' : '6vp' }) {
+            ForEach(this.captionLines(), (line: RtcSubtitleLine, index: number) => {
+              Text() {
+                Span(line.text)
+                  .fontColor(rtcSubtitleWithAlpha(line.style.textColor,
+                    this.captionAlpha(index, this.captionLines().length)))
+                Span(this.cursorFor(line))
+                  .fontColor(rtcSubtitleWithAlpha(line.color,
+                    this.captionAlpha(index, this.captionLines().length)))
+              }
+              .constraintSize({ maxWidth: '100%' })
+              .fontSize(this.styleFontSize(line.style))
+              .lineHeight(this.styleLineHeight(line.style))
+              .textAlign(TextAlign.Center)
+              .backgroundColor(this.styleBackground(line.style))
+              .borderRadius(this.compact ? 8 : 10)
+              .padding(this.entryPadding())
+              .textShadow(this.styleStroke(line.style))
+              .maxLines(this.compact ? 2 : 3)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }, (line: RtcSubtitleLine) => line.id + '|' + line.updatedAt + '|' + (line.isFinal ? 'f' : 'p'))
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Center)
+          // 底对齐 + 限高：两句各 2–3 行时原来能一路往上长到画面中部，现在超出先挤掉
+          // 顶上的上一句，正在说的当前句不被裁（缺字比少一行历史严重）。
+          .justifyContent(FlexAlign.End)
+          .constraintSize({ maxHeight: this.captionMaxHeight() })
         }
       }
       .width('100%')
@@ -366,11 +440,7 @@ export struct RtcSubtitleOverlay {
     return this.compact ? 170 : 240
   }
 
-  private bandWidth(): string {
-    return this.getSubtitleCalls().length > 1 ? '75%' : '100%'
-  }
-
-  /** 没出字的那一路不占位：否则空面板会把有字幕的那一路压成半宽。 */
+  /** 除主区那一路以外的各路都进右侧窄栏。 */
   private sideSubtitleCalls(): RtcHostCallUiItem[] {
     const calls = this.getSubtitleCalls()
     const side: RtcHostCallUiItem[] = []
@@ -417,7 +487,9 @@ export struct RtcSubtitleOverlay {
             RtcSubtitlePanel({
               uid: this.getSubtitleCalls()[0].uid,
               title: this.getTitle(this.getSubtitleCalls()[0]),
-              showTitle: this.getSubtitleCalls().length > 1,
+              // 主区不显示标题 chip：这块字幕就挂在那一路自己的画面上，画面左上角已经有
+              // 同名 NameTag，再顶一个 chip 是同一件事说两遍（真机截图上出现过两次）。
+              showTitle: false,
               compact: this.compact,
               store: this.store
             })
@@ -431,8 +503,10 @@ export struct RtcSubtitleOverlay {
               RtcSubtitlePanel({
                 uid: call.uid,
                 title: this.getTitle(call),
+                // 窄栏纵向可能堆多路，必须靠 chip 区分是谁。
                 showTitle: true,
                 compact: true,
+                side: true,
                 store: this.store
               })
             }, (call: RtcHostCallUiItem) => call.uid)

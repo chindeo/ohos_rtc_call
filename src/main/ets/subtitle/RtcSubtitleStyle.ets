@@ -104,8 +104,12 @@ export function rtcSubtitleWithAlpha(hexColor: string, alpha: number): string {
 }
 
 /** 行高按字号稳定计算：同一行内样式变化不造成行高跳变或文字位置抖动。 */
+export function rtcSubtitleLineHeightFromFp(fontSizeFp: number): number {
+  return Math.round(fontSizeFp * 1.4)
+}
+
 export function rtcSubtitleLineHeightFp(style: RtcSubtitleStyleSpec): number {
-  return Math.round(style.fontSize * 1.4)
+  return rtcSubtitleLineHeightFromFp(style.fontSize)
 }
 
 function pickFontSize(value: number | undefined, fallbacks: string[]): number {
