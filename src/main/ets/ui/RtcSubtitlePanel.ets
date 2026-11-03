@@ -9,6 +9,7 @@ import {
   rtcSubtitleBackgroundArgb,
   rtcSubtitleLineHeightFp,
   rtcSubtitleStrokeArgb,
+  rtcSubtitleWithAlpha,
   RtcSubtitleStyleSpec
 } from '../subtitle/RtcSubtitleStyle'
 
@@ -150,7 +151,8 @@ export struct RtcSubtitlePanel {
       return none
     }
     const shadow: ShadowOptions = {
-      radius: style.strokeWidth + 'fp',
+      // ShadowOptions.radius 只收 number|Resource，不收 '2fp' 这类字符串；数字按 vp 取。
+      radius: style.strokeWidth,
       color: rtcSubtitleStrokeArgb(style),
       offsetX: 0,
       offsetY: 0
@@ -158,7 +160,26 @@ export struct RtcSubtitlePanel {
     return shadow
   }
 
-  private captionColor(index: number, total: number): number {
+  /** 标题跟随样式帧：字色同正文、字号取正文的 0.8 档、底色与条目一致，不再硬编码灰字。 */
+  private titleFontSize(): string {
+    const store = this.store
+    if (!store) {
+      return this.compact ? '16fp' : '20fp'
+    }
+    return Math.round(store.getCurrentStyle().fontSize * 0.8) + 'fp'
+  }
+
+  private titleTextColor(): string {
+    const store = this.store
+    return store ? store.getCurrentStyle().textColor : '#FFC9CBD1'
+  }
+
+  private titleBackground(): string {
+    const store = this.store
+    return store ? rtcSubtitleBackgroundArgb(store.getCurrentStyle()) : '#00000000'
+  }
+
+  private captionAlpha(index: number, total: number): number {
     return index === total - 1 ? 1 : 0.55
   }
 
@@ -167,12 +188,14 @@ export struct RtcSubtitlePanel {
       Column() {
         if (this.showTitle && this.title.length > 0) {
           Text(this.title)
-            .fontSize(this.compact ? '16fp' : '20fp')
-            .fontColor('#FFC9CBD1')
+            .fontSize(this.titleFontSize())
+            .fontColor(this.titleTextColor())
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
             .textAlign(TextAlign.Center)
+            .backgroundColor(this.titleBackground())
+            .borderRadius(this.compact ? 8 : 10)
+            .padding(this.entryPadding())
         }
 
         if (this.expanded) {
@@ -242,14 +265,15 @@ export struct RtcSubtitlePanel {
           ForEach(this.captionLines(), (line: RtcSubtitleLine, index: number) => {
             Text() {
               Span(line.text)
-                .fontColor(line.style.textColor)
+                .fontColor(rtcSubtitleWithAlpha(line.style.textColor,
+                  this.captionAlpha(index, this.captionLines().length)))
               Span(this.cursorFor(line))
-                .fontColor(line.color)
+                .fontColor(rtcSubtitleWithAlpha(line.color,
+                  this.captionAlpha(index, this.captionLines().length)))
             }
             .constraintSize({ maxWidth: '100%' })
             .fontSize(this.styleFontSize(line.style))
             .lineHeight(this.styleLineHeight(line.style))
-            .opacity(this.captionColor(index, this.captionLines().length))
             .textAlign(TextAlign.Center)
             .backgroundColor(this.styleBackground(line.style))
             .borderRadius(this.compact ? 8 : 10)
@@ -346,14 +370,42 @@ export struct RtcSubtitleOverlay {
     return this.getSubtitleCalls().length > 1 ? '75%' : '100%'
   }
 
+  /** 没出字的那一路不占位：否则空面板会把有字幕的那一路压成半宽。 */
+  private callHasLines(call: RtcHostCallUiItem): boolean {
+    const store = this.store
+    if (!store) {
+      return false
+    }
+    const snapshot = store.getSnapshot(call.uid)
+    return !!snapshot && snapshot.lines.length > 0
+  }
+
+  private sideCallsWithLines(): RtcHostCallUiItem[] {
+    const calls = this.getSubtitleCalls()
+    const side: RtcHostCallUiItem[] = []
+    for (let i = 1; i < calls.length; i += 1) {
+      if (this.callHasLines(calls[i])) {
+        side.push(calls[i])
+      }
+    }
+    return side
+  }
+
+  /** 与 RtcReferenceCallLayout 的侧栏同宽，侧路字幕才贴在它自己的侧卡上。 */
+  private sideZoneWidth(): string {
+    return this.compact ? '220vp' : '300vp'
+  }
+
   build() {
     if (this.store && this.model.visible && !this.hasPendingAnswerCall()) {
       Row({ space: this.compact ? '6vp' : '12vp' }) {
-        ForEach(this.getSubtitleCalls(), (call: RtcHostCallUiItem) => {
+        // 主画面的那一路占主区；其余各路叠在右侧窄区，贴着它们自己的小窗画面，
+        // 不再让第二路的字幕跑到主画面里、和它的视频分离。
+        if (this.getSubtitleCalls().length > 0 && this.callHasLines(this.getSubtitleCalls()[0])) {
           Column() {
             RtcSubtitlePanel({
-              uid: call.uid,
-              title: this.getTitle(call),
+              uid: this.getSubtitleCalls()[0].uid,
+              title: this.getTitle(this.getSubtitleCalls()[0]),
               showTitle: this.getSubtitleCalls().length > 1,
               compact: this.compact,
               store: this.store
@@ -361,15 +413,26 @@ export struct RtcSubtitleOverlay {
           }
           .layoutWeight(1)
           .alignItems(HorizontalAlign.Center)
-        }, (call: RtcHostCallUiItem) => call.uid)
+        }
+        if (this.sideCallsWithLines().length > 0) {
+          Column({ space: this.compact ? '4vp' : '8vp' }) {
+            ForEach(this.sideCallsWithLines(), (call: RtcHostCallUiItem) => {
+              RtcSubtitlePanel({
+                uid: call.uid,
+                title: this.getTitle(call),
+                showTitle: true,
+                compact: true,
+                store: this.store
+              })
+            }, (call: RtcHostCallUiItem) => call.uid)
+          }
+          .width(this.sideZoneWidth())
+          .alignItems(HorizontalAlign.Center)
+        }
       }
-      .width(this.bandWidth())
+      .width('100%')
       .alignItems(VerticalAlign.Bottom)
       .position({ left: 0, bottom: this.captionBottomOffset() })
-      .padding({
-        left: this.compact ? '10vp' : '20vp',
-        right: this.compact ? '10vp' : '20vp'
-      })
       .onAreaChange((_oldArea: Area, newArea: Area) => {
         this.compact = Number(newArea.width) > 0 && Number(newArea.width) < 1280
       })

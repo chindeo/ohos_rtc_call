@@ -158,6 +158,11 @@ export class RtcSubtitleStore {
     }
   }
 
+  /** 标题这类不属于任何一行的元素取当前样式；行本身带建行时的快照，不依赖这个值重绘历史。 */
+  getCurrentStyle(): RtcSubtitleStyleSpec {
+    return this.currentStyle
+  }
+
   getAppliedStyleVersion(): number {
     return this.appliedStyleVersion
   }

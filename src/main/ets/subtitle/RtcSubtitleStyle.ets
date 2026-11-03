@@ -94,6 +94,15 @@ export function rtcSubtitleStrokeArgb(style: RtcSubtitleStyleSpec): string {
   return '#FF' + style.strokeColor.substring(1)
 }
 
+/**
+ * 给 #RRGGBB 叠一个 0–1 的 alpha，返回 #AARRGGBB。
+ * 弱显（上一句）只该作用在文字上：opacity 挂在整条 Text 上会把底色一起变淡。
+ */
+export function rtcSubtitleWithAlpha(hexColor: string, alpha: number): string {
+  const clamped = Math.max(0, Math.min(1, alpha))
+  return '#' + toTwoHex(Math.round(clamped * 255)) + hexColor.substring(1)
+}
+
 /** 行高按字号稳定计算：同一行内样式变化不造成行高跳变或文字位置抖动。 */
 export function rtcSubtitleLineHeightFp(style: RtcSubtitleStyleSpec): number {
   return Math.round(style.fontSize * 1.4)
