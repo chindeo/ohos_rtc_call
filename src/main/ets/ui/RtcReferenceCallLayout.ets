@@ -120,6 +120,15 @@ export struct RtcReferenceCallLayout {
     return this.isCompactViewport() ? '220vp' : '300vp'
   }
 
+  /**
+   * 侧栏定宽、主区吃剩余：原来主区写死 75%，两路时主画面被比例性压缩，
+   * 且侧栏内容（自己预览 + 侧卡）实际需要的宽度和 25% 并不匹配。
+   * 字幕浮层的右区用同一个值，侧路字幕才能贴在它自己的侧卡上。
+   */
+  private sideColumnWidth(): string {
+    return this.isCompactViewport() ? '220vp' : '300vp'
+  }
+
   private getAllCalls(): RtcHostCallUiItem[] {
     const calls: RtcHostCallUiItem[] = []
     if (this.model.activeCall) {
@@ -578,7 +587,8 @@ export struct RtcReferenceCallLayout {
         .height('100%')
         .alignItems(HorizontalAlign.Start)
 
-        if (this.model.localCard.hasVideo) {
+        // 多路时右栏顶部已经有自己预览，主画面里再叠一个就是两张"自己"；只留右栏那处。
+        if (this.model.localCard.hasVideo && this.getAllCalls().length <= 1) {
           Row() {
             Blank()
             Stack() {
@@ -798,7 +808,7 @@ export struct RtcReferenceCallLayout {
       Stack() {
         this.ActiveMedia(call)
       }
-      .width('75%')
+      .layoutWeight(1)
       .height('100%')
 
       Column() {
@@ -813,7 +823,7 @@ export struct RtcReferenceCallLayout {
         .width('100%')
         .layoutWeight(1)
       }
-      .width('25%')
+      .width(this.sideColumnWidth())
       .height('100%')
     }
     .width('100%')
@@ -1141,10 +1151,24 @@ export struct RtcReferenceCallLayout {
               this.logTouch('touch_call_center', event)
             })
 
-            Stack() {
-              this.ControlLayer(this.model.activeCall)
+            Row() {
+              Stack() {
+                this.ControlLayer(this.model.activeCall)
+              }
+              .layoutWeight(1)
+              .height('100%')
+
+              if (this.getAllCalls().length > 1) {
+                // 纯占位：控制层整行是 100% x 100%，这块如果不显式退出命中测试，
+                // 就会把 zIndex 1 侧栏里的接听/挂断/切换整列吃掉（真机：点击只到 touch_control_wrapper，
+                // side_card 一次都不触发，第二路因此只能等到超时无人为接听）。
+                Blank()
+                  .width(this.sideColumnWidth())
+                  .height('100%')
+                  .hitTestBehavior(HitTestMode.None)
+              }
             }
-            .width(this.getAllCalls().length > 1 ? '75%' : '100%')
+            .width('100%')
             .height('100%')
             .position({ x: 0, y: 0 })
             .zIndex(2)
