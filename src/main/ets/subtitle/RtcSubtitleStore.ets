@@ -7,6 +7,11 @@ import {
   rtcSubtitleUtteranceKey,
   RtcAsrSubtitleFrame
 } from './RtcAsrSubtitle'
+import {
+  parseRtcSubtitleStyleFrame,
+  RtcSubtitleStyleFrame,
+  RtcSubtitleStyleSpec
+} from './RtcSubtitleStyle'
 
 export interface RtcSubtitleScheduler {
   setTimeout(callback: () => void, delayMs: number): number
@@ -46,6 +51,8 @@ export class RtcSubtitleLine {
   text: string = ''
   isFinal: boolean = false
   updatedAt: number = 0
+  /** 建行那一刻的样式快照：定稿行不随后续样式帧重绘，只有未闭合半句会换到新样式。 */
+  style: RtcSubtitleStyleSpec = new RtcSubtitleStyleSpec()
 }
 
 export class RtcSubtitleSessionView {
@@ -104,6 +111,10 @@ export class RtcSubtitleStore {
   private droppedCount: number = 0
   private missedCount: number = 0
   private notifyCount: number = 0
+  /** 当前样式：整场通话级一份，不按 uid / 发言人分桶；样式帧只是覆盖内置默认。 */
+  private currentStyle: RtcSubtitleStyleSpec = new RtcSubtitleStyleSpec()
+  /** -1 表示还没应用过任何样式帧；同版本重复收到直接跳过，不刷新不重绘。 */
+  private appliedStyleVersion: number = -1
 
   constructor(options?: RtcSubtitleStoreOptions) {
     this.scheduler = (options && options.scheduler) || new RtcDefaultSubtitleScheduler()
@@ -127,6 +138,12 @@ export class RtcSubtitleStore {
       return false
     }
     try {
+      const styleFrame = parseRtcSubtitleStyleFrame(data)
+      if (styleFrame) {
+        this.receivedCount += 1
+        this.applyStyleFrame(styleFrame)
+        return true
+      }
       const frame = parseRtcAsrSubtitleFrame(data)
       if (!frame) {
         return false
@@ -139,6 +156,37 @@ export class RtcSubtitleStore {
       this.onLog?.(`rtc_subtitle ingest failed error=${String(error)}`)
       return false
     }
+  }
+
+  getAppliedStyleVersion(): number {
+    return this.appliedStyleVersion
+  }
+
+  /**
+   * 样式帧与正文分开处理：同版本幂等跳过；新版本只换"当前样式"对象并套到未闭合半句上，
+   * 已定稿的历史行保留建行时的快照，不为立刻刷新而重绘。
+   */
+  private applyStyleFrame(frame: RtcSubtitleStyleFrame): void {
+    if (frame.styleVersion === this.appliedStyleVersion) {
+      this.onLog?.(`rtc_subtitle_style skip same version=${frame.styleVersion}`)
+      return
+    }
+    this.currentStyle = frame.style
+    this.appliedStyleVersion = frame.styleVersion
+    let refreshed = 0
+    this.sessions.forEach((session: RtcSubtitleSession): void => {
+      session.lines.forEach((line: RtcSubtitleLine): void => {
+        if (!line.isFinal) {
+          line.style = frame.style
+          line.updatedAt = this.scheduler.now()
+          refreshed += 1
+        }
+      })
+    })
+    this.onLog?.(`rtc_subtitle_style applied version=${frame.styleVersion}` +
+      ` fallback=${frame.fallbackFields.length > 0 ? frame.fallbackFields.join(',') : 'none'}` +
+      ` refreshed_open_lines=${refreshed}`)
+    this.notify()
   }
 
   /**
@@ -331,6 +379,7 @@ export class RtcSubtitleStore {
     line.speaker = stream.speaker
     line.label = stream.label
     line.color = stream.color
+    line.style = this.currentStyle
     line.updatedAt = this.scheduler.now()
     session.lines.push(line)
     if (session.lines.length > this.maxLinesPerSession) {

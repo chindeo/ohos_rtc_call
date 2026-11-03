@@ -5,6 +5,12 @@ import {
   RtcSubtitleSessionView,
   RtcSubtitleStore
 } from '../subtitle/RtcSubtitleStore'
+import {
+  rtcSubtitleBackgroundArgb,
+  rtcSubtitleLineHeightFp,
+  rtcSubtitleStrokeArgb,
+  RtcSubtitleStyleSpec
+} from '../subtitle/RtcSubtitleStyle'
 
 @Component
 export struct RtcSubtitlePanel {
@@ -94,14 +100,6 @@ export struct RtcSubtitlePanel {
     return line.isFinal ? '' : ' ▍'
   }
 
-  private lineHeightValue(): string {
-    return this.compact ? '26vp' : '36vp'
-  }
-
-  private fontSizeValue(): string {
-    return this.compact ? '18fp' : '24fp'
-  }
-
   private panelMaxHeight(): string {
     return this.compact ? '132vp' : '208vp'
   }
@@ -122,11 +120,42 @@ export struct RtcSubtitlePanel {
     return line.label + ' '
   }
 
-  private captionSize(index: number, total: number): string {
-    if (index === total - 1) {
-      return this.compact ? '20fp' : '26fp'
+  /** 字号直接按网关给的 fp 用：不乘缩放系数，也不跟随页面字号设置。 */
+  private styleFontSize(style: RtcSubtitleStyleSpec): string {
+    return style.fontSize + 'fp'
+  }
+
+  private styleLineHeight(style: RtcSubtitleStyleSpec): string {
+    return rtcSubtitleLineHeightFp(style) + 'fp'
+  }
+
+  private styleBackground(style: RtcSubtitleStyleSpec): string {
+    return rtcSubtitleBackgroundArgb(style)
+  }
+
+  private entryPadding(): Padding {
+    const padding: Padding = { left: 10, right: 10, top: 4, bottom: 4 }
+    return padding
+  }
+
+  /**
+   * 描边用 textShadow 模拟而不是 Canvas 两次描边：零偏移、blur 等于描边宽度的阴影画在字形
+   * 后面，只露出字形外侧一圈，不会糊掉笔画；取舍是边缘偏软、没有 Canvas 硬边那么利落，
+   * 换来的是保留模式渲染、不为每帧创建 Paint/Path 对象。
+   * stroke_width=0 时半径 0 且颜色全透明，保证完全不出现阴影、也不残留上一次描边。
+   */
+  private styleStroke(style: RtcSubtitleStyleSpec): ShadowOptions {
+    if (style.strokeWidth <= 0) {
+      const none: ShadowOptions = { radius: 0, color: '#00000000', offsetX: 0, offsetY: 0 }
+      return none
     }
-    return this.compact ? '16fp' : '20fp'
+    const shadow: ShadowOptions = {
+      radius: style.strokeWidth + 'fp',
+      color: rtcSubtitleStrokeArgb(style),
+      offsetX: 0,
+      offsetY: 0
+    }
+    return shadow
   }
 
   private captionColor(index: number, total: number): number {
@@ -154,14 +183,18 @@ export struct RtcSubtitlePanel {
                   Span(this.transcriptLabel(line))
                     .fontColor(line.color)
                   Span(line.text)
-                    .fontColor('#FFFFFFFF')
+                    .fontColor(line.style.textColor)
                   Span(this.cursorFor(line))
                     .fontColor(line.color)
                 }
                 .width('100%')
-                .fontSize(this.fontSizeValue())
-                .lineHeight(this.lineHeightValue())
+                .fontSize(this.styleFontSize(line.style))
+                .lineHeight(this.styleLineHeight(line.style))
                 .textAlign(TextAlign.Start)
+                .backgroundColor(this.styleBackground(line.style))
+                .borderRadius(this.compact ? 8 : 10)
+                .padding(this.entryPadding())
+                .textShadow(this.styleStroke(line.style))
               }, (line: RtcSubtitleLine) => line.id + '|' + line.updatedAt + '|' + (line.isFinal ? 'f' : 'p'))
             }
             .width('100%')
@@ -209,16 +242,19 @@ export struct RtcSubtitlePanel {
           ForEach(this.captionLines(), (line: RtcSubtitleLine, index: number) => {
             Text() {
               Span(line.text)
-                .fontColor(line.color)
+                .fontColor(line.style.textColor)
               Span(this.cursorFor(line))
                 .fontColor(line.color)
             }
-            .width('100%')
-            .fontSize(this.captionSize(index, this.captionLines().length))
-            .lineHeight(this.compact ? '24vp' : '32vp')
+            .constraintSize({ maxWidth: '100%' })
+            .fontSize(this.styleFontSize(line.style))
+            .lineHeight(this.styleLineHeight(line.style))
             .opacity(this.captionColor(index, this.captionLines().length))
             .textAlign(TextAlign.Center)
-            .textShadow({ radius: 6, color: '#CC000000', offsetX: 0, offsetY: 1 })
+            .backgroundColor(this.styleBackground(line.style))
+            .borderRadius(this.compact ? 8 : 10)
+            .padding(this.entryPadding())
+            .textShadow(this.styleStroke(line.style))
             .maxLines(this.compact ? 2 : 3)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
           }, (line: RtcSubtitleLine) => line.id + '|' + line.updatedAt + '|' + (line.isFinal ? 'f' : 'p'))
@@ -235,8 +271,6 @@ export struct RtcSubtitlePanel {
         top: this.compact ? '6vp' : '10vp',
         bottom: this.compact ? '6vp' : '10vp'
       })
-      .backgroundColor(this.expanded ? '#B3000000' : '#73000000')
-      .borderRadius(this.compact ? '10vp' : '14vp')
     } else {
       Blank()
         .width(0)

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- 新增字幕样式帧 `asr_subtitle_style`：字号、字色、底色、底色不透明度、描边色与描边宽度改由网关
+  后台配置下发，端上不再硬编码配色；`style_version` 幂等，样式只作用于下一条与未闭合半句，
+  已定稿历史行保留建行时快照。收不到样式帧时用内置默认（20fp 白字、黑底 60%、1fp 黑描边）。
 - WebRTC native 日志默认档位从 INFO 降到 WARNING：通话中约 190 行/秒的 `libjingle` INFO 洪流不再进 hilog，
   减少音频/编码线程的格式化与写日志开销，也避免冲没取证缓冲区。
   新增 `RtcCallDiagnosticsOptions.verboseNativeLog`，取证时置 `true` 可临时开回 INFO 全量。
