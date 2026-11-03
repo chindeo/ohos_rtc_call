@@ -22,8 +22,6 @@ const SUBTITLE_SILENCE_HIDE_MS: number = 12000
 @Component
 export struct RtcSubtitlePanel {
   @Prop @Watch('onUidChange') uid: string = ''
-  @Prop title: string = ''
-  @Prop showTitle: boolean = false
   @Prop compact: boolean = false
   /**
    * 面板挂在右侧窄栏还是主区。窄栏只有 300vp，按网关下发的字号一行只放得下十来个汉字，
@@ -226,25 +224,6 @@ export struct RtcSubtitlePanel {
     return shadow
   }
 
-  /** 标题跟随样式帧：字色同正文、字号取正文的 0.8 档、底色与条目一致，不再硬编码灰字。 */
-  private titleFontSize(): string {
-    const store = this.store
-    if (!store) {
-      return this.compact ? '16fp' : '20fp'
-    }
-    return Math.round(store.getCurrentStyle().fontSize * 0.8) + 'fp'
-  }
-
-  private titleTextColor(): string {
-    const store = this.store
-    return store ? store.getCurrentStyle().textColor : '#FFC9CBD1'
-  }
-
-  private titleBackground(): string {
-    const store = this.store
-    return store ? rtcSubtitleBackgroundArgb(store.getCurrentStyle()) : '#00000000'
-  }
-
   private captionAlpha(index: number, total: number): number {
     return index === total - 1 ? 1 : 0.55
   }
@@ -252,18 +231,6 @@ export struct RtcSubtitlePanel {
   build() {
     if (this.view.lines.length > 0 && !(this.stale && !this.expanded)) {
       Column() {
-        if (this.showTitle && this.title.length > 0) {
-          Text(this.title)
-            .fontSize(this.titleFontSize())
-            .fontColor(this.titleTextColor())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .textAlign(TextAlign.Center)
-            .backgroundColor(this.titleBackground())
-            .borderRadius(this.compact ? 8 : 10)
-            .padding(this.entryPadding())
-        }
-
         if (this.expanded) {
           Scroll(this.scroller) {
             Column({ space: this.compact ? '4vp' : '8vp' }) {
@@ -427,10 +394,6 @@ export struct RtcSubtitleOverlay {
     return calls
   }
 
-  private getTitle(call: RtcHostCallUiItem): string {
-    return call.displayName || call.peerNumber || '通话'
-  }
-
   /**
    * 字幕贴在画面底部，但要让开通话控制条：控制条是图标 + 文字 + 内边距再加 20vp 下边距，
    * 这里按同一套尺寸留出净空，压住按钮就没法挂断了。
@@ -484,12 +447,10 @@ export struct RtcSubtitleOverlay {
         // 空行由面板自己按 view.lines 长度收起，不占位。
         if (this.getSubtitleCalls().length > 0) {
           Column() {
+            // 面板不带标题 chip：主区和窄栏的字幕都贴着各自画面的下方，画面左上角已经有
+            // 同名 NameTag，再顶一个 chip 是同一件事说两遍（真机截图上出现过两次）。
             RtcSubtitlePanel({
               uid: this.getSubtitleCalls()[0].uid,
-              title: this.getTitle(this.getSubtitleCalls()[0]),
-              // 主区不显示标题 chip：这块字幕就挂在那一路自己的画面上，画面左上角已经有
-              // 同名 NameTag，再顶一个 chip 是同一件事说两遍（真机截图上出现过两次）。
-              showTitle: false,
               compact: this.compact,
               store: this.store
             })
@@ -502,9 +463,6 @@ export struct RtcSubtitleOverlay {
             ForEach(this.sideSubtitleCalls(), (call: RtcHostCallUiItem) => {
               RtcSubtitlePanel({
                 uid: call.uid,
-                title: this.getTitle(call),
-                // 窄栏纵向可能堆多路，必须靠 chip 区分是谁。
-                showTitle: true,
                 compact: true,
                 side: true,
                 store: this.store
