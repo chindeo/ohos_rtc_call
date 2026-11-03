@@ -108,6 +108,7 @@ export class RtcHostCallController {
         aecDumpFilePrefix: options.diagnostics.aecDumpFilePrefix,
         enableAudioSampleStats: options.diagnostics.enableAudioSampleStats,
         logTag: options.diagnostics.logTag,
+        verboseNativeLog: options.diagnostics.verboseNativeLog,
         onLog: (message: string) => {
           options.onLog?.('rtc_media_diagnostics ' + message)
         },

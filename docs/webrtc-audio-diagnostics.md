@@ -23,6 +23,24 @@
 - SDP、ICE、连接回调和 ontrack 都需要 session/rtcUid stale guard，防止旧异步回调污染下一通电话。
 - 单个 subscribe 异常只清理目标下行；不要重置共享 publish 或其它活跃通话。
 
+## native 日志档位（hilog 洪流开关）
+
+- `RtcAudioController` 通过 `NativeLogging.enableLogToDebugOutput(severity)` 把 WebRTC 内部日志接到 hilog，
+  severity 取 WebRTC `LoggingSeverity`：VERBOSE=0、INFO=1、WARNING=2、ERROR=3、NONE=4。
+- **默认 WARNING(2)**。INFO 档在视频通话中实测约 190 行/秒（2026-11-03 主机 .61，`libjingle` tag），
+  格式化与 hilog 写入落在音频/编码线程上，吃的是抖动和尾延迟；同时会把 hilog 缓冲区冲没，
+  导致其它取证日志（含字幕帧对表行）被滚掉。
+- 门槛在 native 侧格式化之前生效（`rtc_base/logging.h` 的 `Loggable()` 先判级别），调高后连字符串拼接一起省。
+- 回声/编解码归因取证需要 AEC3 与编码器内部状态时，宿主在
+  `RtcHostCallControllerOptions.diagnostics` 里传 `verboseNativeLog: true` 临时开回 INFO(1)；
+  不传即 WARNING，宿主代码无需为默认行为做任何事。
+
+手工验收点：
+
+1. 默认包视频通话 60 秒，10 秒窗口内 `hilog -x | grep -c libjingle` 应为个位数到十几行（仅 WARNING/ERROR）。
+2. 同一台设备开 `verboseNativeLog: true` 重装后，同窗口应回到百行级，证明开关双向有效。
+3. 两档下接听、挂断、保持切换与字幕帧（`rtc_subtitle`）行为一致，日志档位只影响 native 内部日志量。
+
 ## native ohos_webrtc 后续
 
 - ArkTS 层如果没有显式 ADM release/dispose API，单纯清空对象不能保证 native `AudioCapturer` 同步释放。

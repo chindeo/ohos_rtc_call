@@ -103,4 +103,7 @@ export interface RtcCallDiagnosticsOptions {
   aecDumpFilePrefix?: string
   enableAudioSampleStats?: boolean
   logTag?: string
+  // WebRTC native 日志进 hilog 的门槛。默认 WARNING：INFO 档在通话中约 190 行/秒，
+  // 会拖音频/编码线程并把 hilog 缓冲区冲没；取证时置 true 临时开回 INFO 全量。
+  verboseNativeLog?: boolean
 }

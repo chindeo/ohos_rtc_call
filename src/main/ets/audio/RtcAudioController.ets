@@ -111,6 +111,21 @@ export class RtcAudioController {
     if (this.adm) {
       this.bindDiagnostics()
     }
+    if (this.pcf) {
+      this.applyNativeLogSeverity()
+    }
+  }
+
+  // WebRTC LoggingSeverity：VERBOSE=0 INFO=1 WARNING=2 ERROR=3 NONE=4。
+  // 门槛在 native 侧格式化之前就生效，调高后连字符串拼接一起省。
+  private static readonly NATIVE_LOG_SEVERITY_INFO: number = 1
+  private static readonly NATIVE_LOG_SEVERITY_WARNING: number = 2
+
+  private applyNativeLogSeverity(): void {
+    const severity = this.diagnostics.verboseNativeLog === true
+      ? RtcAudioController.NATIVE_LOG_SEVERITY_INFO
+      : RtcAudioController.NATIVE_LOG_SEVERITY_WARNING
+    webrtc.NativeLogging.enableLogToDebugOutput(severity)
   }
 
   ensureReady(): boolean {
@@ -616,10 +631,10 @@ export class RtcAudioController {
       return
     }
     const audioProcessingFactory = new webrtc.AudioProcessingFactory()
-    // 归因取证：把 WebRTC 内部日志接到 hilog（native 一旦安装就按 LS_VERBOSE 全量输出）。
-    // 渲染缓冲实际被对齐到多少块、延迟何时变动，只有 AEC3 自己知道，而这代 aecdump 没有 raw 事件。
-    // 只在诊断包里开：通话期间每条 RTC_LOG 都会进 hilog，本身会拖慢音频线程。
-    webrtc.NativeLogging.enableLogToDebugOutput(1)
+    // 把 WebRTC 内部日志接到 hilog：默认 WARNING。INFO 档通话中约 190 行/秒，
+    // 格式化与 hilog 写入都落在音频/编码线程上，吃的是抖动和尾延迟，还会冲没取证缓冲区。
+    // 回声归因取证需要 AEC3 内部状态时，由宿主在 diagnostics 里开 verboseNativeLog 临时回到 INFO。
+    this.applyNativeLogSeverity()
     // Upstream leaves echo_canceller.enabled false and only flips it when the getUserMedia
     // constraint reaches WebRtcVoiceEngine::Apply. State the intent here too, and log what was
     // applied, so "AEC off by config" can be told apart from "AEC on but not converging".

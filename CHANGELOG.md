@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- WebRTC native 日志默认档位从 INFO 降到 WARNING：通话中约 190 行/秒的 `libjingle` INFO 洪流不再进 hilog，
+  减少音频/编码线程的格式化与写日志开销，也避免冲没取证缓冲区。
+  新增 `RtcCallDiagnosticsOptions.verboseNativeLog`，取证时置 `true` 可临时开回 INFO 全量。
+
 ## 0.2.0
 
 Breaking — this package is now WebRTC-only and carries no vendor-specific code.
