@@ -1172,6 +1172,10 @@ export struct RtcReferenceCallLayout {
             .height('100%')
             .position({ x: 0, y: 0 })
             .zIndex(2)
+            // 这一层是 100%x100%，只把占位 Blank 摘出命中测试不够：命中会回落到父 Row
+            // 本身（默认模式仍然拦截），下层 zIndex 1 的侧栏卡片照样收不到事件。
+            // 必须整层 Transparent——按钮照常响应，但不挡住下面那列接听/挂断/切换。
+            .hitTestBehavior(HitTestMode.Transparent)
             .onTouch((event: TouchEvent) => {
               this.logTouch('touch_control_wrapper', event)
             })
