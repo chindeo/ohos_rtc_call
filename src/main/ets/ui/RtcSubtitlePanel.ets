@@ -371,22 +371,11 @@ export struct RtcSubtitleOverlay {
   }
 
   /** 没出字的那一路不占位：否则空面板会把有字幕的那一路压成半宽。 */
-  private callHasLines(call: RtcHostCallUiItem): boolean {
-    const store = this.store
-    if (!store) {
-      return false
-    }
-    const snapshot = store.getSnapshot(call.uid)
-    return !!snapshot && snapshot.lines.length > 0
-  }
-
-  private sideCallsWithLines(): RtcHostCallUiItem[] {
+  private sideSubtitleCalls(): RtcHostCallUiItem[] {
     const calls = this.getSubtitleCalls()
     const side: RtcHostCallUiItem[] = []
     for (let i = 1; i < calls.length; i += 1) {
-      if (this.callHasLines(calls[i])) {
-        side.push(calls[i])
-      }
+      side.push(calls[i])
     }
     return side
   }
@@ -396,12 +385,34 @@ export struct RtcSubtitleOverlay {
     return this.compact ? '220vp' : '300vp'
   }
 
+  /**
+   * 只有在整组还没有接通的一路时才整带不渲染：那时待接听页是全屏卡片网格，
+   * 字幕压上去会盖住接听按钮。多路时待接听的第二路显示成侧栏小卡，
+   * 已接通那一路的字幕不该被它连坐藏掉。
+   */
+  private hasEstablishedCall(): boolean {
+    let established = false
+    this.getAllCalls().forEach((call: RtcHostCallUiItem): void => {
+      if (call.phase === RtcCallViewPhase.CONNECTED || call.phase === RtcCallViewPhase.HELD) {
+        established = true
+      }
+    })
+    return established
+  }
+
+  private shouldSuppressForPendingCall(): boolean {
+    return this.hasPendingAnswerCall() && !this.hasEstablishedCall()
+  }
+
   build() {
-    if (this.store && this.model.visible && !this.hasPendingAnswerCall()) {
+    if (this.store && this.model.visible && !this.shouldSuppressForPendingCall()) {
       Row({ space: this.compact ? '6vp' : '12vp' }) {
         // 主画面的那一路占主区；其余各路叠在右侧窄区，贴着它们自己的小窗画面，
         // 不再让第二路的字幕跑到主画面里、和它的视频分离。
-        if (this.getSubtitleCalls().length > 0 && this.callHasLines(this.getSubtitleCalls()[0])) {
+        // 是否建面板只看这一路是否已接通，不能看"当前有没有字幕行"：帧到达不会
+        // 触发本组件重渲染，等首帧把面板"等出来"侧栏那一路就永远不出现（真机回归）。
+        // 空行由面板自己按 view.lines 长度收起，不占位。
+        if (this.getSubtitleCalls().length > 0) {
           Column() {
             RtcSubtitlePanel({
               uid: this.getSubtitleCalls()[0].uid,
@@ -414,9 +425,9 @@ export struct RtcSubtitleOverlay {
           .layoutWeight(1)
           .alignItems(HorizontalAlign.Center)
         }
-        if (this.sideCallsWithLines().length > 0) {
+        if (this.sideSubtitleCalls().length > 0) {
           Column({ space: this.compact ? '4vp' : '8vp' }) {
-            ForEach(this.sideCallsWithLines(), (call: RtcHostCallUiItem) => {
+            ForEach(this.sideSubtitleCalls(), (call: RtcHostCallUiItem) => {
               RtcSubtitlePanel({
                 uid: call.uid,
                 title: this.getTitle(call),
