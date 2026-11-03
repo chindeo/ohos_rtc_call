@@ -5,9 +5,14 @@
 - 新增字幕样式帧 `asr_subtitle_style`：字号、字色、底色、底色不透明度、描边色与描边宽度改由网关
   后台配置下发，端上不再硬编码配色；`style_version` 幂等，样式只作用于下一条与未闭合半句，
   已定稿历史行保留建行时快照。收不到样式帧时用内置默认（20fp 白字、黑底 60%、1fp 黑描边）。
-- WebRTC native 日志默认档位从 INFO 降到 WARNING：通话中约 190 行/秒的 `libjingle` INFO 洪流不再进 hilog，
-  减少音频/编码线程的格式化与写日志开销，也避免冲没取证缓冲区。
-  新增 `RtcCallDiagnosticsOptions.verboseNativeLog`，取证时置 `true` 可临时开回 INFO 全量。
+- WebRTC native 日志默认不再往 hilog 装 sink：本 fork 的 `enableLogToDebugOutput` 入参只做范围校验、
+  sink 恒按 `LS_VERBOSE` 注册，所以按档位传 WARNING 无效（装机复测仍有 112 行/秒）；
+  默认改传越界值走"只移除不重装"，通话中的 `libjingle` 洪流与随之而来的格式化/写日志开销一起省掉。
+  新增 `RtcCallDiagnosticsOptions.verboseNativeLog`，取证时置 `true` 装回 INFO 全量。
+- 新增 `RtcHostCallControllerOptions.audioProcessing`（`RtcAudioProcessingPolicy`）：AEC/AECM/NS/HPF/AGC
+  逐档由宿主注入，APM 工厂与 `createAudioSource` 约束层同写（引擎会用约束层回写 APM）。
+  不传即保持既有默认（AEC/NS/HPF 开、AGC 关）。宿主当前在 api12 机型整组关 3A 换性能，
+  代价是免提回声与底噪进上行，见 `docs/webrtc-audio-diagnostics.md`。
 
 ## 0.2.0
 

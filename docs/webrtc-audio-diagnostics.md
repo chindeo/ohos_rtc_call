@@ -25,21 +25,49 @@
 
 ## native 日志档位（hilog 洪流开关）
 
-- `RtcAudioController` 通过 `NativeLogging.enableLogToDebugOutput(severity)` 把 WebRTC 内部日志接到 hilog，
+- `RtcAudioController` 通过 `NativeLogging.enableLogToDebugOutput(severity)` 控制 WebRTC 内部日志是否进 hilog。
   severity 取 WebRTC `LoggingSeverity`：VERBOSE=0、INFO=1、WARNING=2、ERROR=3、NONE=4。
-- **默认 WARNING(2)**。INFO 档在视频通话中实测约 190 行/秒（2026-11-03 主机 .61，`libjingle` tag），
-  格式化与 hilog 写入落在音频/编码线程上，吃的是抖动和尾延迟；同时会把 hilog 缓冲区冲没，
-  导致其它取证日志（含字幕帧对表行）被滚掉。
-- 门槛在 native 侧格式化之前生效（`rtc_base/logging.h` 的 `Loggable()` 先判级别），调高后连字符串拼接一起省。
-- 回声/编解码归因取证需要 AEC3 与编码器内部状态时，宿主在
-  `RtcHostCallControllerOptions.diagnostics` 里传 `verboseNativeLog: true` 临时开回 INFO(1)；
-  不传即 WARNING，宿主代码无需为默认行为做任何事。
+- **本 fork 的 native 入口没有按档位过滤**：入参只做范围校验，sink 一律以 `LS_VERBOSE` 注册，
+  所以"传 2 只留告警"是无效的——2026-11-03 那样做过一次，装机后 `libjingle` 仍有 112 行/秒。
+  越界值（当前用 5）反而走到"只移除 sink、不重装"的分支，等于彻底不往 hilog 写。
+- 因此默认**不装 sink**（传 5），取证时才装回 INFO(1)：
+  `RtcHostCallControllerOptions.diagnostics.verboseNativeLog: true`。装/卸由
+  `nativeLogSinkInstalled` 记状态，避免重复调用把 sink 又装回去。
+- 洪流的代价：INFO 档视频通话中实测约 190 行/秒（主机 .61），格式化与 hilog 写入落在音频/编码线程上，
+  吃的是抖动和尾延迟；同时把 hilog 缓冲区冲没，其它取证日志（含字幕帧对表行）被滚掉。
+  等 .so 修好范围校验后再回到按档位传值。
 
 手工验收点：
 
-1. 默认包视频通话 60 秒，10 秒窗口内 `hilog -x | grep -c libjingle` 应为个位数到十几行（仅 WARNING/ERROR）。
+1. 默认包视频通话 60 秒，10 秒窗口内 `hilog -x | grep -c libjingle` 应为 0（sink 未装）。
 2. 同一台设备开 `verboseNativeLog: true` 重装后，同窗口应回到百行级，证明开关双向有效。
 3. 两档下接听、挂断、保持切换与字幕帧（`rtc_subtitle`）行为一致，日志档位只影响 native 内部日志量。
+
+## 3A 档位（AEC/NS/HPF/AGC）
+
+- 包内不判机型：`RtcHostCallControllerOptions.audioProcessing: RtcAudioProcessingPolicy` 逐档注入，
+  留空即既有默认（AEC 开、NS 开、HPF 开、AGC 关、AECM 关）。
+- **两层必须同写**：APM 工厂（`AudioProcessingFactory.create`）和 `createAudioSource` 的约束层。
+  引擎会用约束层的值回写 APM（`webrtc_voice_engine.cc:615`），只改一层等于没改。
+- 生效时机：APM 实例随 `PeerConnectionFactory` 只创建一次，所以只能在 controller 构造前注入；
+  工厂已存在时只记 `rtc_audio_processing late_configure ignored reason=pcf_exists`，不假装生效。
+- 日志：`rtc_audio_processing aec=.. aec_mobile=.. ns=.. hpf=.. agc=.. external_delay=false`（APM 层）
+  与 `rtc_audio_source_constraints aec=.. ns=.. agc=..`（约束层），宿主侧另有
+  `rtc_audio_processing_policy api=.. decision=..`。
+- 宿主当前口径：api12（RK3568 32 位那批）整组关掉 AEC/NS/HPF，理由是采集回调线程 `OS_AudioReadCB`
+  在通话中平均吃 13–14% 单核，是应用内最贵的线程；代价是免提时回声与底噪直接进上行。
+  api23 保持默认，本机不做改动。
+- NS 等级在 .so 里默认 `kVeryHigh`，是最贵的一档；若关掉整组后听感不可接受，先只回开 AEC
+  或把 NS 降档，别整组回开——那会退回本轮想验证的开销。
+
+手工验收点：
+
+1. api12 设备起呼后日志出现 `rtc_audio_processing aec=false ns=false hpf=false`，
+   且约束层同样为 false，两层不一致就是没接对。
+2. 关掉后 `OS_AudioReadCB`、`OS_AudioWriteCB` 的线程均值与整机 busy 相对 3A 开的同长度通话下降；
+   没有下降说明 3A 不是主要开销，回到码率/渲染路径继续找，别继续调 3A。
+3. 回声主观核对：床旁外放、对方讲话时本机不采到自家扬声器回声；主机会话用免提时同样检查一次。
+4. 挂断、保持、切麦、铃声路径与 3A 档位无关，行为保持一致。
 
 ## native ohos_webrtc 后续
 

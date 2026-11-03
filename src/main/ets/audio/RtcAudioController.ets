@@ -12,6 +12,19 @@ export interface RtcLocalAudioOptions {
 }
 
 /**
+ * 3A 逐档开关。留空即沿用既有默认（AEC/NS/HPF 开、AGC 关），宿主可以只关一档做对照。
+ * APM 与 createAudioSource 约束两层都要写：引擎会用约束层的值回写 APM
+ * （webrtc_voice_engine.cc:615），只改一层等于没改。
+ */
+export interface RtcAudioProcessingPolicy {
+  echoCancellation?: boolean
+  echoCancellationMobileMode?: boolean
+  noiseSuppression?: boolean
+  highPassFilter?: boolean
+  autoGainControl?: boolean
+}
+
+/**
  * 采集侧的整机校准值。这些数只能由认得自己设备的宿主给出：
  * permille 校正 JHC 床旁采集时钟与协商 48k 的固定偏差，streamDelayMs 直接声明扬声器到麦克风的整环延时。
  * 不给就是 0，表示让原生自己判定。
@@ -101,9 +114,32 @@ export class RtcAudioController {
   private localVideoGeneration: number = 0
   private localVideoStopGate: RtcVideoCaptureStopGate = new RtcVideoCaptureStopGate()
   private captureCalibration: RtcAudioCaptureCalibration = {}
+  private audioProcessingPolicy: RtcAudioProcessingPolicy = {}
 
   configureCaptureCalibration(options: RtcAudioCaptureCalibration): void {
     this.captureCalibration = options
+  }
+
+  /**
+   * APM 实例随 PeerConnectionFactory 只建一次，所以策略必须在 ensureReady 之前注入；
+   * 已建工厂时只记日志，不假装生效。
+   */
+  configureAudioProcessing(policy: RtcAudioProcessingPolicy): void {
+    this.audioProcessingPolicy = policy
+    if (this.pcf) {
+      this.log('rtc_audio_processing late_configure ignored reason=pcf_exists')
+    }
+  }
+
+  private resolveAudioFlag(policyValue: boolean | undefined, optionValue: boolean | undefined,
+    fallback: boolean): boolean {
+    if (policyValue !== undefined) {
+      return policyValue === true
+    }
+    if (optionValue !== undefined) {
+      return optionValue === true
+    }
+    return fallback
   }
 
   configureDiagnostics(options: RtcMediaDiagnosticsOptions): void {
@@ -117,15 +153,23 @@ export class RtcAudioController {
   }
 
   // WebRTC LoggingSeverity：VERBOSE=0 INFO=1 WARNING=2 ERROR=3 NONE=4。
-  // 门槛在 native 侧格式化之前就生效，调高后连字符串拼接一起省。
+  // 注意 fork 的实现：enableLogToDebugOutput 的入参只做范围校验，sink 一律按 LS_VERBOSE 注册，
+  // 所以传 2 并不能只留告警；越界值反而是"只移除不重装"的关闭姿势。等 .so 修好再改回按档位传。
   private static readonly NATIVE_LOG_SEVERITY_INFO: number = 1
-  private static readonly NATIVE_LOG_SEVERITY_WARNING: number = 2
+  private static readonly NATIVE_LOG_SEVERITY_OFF: number = 5
+  private nativeLogSinkInstalled: boolean = false
 
   private applyNativeLogSeverity(): void {
-    const severity = this.diagnostics.verboseNativeLog === true
-      ? RtcAudioController.NATIVE_LOG_SEVERITY_INFO
-      : RtcAudioController.NATIVE_LOG_SEVERITY_WARNING
-    webrtc.NativeLogging.enableLogToDebugOutput(severity)
+    if (this.diagnostics.verboseNativeLog === true) {
+      webrtc.NativeLogging.enableLogToDebugOutput(RtcAudioController.NATIVE_LOG_SEVERITY_INFO)
+      this.nativeLogSinkInstalled = true
+      return
+    }
+    // 默认不装 sink：装了就等于每条 RTC_LOG 都格式化并进 hilog，通话中实测 112 行/秒。
+    if (this.nativeLogSinkInstalled) {
+      webrtc.NativeLogging.enableLogToDebugOutput(RtcAudioController.NATIVE_LOG_SEVERITY_OFF)
+      this.nativeLogSinkInstalled = false
+    }
   }
 
   ensureReady(): boolean {
@@ -199,16 +243,23 @@ export class RtcAudioController {
     if (this.localAudioTrack && this.localAudioTrack.readyState !== 'live') {
       this.releaseLocalAudio()
     }
+    const echoCancellation = this.resolveAudioFlag(this.audioProcessingPolicy.echoCancellation,
+      options.echoCancellation, true)
+    const noiseSuppression = this.resolveAudioFlag(this.audioProcessingPolicy.noiseSuppression,
+      options.noiseSuppression, true)
     this.localAudioSource = this.pcf.createAudioSource({
-      echoCancellation: options.echoCancellation !== false,
+      echoCancellation: echoCancellation,
       // NS 必须同时给到约束这一层：只改 APM 工厂会被引擎用这里的值写回（webrtc_voice_engine.cc:615），
       // 实测 CONFIG 事件证实过。.so 现在把 NS 等级默认成 kVeryHigh，这里只负责"开"。
-      noiseSuppression: options.noiseSuppression !== false,
+      noiseSuppression: noiseSuppression,
       // 引擎在没人指定时默认开 AGC（webrtc_voice_engine.cc:443）。床旁外放时 AGC 会在对方
       // 静音段抬增益、把房间里的回声整段放大，而且它会让"APM 输入/输出电平比"再也读不出
       // 消除量。取证和听感都要它关掉，所以在这里显式压掉，不能靠默认值。
-      autoGainControl: false
+      autoGainControl: this.resolveAudioFlag(this.audioProcessingPolicy.autoGainControl, undefined, false)
     })
+    this.log('rtc_audio_source_constraints aec=' + echoCancellation +
+      ' ns=' + noiseSuppression +
+      ' agc=' + (this.resolveAudioFlag(this.audioProcessingPolicy.autoGainControl, undefined, false)))
     this.localAudioTrack = this.pcf.createAudioTrack(options.trackId, this.localAudioSource)
     this.applyMute()
     return this.localAudioTrack
@@ -638,11 +689,26 @@ export class RtcAudioController {
     // Upstream leaves echo_canceller.enabled false and only flips it when the getUserMedia
     // constraint reaches WebRtcVoiceEngine::Apply. State the intent here too, and log what was
     // applied, so "AEC off by config" can be told apart from "AEC on but not converging".
+    // 档位由宿主注入（RtcAudioProcessingPolicy）：留空即这里的默认值。api12 这类算力紧张的
+    // 机型会整组关掉 3A，代价是回声与噪声回到通路里，换来采集回调线程的开销。
+    const echoCancellation = this.resolveAudioFlag(this.audioProcessingPolicy.echoCancellation, undefined, true)
+    const echoCancellationMobileMode =
+      this.resolveAudioFlag(this.audioProcessingPolicy.echoCancellationMobileMode, undefined, false)
+    const noiseSuppression = this.resolveAudioFlag(this.audioProcessingPolicy.noiseSuppression, undefined, true)
+    const highPassFilter = this.resolveAudioFlag(this.audioProcessingPolicy.highPassFilter, undefined, true)
+    const autoGainControl = this.resolveAudioFlag(this.audioProcessingPolicy.autoGainControl, undefined, false)
+    this.log('rtc_audio_processing aec=' + echoCancellation +
+      ' aec_mobile=' + echoCancellationMobileMode +
+      ' ns=' + noiseSuppression +
+      ' hpf=' + highPassFilter +
+      ' agc=' + autoGainControl +
+      ' external_delay=false')
     const audioProcessing = audioProcessingFactory.create({
-      echoCancellation: true,
-      noiseSuppression: true,
-      highPassFilter: true,
-      autoGainControl: false,
+      echoCancellation: echoCancellation,
+      echoCancellationMobileMode: echoCancellationMobileMode,
+      noiseSuppression: noiseSuppression,
+      highPassFilter: highPassFilter,
+      autoGainControl: autoGainControl,
       logWarningOnDelayChanges: true,
       // Off, per the offline m124 A/B: on a synthetic echo the internal matched filter reaches
       // 54.6 dB while external-delay alignment only manages 21.8 dB, so making the reported

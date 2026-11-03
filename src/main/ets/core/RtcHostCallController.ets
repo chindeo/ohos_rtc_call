@@ -1,4 +1,9 @@
-import { RtcAudioCaptureCalibration, RtcAudioController, RtcVideoRendererAdapter } from '../audio/RtcAudioController'
+import {
+  RtcAudioCaptureCalibration,
+  RtcAudioController,
+  RtcAudioProcessingPolicy,
+  RtcVideoRendererAdapter
+} from '../audio/RtcAudioController'
 import {
   RTC_DEVICE_ROLE_NURSE_HOST,
   RtcCallAudioPolicyController
@@ -69,6 +74,8 @@ export interface RtcHostCallControllerOptions {
   onMicSwitch?: () => boolean | void | Promise<boolean | void>
   // 采集校准与手柄通路由认得自家设备的宿主注入；不给就按原生默认，包内不再判厂家。
   captureCalibration?: RtcAudioCaptureCalibration
+  // 3A 逐档开关，同上由宿主按本机算力决定；不给就保持 AEC/NS/HPF 开、AGC 关的既有行为。
+  audioProcessing?: RtcAudioProcessingPolicy
   setHandsetMode?: (enabled: boolean, reason: string) => void
   diagnostics?: RtcCallDiagnosticsOptions
   reconnect?: RtcWebRtcReconnectOptions
@@ -101,6 +108,7 @@ export class RtcHostCallController {
     this.applyServerVolume('controller created')
     const audioController = new RtcAudioController()
     audioController.configureCaptureCalibration(options.captureCalibration || {})
+    audioController.configureAudioProcessing(options.audioProcessing || {})
     if (options.diagnostics) {
       audioController.configureDiagnostics({
         enableAecDump: options.diagnostics.enableAecDump,
