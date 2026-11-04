@@ -6,6 +6,31 @@ import {
   RtcSubtitleStyleSpec
 } from '../src/main/ets/subtitle/RtcSubtitleStyle'
 import { RtcSubtitleScheduler, RtcSubtitleStore } from '../src/main/ets/subtitle/RtcSubtitleStore'
+import { RtcSubtitleStyleCache } from '../src/main/ets/subtitle/RtcSubtitleStyleCache'
+import { RtcStartupDataCacheStore } from '../src/main/ets/core/RtcStartupDataCache'
+
+/** 替身存储：把偏好读写换成内存表，持久化链路就能在本机跑完。 */
+class StyleCacheMemoryStore implements RtcStartupDataCacheStore {
+  values: Record<string, string> = {}
+  lastWrite: Promise<void> = Promise.resolve()
+
+  async get(key: string): Promise<string> {
+    const value = this.values[key]
+    return value ? value : ''
+  }
+
+  async put(key: string, value: string): Promise<void> {
+    this.values[key] = value
+  }
+
+  async remove(key: string): Promise<void> {
+    delete this.values[key]
+  }
+}
+
+const CACHED_STYLE_FRAME_TEXT = '{"type":"asr_subtitle_style","style_version":7,' +
+  '"font_size":28,"text_color":"#FFFFFF","background_color":"#101010",' +
+  '"background_opacity":80,"stroke_color":"#000000","stroke_width":1}'
 
 class StyleFakeScheduler implements RtcSubtitleScheduler {
   currentMs: number = 1000
@@ -189,6 +214,79 @@ export default function rtcSubtitleStyleTest() {
       expect(lines[0].style.fontSize).assertEqual(20)
       expect(lines[0].style.backgroundOpacity).assertEqual(60)
       expect(store.getAppliedStyleVersion()).assertEqual(-1)
+      store.dispose()
+    })
+
+    it('reports the missing style frame once, not per sentence', 0, () => {
+      const scheduler = new StyleFakeScheduler()
+      const logs: string[] = []
+      const store = new RtcSubtitleStore({
+        scheduler: scheduler,
+        coalesceIntervalMs: 200,
+        onLog: (message: string): void => {
+          logs.push(message)
+        }
+      })
+      expect(store.ingestBroadcastData(bodyFrame(1, 1, 'no style one', false))).assertTrue()
+      expect(store.ingestBroadcastData(bodyFrame(2, 1, 'no style one done', true))).assertTrue()
+      scheduler.flush()
+      let absent = logs.filter((l: string): boolean => l.indexOf('rtc_subtitle_style absent') >= 0)
+      expect(absent.length).assertEqual(1)
+      expect(absent[0].indexOf('no_frame_before_body') >= 0).assertTrue()
+      expect(absent[0].indexOf('rendered=builtin') >= 0).assertTrue()
+
+      // 样式帧补上之后，后续正文不再报缺失。
+      expect(store.ingestBroadcastData(styleFrame(5, ',"font_size":28'))).assertTrue()
+      expect(store.ingestBroadcastData(bodyFrame(3, 2, 'styled sentence', false))).assertTrue()
+      scheduler.flush()
+      absent = logs.filter((l: string): boolean => l.indexOf('rtc_subtitle_style absent') >= 0)
+      expect(absent.length).assertEqual(1)
+      store.dispose()
+    })
+
+    it('reuses the last applied style across restarts when the gateway stays silent', 0, async () => {
+      const cacheStore = new StyleCacheMemoryStore()
+      const writer = new RtcSubtitleStore({
+        scheduler: new StyleFakeScheduler(),
+        coalesceIntervalMs: 200,
+        onStyleApplied: (frameText: string): void => {
+          cacheStore.lastWrite = RtcSubtitleStyleCache.save(frameText, { store: cacheStore })
+        }
+      })
+      expect(writer.ingestBroadcastData(styleFrame(9, ',"font_size":34,"background_opacity":85'))).assertTrue()
+      await cacheStore.lastWrite
+
+      // 模拟"进程重启后网关一帧样式都没补发"：新 store 只靠缓存就该画出后台那套值。
+      const reader = new RtcSubtitleStore({
+        scheduler: new StyleFakeScheduler(),
+        coalesceIntervalMs: 200
+      })
+      expect(await RtcSubtitleStyleCache.restore(reader, { store: cacheStore })).assertTrue()
+      expect(reader.getAppliedStyleVersion()).assertEqual(9)
+      expect(reader.getCurrentStyle().fontSize).assertEqual(34)
+      expect(reader.getCurrentStyle().backgroundOpacity).assertEqual(85)
+      expect(reader.isStyleFromCache()).assertTrue()
+      expect(reader.ingestBroadcastData(bodyFrame(1, 1, 'after restart', false))).assertTrue()
+
+      // 网关随后真发了更新版本：以网关为准，缓存不能压住它。
+      expect(reader.ingestBroadcastData(styleFrame(10, ',"font_size":24'))).assertTrue()
+      expect(reader.getAppliedStyleVersion()).assertEqual(10)
+      expect(reader.isStyleFromCache()).assertFalse()
+      writer.dispose()
+      reader.dispose()
+    })
+
+    it('does not overwrite a style frame that already arrived', 0, async () => {
+      const cacheStore = new StyleCacheMemoryStore()
+      await RtcSubtitleStyleCache.save(CACHED_STYLE_FRAME_TEXT, { store: cacheStore })
+      const store = new RtcSubtitleStore({
+        scheduler: new StyleFakeScheduler(),
+        coalesceIntervalMs: 200
+      })
+      expect(store.ingestBroadcastData(styleFrame(12, ',"font_size":40'))).assertTrue()
+      expect(await RtcSubtitleStyleCache.restore(store, { store: cacheStore })).assertFalse()
+      expect(store.getAppliedStyleVersion()).assertEqual(12)
+      expect(store.getCurrentStyle().fontSize).assertEqual(40)
       store.dispose()
     })
   })

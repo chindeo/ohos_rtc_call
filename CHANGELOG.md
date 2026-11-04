@@ -19,10 +19,20 @@
   接听/挂断/切换点不到，第二路只能等到超时无人接听。
 - 字幕浮层按路分区（主区一路 + 右侧窄栏其余各路），面板只按"该路已接通"创建、不按"已有字幕行"创建，
   待接听抑制改为仅在整组还没有接通的一路时生效。
-- 字幕显示收口四条：主区不再显示与画面左上角 `NameTag` 重复的标题 chip（窄栏保留）；窄栏那一路字号
+- 字幕显示收口四条：字幕态不再画标题 chip（主区和右侧窄栏都不画，`RtcSubtitlePanel` 去掉 `title`/`showTitle`
+  入参——两路字幕都贴在自己画面下方，画面左上角已有同名 `NameTag`）；窄栏那一路字号
   端上压到 ≤16fp（`min(网关值, 16)`，行高跟着走，这是对"字号完全由网关下发"的唯一端上例外）；
   字幕态加净高上限并底对齐，超出先挤掉上一句、当前句不裁；静默超过 12 秒字幕整块自动收起，
   下一帧到达立即恢复，展开态不自动收。
+- 字幕样式端上落盘兜底：样式帧每次真正应用后把规范化帧写进设备偏好（`RtcSubtitleStyleCache`，库
+  `rtcSubtitleStyle` / 键 `style_frame`），启动时先读回套上再等网关。原因是网关的补发按"该 Peer 收过哪个版本"
+  去重、而同号重复注册（app 重启/重装）刻意复用队列里的 Peer，标记跟着活下来 —— 真机见过整场一帧样式都不发，
+  界面退回内置默认。回读仍走 `parseRtcSubtitleStyleFrame` 的逐项校验；这次已经收到过网关帧就不覆盖，
+  读写失败只记日志不影响正文。`RtcSubtitleStore` 相应新增 `restoreStyle()`、`isStyleFromCache()` 与
+  `onStyleApplied` 回调。
+- 整场没收到样式帧、正文却到了，打一条 `rtc_subtitle_style absent reason=no_frame_before_body
+  rendered=cache|builtin fontSize=.. bgOpacity=..`（每场一次）；套用缓存打 `rtc_subtitle_style restored
+  version=.. source=cache`。用来分"网关没下发"、"用的缓存"和"端上没套用"，不必再靠截图猜。
 
 ## 0.2.0
 

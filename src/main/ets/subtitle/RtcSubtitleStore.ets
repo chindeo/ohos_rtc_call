@@ -9,6 +9,7 @@ import {
 } from './RtcAsrSubtitle'
 import {
   parseRtcSubtitleStyleFrame,
+  serializeRtcSubtitleStyleFrame,
   RtcSubtitleStyleFrame,
   RtcSubtitleStyleSpec
 } from './RtcSubtitleStyle'
@@ -41,6 +42,11 @@ export interface RtcSubtitleStoreOptions {
   onLog?: (message: string) => void
   /** 帧日志是否带识别原文。默认不带：那是病床上说出来的话，会留在设备日志里。 */
   logFrameText?: boolean
+  /**
+   * 每次样式帧真正被应用后回调一份规范化帧原文，宿主拿去落盘（见 RtcSubtitleStyleCache）。
+   * 回调里抛了什么都不影响字幕链路，store 只兜住不管持久化的成败。
+   */
+  onStyleApplied?: (frameText: string) => void
 }
 
 export class RtcSubtitleLine {
@@ -115,6 +121,14 @@ export class RtcSubtitleStore {
   private currentStyle: RtcSubtitleStyleSpec = new RtcSubtitleStyleSpec()
   /** -1 表示还没应用过任何样式帧；同版本重复收到直接跳过，不刷新不重绘。 */
   private appliedStyleVersion: number = -1
+  private styleAbsentLogged: boolean = false
+  /**
+   * 样式来自端上缓存还是网关帧。只影响日志怎么说、正文怎么回落，不参与版本去重：
+   * 缓存套上后网关再发同版本仍会正常跳过，发新版本仍会覆盖。
+   */
+  private styleFromCache: boolean = false
+
+  private onStyleApplied?: (frameText: string) => void
 
   constructor(options?: RtcSubtitleStoreOptions) {
     this.scheduler = (options && options.scheduler) || new RtcDefaultSubtitleScheduler()
@@ -126,6 +140,7 @@ export class RtcSubtitleStore {
       options ? options.maxRetainedClosedCalls : undefined, RtcSubtitleStore.DEFAULT_RETAINED_CLOSED_CALLS)
     this.onLog = options ? options.onLog : undefined
     this.logFrameText = !!(options && options.logFrameText)
+    this.onStyleApplied = options ? options.onStyleApplied : undefined
   }
 
   private static positiveOr(value: number | undefined, fallback: number): number {
@@ -178,6 +193,7 @@ export class RtcSubtitleStore {
     }
     this.currentStyle = frame.style
     this.appliedStyleVersion = frame.styleVersion
+    this.styleFromCache = false
     let refreshed = 0
     this.sessions.forEach((session: RtcSubtitleSession): void => {
       session.lines.forEach((line: RtcSubtitleLine): void => {
@@ -191,7 +207,41 @@ export class RtcSubtitleStore {
     this.onLog?.(`rtc_subtitle_style applied version=${frame.styleVersion}` +
       ` fallback=${frame.fallbackFields.length > 0 ? frame.fallbackFields.join(',') : 'none'}` +
       ` refreshed_open_lines=${refreshed}`)
+    // 落的是套完之后的值，不是帧原文：非法字段已经逐项回落，下次启动不必再撞一次同样的回落。
+    if (this.onStyleApplied) {
+      try {
+        this.onStyleApplied(serializeRtcSubtitleStyleFrame(frame.styleVersion, frame.style))
+      } catch (error) {
+        this.onLog?.(`rtc_subtitle_style persist failed error=${String(error)}`)
+      }
+    }
     this.notify()
+  }
+
+  /**
+   * 端上缓存兜底：网关这一场的样式补发按 Peer 对象去重、app 重启不会重发，所以启动时先把上一次
+   * 真正生效的样式套上。**只在这次还没收到任何样式帧时套**，网关给了就以网关为准。
+   */
+  restoreStyle(frameText: string): boolean {
+    if (this.disposed || this.appliedStyleVersion >= 0) {
+      return false
+    }
+    const frame = parseRtcSubtitleStyleFrame(frameText)
+    if (!frame) {
+      return false
+    }
+    this.currentStyle = frame.style
+    this.appliedStyleVersion = frame.styleVersion
+    this.styleFromCache = true
+    this.onLog?.(`rtc_subtitle_style restored version=${frame.styleVersion} source=cache` +
+      ` fallback=${frame.fallbackFields.length > 0 ? frame.fallbackFields.join(',') : 'none'}`)
+    this.notify()
+    return true
+  }
+
+  /** 当前渲染的样式到底来自哪里，日志与验收都按这个分档。 */
+  isStyleFromCache(): boolean {
+    return this.styleFromCache
   }
 
   /**
@@ -299,6 +349,15 @@ export class RtcSubtitleStore {
       this.droppedCount += 1
       this.onLog?.(`rtc_subtitle drop reason=closed_call uid=${rtcSubtitleIdHash(frame.uid)}`)
       return
+    }
+    // 契约是「样式帧一定先于正文送达，重连后第一条正文前补发」。真机见过整场只有正文、
+    // 一帧样式都没有（界面退回内置默认，运维以为后台改的样式没生效），所以把违约打成一行，
+    // 免得只能靠截图猜。只打一次，避免每句刷屏；rendered 说明现在画的到底是缓存还是默认值。
+    if ((this.appliedStyleVersion < 0 || this.styleFromCache) && !this.styleAbsentLogged) {
+      this.styleAbsentLogged = true
+      this.onLog?.('rtc_subtitle_style absent reason=no_frame_before_body ' +
+        `rendered=${this.styleFromCache ? 'cache' : 'builtin'} ` +
+        `fontSize=${this.currentStyle.fontSize} bgOpacity=${this.currentStyle.backgroundOpacity}`)
     }
     const stream = this.ensureStream(session, frame)
     if (!this.trackSeq(stream, frame)) {

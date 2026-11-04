@@ -108,10 +108,6 @@ export function rtcSubtitleLineHeightFromFp(fontSizeFp: number): number {
   return Math.round(fontSizeFp * 1.4)
 }
 
-export function rtcSubtitleLineHeightFp(style: RtcSubtitleStyleSpec): number {
-  return rtcSubtitleLineHeightFromFp(style.fontSize)
-}
-
 function pickFontSize(value: number | undefined, fallbacks: string[]): number {
   const parsed = readFiniteNumber(value)
   if (parsed === undefined || parsed < FONT_SIZE_MIN || parsed > FONT_SIZE_MAX) {
@@ -208,4 +204,22 @@ export function parseRtcSubtitleStyleFrame(data: string): RtcSubtitleStyleFrame 
   } catch (_error) {
     return undefined
   }
+}
+
+/**
+ * 落盘用的规范化帧：只写网关语义那几个键。回读仍旧走 parseRtcSubtitleStyleFrame，
+ * 不给缓存自成一套宽松解析——否则半截或旧结构的值会直接画上界面，还绕开逐字段回落日志。
+ */
+export function serializeRtcSubtitleStyleFrame(version: number, style: RtcSubtitleStyleSpec): string {
+  const frame: RtcSubtitleStyleFrameJson = {
+    type: RTC_ASR_SUBTITLE_STYLE_TYPE,
+    style_version: version,
+    font_size: style.fontSize,
+    text_color: style.textColor,
+    background_color: style.backgroundColor,
+    background_opacity: style.backgroundOpacity,
+    stroke_color: style.strokeColor,
+    stroke_width: style.strokeWidth
+  }
+  return JSON.stringify(frame)
 }

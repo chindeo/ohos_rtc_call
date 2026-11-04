@@ -32,6 +32,7 @@ import { RtcWebRtcMediaController, RtcWebRtcMediaSessionOptions } from './RtcWeb
 import { RtcWebRtcTrackIdentityCodec } from './RtcWebRtcTrackIdentity'
 import { RtcCallLifecycleStore } from '../core/RtcCallLifecycleStore'
 import { RtcSubtitleStore } from '../subtitle/RtcSubtitleStore'
+import { RtcSubtitleStyleCache } from '../subtitle/RtcSubtitleStyleCache'
 
 export interface RtcWebRtcCallControllerConfig extends RtcWebRtcSignalConnectOptions {
   local: RtcPeerIdentity
@@ -125,6 +126,15 @@ export class RtcWebRtcCallController {
     this.mediaController = mediaController
     this.listener = listener
     this.subtitleStore = new RtcSubtitleStore({
+      onLog: (message: string) => this.listener.onLog?.(message),
+      onStyleApplied: (frameText: string): void => {
+        RtcSubtitleStyleCache.save(frameText, {
+          onLog: (message: string) => this.listener.onLog?.(message)
+        })
+      }
+    })
+    // 网关可能整场都不补发样式帧（按 Peer 去重、重复注册不重建 Peer），启动时先把上次生效的样式套上。
+    RtcSubtitleStyleCache.restore(this.subtitleStore, {
       onLog: (message: string) => this.listener.onLog?.(message)
     })
     this.signalSession = signalSession || new RtcWebRtcSignalSession()
