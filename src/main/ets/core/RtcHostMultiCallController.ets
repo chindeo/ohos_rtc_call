@@ -68,6 +68,8 @@ export class RtcHostMultiCallController {
   private speakerActionEnabled: boolean
   private speakerActionVisible: boolean
   private deviceRole: RtcCallDeviceRole | string
+  // 每次注册成功都用网关值覆盖，不保留"曾经为 true 就一直 true"。
+  private showLocalPreview: boolean = false
   private mediaStates: Map<string, RtcWebRtcMediaState> = new Map()
   private acceptSentSessions: Map<string, boolean> = new Map()
   private lastUiModelDebugLogKey: string = ''
@@ -89,6 +91,16 @@ export class RtcHostMultiCallController {
     this.localCard.clientType = options.clientType !== undefined ? options.clientType : this.localCard.clientType
     this.localCard.hasVideo = options.hasVideo !== undefined ? options.hasVideo === true : this.localCard.hasVideo
     this.localCard.videoReady = options.videoReady !== undefined ? options.videoReady === true : this.localCard.videoReady
+    this.emit()
+  }
+
+  /** 网关 localPreview 决定本机自预览画不画；关掉只摘视图，采集与上行不受影响。 */
+  setLocalPreview(show: boolean): void {
+    const next = show === true
+    if (this.showLocalPreview === next) {
+      return
+    }
+    this.showLocalPreview = next
     this.emit()
   }
 
@@ -304,6 +316,7 @@ export class RtcHostMultiCallController {
     const model = new RtcHostCallUiModel()
     model.registered = viewState.registered
     model.localCard = this.copyLocalCard()
+    model.showLocalPreview = this.showLocalPreview
     model.muted = this.muted
     model.speakerEnabled = this.speakerEnabled
     model.speakerActionLabel = this.speakerActionLabel

@@ -41,7 +41,7 @@ import { RtcWebRtcVideoSourceOptions } from '../webrtc/RtcWebRtcConfig'
 import { RtcCallStatusNotifier } from '../model/RtcCallStatusMessage'
 import { RtcWebRtcReconnectOptions } from '../signaling/RtcWebRtcReconnectPolicy'
 import { RtcBroadcastHistory } from '../signaling/RtcBroadcastHistory'
-import { RtcServerInfo } from '../model/RtcSignalTypes'
+import { isLocalPreviewEnabled, RtcServerInfo } from '../model/RtcSignalTypes'
 import { RtcSubtitleStore } from '../subtitle/RtcSubtitleStore'
 
 export interface RtcHostCallControllerOptions {
@@ -226,6 +226,10 @@ export class RtcHostCallController {
       onRegistered: (server: RtcServerInfo) => {
         this.service.setRegistrationState(true)
         this.options.onLog?.('rtc host registered')
+        // 自预览开关随注册下发，只有严格 true 才画；这里每次注册都覆盖，重连后以后到的值为准。
+        const showLocalPreview = isLocalPreviewEnabled(server)
+        this.multiCallController.setLocalPreview(showLocalPreview)
+        this.options.onLog?.(`rtc_local_preview visible=${showLocalPreview} raw=${String(server.localPreview)}`)
         this.options.onRegistered?.(server)
       },
       onIncoming: (session: RtcWebRtcCallSessionInfo) => {

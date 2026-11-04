@@ -47,6 +47,9 @@ export class RtcHostCallUiModel {
   visible: boolean = false
   registered: boolean = false
   localCard: RtcHostLocalCard = new RtcHostLocalCard()
+  // 本机自预览小窗是否绘制，来自网关注册响应的 localPreview，默认不画。
+  // 只影响这块视图是否进组件树，不影响采集、编码与上行。
+  showLocalPreview: boolean = false
   activeCall?: RtcHostCallUiItem
   sideCalls: RtcHostCallUiItem[] = []
   actions: RtcCallUiActionState[] = []

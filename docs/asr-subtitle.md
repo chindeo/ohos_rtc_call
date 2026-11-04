@@ -106,6 +106,10 @@ rtc_subtitle: uid=<uid> src=<source_number> seq=<seq> utt=<utterance_id> end=<se
   （app 重启、重装）走的是"按重复处理、队列里的 Peer 原样维持"，标记就跟着活下来，于是**新连接一帧样式都收不到**，
   界面退回内置默认，看着像后台改的样式没生效。2026-11-03 主机实测：整场 0 条 `len=314`，正文正常；
   同一时刻床旁收到了 `version=7`（它的 Peer 当时是新建立的）。
+- 安卓侧同样暴露在这个缺口下：网关契约文档 `asr_subtitle_client.md` §9 写的"设备重启或重新注册后
+  `Peer` 会重建、下一条正文前自动补发"与上面实测不符，而安卓当前**没有落盘**（只实现正文+样式），
+  所以安卓要靠后台重存一次样式（`style_version` 递增）才能拿到新配色。要么安卓也补一份持久化，
+  要么网关把"已下发版本"改成随连接重置——后者是根因修法。
 - 端上兜底：每次样式**真正应用后**把规范化帧写进设备偏好（`RtcSubtitleStyleCache`，库 `rtcSubtitleStyle`，
   键 `style_frame`），启动时读回来先套上。约束：
   - 只存套完之后的值（非法字段已逐项回落），不存帧原文；
@@ -182,3 +186,12 @@ rtc_subtitle: uid=<uid> src=<source_number> seq=<seq> utt=<utterance_id> end=<se
 
 - **音画对齐只到"可对表"这一步**：端上现在按 `utterance_id` 即时显示，没有用 `begin_ms` / `end_ms` 排队。要做需要两件事——按 `generation` 维护 `T0 = 本地时钟 - end_ms` 的基准，以及设备自身的音频缓冲深度；后者目前包里没有可靠来源（`getStats()` 的 `media-playout` 在 ArkTS 声明里拿不到 `estimatedPlayoutTimestamp`）。帧日志已经把 `begin_ms` / `end_ms` / `local_recv_ms` 打全，先拿真机数据量出端到端延迟，再决定要不要做排队显示。
 - 逐句显示、`role` 文案、漏帧计数都还没在真机上验过（依赖网关 v2 上线）。
+
+## 安卓侧对接现状（`base/call-lib`）
+
+- 帧入口共用既有 `RtcInitCall` 广播分支，`data` 直接就是第 3 层帧；正文与样式落在 `AsrSubtitleStore`，渲染在 `AsrSubtitleView`。
+- **浮层挂在按钮界面布局里，`bottom_toTopOf="@id/shaw"`**（`call_fragment_video_calling.xml` 与 `multi_call_fragment_video_calling.xml`，竖屏+横屏共 4 份都要有）：绑定点在 `VideoCallingFragment` / `MultiVideoCallingFragment` 的 `init()` 里各调一次 `bindAsrSubtitle()`。挂在视频布局 `call_fragment` 里时，字幕会被底部时长/按钮卡片盖住（2026-11-04 实测）。
+- **横屏变体漏写等于没挂**：面板实际是横屏，走 land 变体；只改竖屏那份时 `findViewById` 返回 null，静默不挂，现象就是"后台有字幕、设备一个字不出"。2026-11-04 两台安卓面板（均 `MultiCallActivity` + 横屏）实测踩过。
+- 安卓没有 `chat_uid`，浮层显示哪一路由"最近更新那一路"决定；帧本身仍按 `uid` 分桶，不会把两路拼成一句。
+- 现场区分"没收到"和"收到没画"看一条日志：`rtc_body applied seq=.. source=.. utterance=.. end=.. len=..`（只记长度，不记正文）。
+- **字幕 View 会把整通通话打崩**：2026-11-04 两台安卓 12:54 / 12:55 两轮 `FATAL EXCEPTION: main ... AsrSubtitleStyle.getFontSizeSp() on a null object reference`（`AsrSubtitleView.onDraw`），进程 `has died`，现象是"通话自动结束"。根因是 `AsrSubtitleStore` 的 companion 里 `INSTANCE` 声明在 `DEFAULT_STYLE` 之前，store 的实例字段 `style = DEFAULT_STYLE` 在静态初始化完成前读到 null。防回归锚点：`javap -c` 看 `AsrSubtitleStore.class` 的 `<clinit>`，`putstatic DEFAULT_STYLE` 必须排在 `putstatic INSTANCE` 前面。

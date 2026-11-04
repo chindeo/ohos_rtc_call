@@ -260,7 +260,14 @@ cd "$HARMONY_ROOT\v1.0_nurse_SHIMeta"
 - H.264 性能验收必须分别确认 `OHOS_HW_ENCODER configure success` 与 `OHOS_HW_DECODER configure success`；缺少任一日志时不能声称已实现双向硬件编解码。
 - 如果出现 `OHOS_VIDEO_ENCODER_FALLBACK success` 或 `OHOS_VIDEO_DECODER_FALLBACK success`，应按软件编解码路径分析 CPU，不能只根据 SDP 中存在 H.264 判断硬件已生效。
 - 视频通话期间每 5 秒应出现低敏 `rtc_video_stats`，至少包含方向、codec、分辨率、FPS、累计帧数和 bytes；单路挂断后对应 peer 不得继续输出 stats。
-- API12 视频通话必须使用 640x360、10fps：摄像头日志中的 applied frame rate、publish sender 的 `maxFramerate` 以及 `rtc_video_stats` 实际发送 FPS 应相互一致，实际发送 FPS 稳定在 8-12。
+- API12 的采集档位跟后台 `call_setting.json` 的 enabled 档走，端上只保留安全上限：面积不超过 640x480 且 fps 不超过 15；表档超出上限（如 720p、fps 20）时整档回落 640x480@15，表里没有任何 enabled 档时回落代码默认 640x360@10。码率封顶始终跟表，与档位回落互相独立。
+- 改表后必须核对**实际产物**而不是配置值：`OHOS_CAMERA_SESSION_STARTED` 的 config、`OHOS_CAMERA_FIRST_FRAME` 的宽高，与 `rtc_video_stats` 的 resolution/fps 三者应一致，且符合上面的回落规则；只看日志里 `call_setting resolved profile=` 不能算通过。
+- 床旁 .58 与主机 .61 是同型号设备（同固件 OpenHarmony 5.0.0.71、同内核构建串、同 4 核与 CPU Features、同 MemTotal、同 `cameraId=lcam003`、应用进程同为 32 位 ABI），只有 MAC 和包名不同。两台出现不同档位只能归因于代码或表命中差异，不得归因硬件、驱动或固件差异。
+- 两路视频比例不一致会让等比渲染的一侧出现左右黑边（4:3 内容在 16:9 屏上左右各约 240px）；统一成 16:9 档后两台都应铺满，验收用像素扫描复核，不靠目测。
+- 本机自预览开关（网关科室 `local_preview`，随注册下发，默认不画）：后台关闭并让设备重连后，通话页不应出现右上角"自己"的小窗，但**对端必须仍能看到本机画面**（证明只摘了渲染、没伤上行）；后台开启后小窗回来。
+- 自预览开关的采信口径：老网关不带 `localPreview` 键、或值为 `null`/`""`/`"false"`/`0` 时都必须不画；只有严格 `true` 才画。注册失败（`status != 200`）不得沿用上一次的值。
+- 通话进行中修改后台开关，本通通话的画面表现不应变化；重连或重启应用后才切换。这是注册粒度的设计约束，不是故障。
+- 关闭自预览后应能测到"合成与渲染"这一档实测下降（真机基线：视频时 render_service + mali + native-window-r + RSRenderThread 合计约 23~24 单核%，音频时约 3.5~5）；只凭小窗不见了不能算性能通过。
 - 摄像头首帧后连续 2 秒没有新帧时，native 层必须记录 `frame_stall` 并只重启本地采集链；恢复期间音频、subscribe peer 和远端画面不得中断。
 - native 两次恢复仍失败时，公共媒体控制器只允许重建一次本地 VideoSource/Track，并对现有 publish sender 执行 `replaceTrack`；不得重建 PeerConnection 或影响其它会话。
 - API23 UVC 打开前必须检查临时 USB 权限，缺少权限时调用 `requestRight`；日志必须包含失败阶段及 error name/code/message，不能只输出 `{}`。

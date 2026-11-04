@@ -147,6 +147,23 @@ RemoteVideoSurface() {
 }
 ```
 
+### 本机自预览（网关科室开关，宿主无需再接线）
+
+是否绘制右上角那个"本机自己"的小窗，由网关后台的科室设置 `local_preview` 决定，随 `c__register`
+的 `data.localPreview` 下发，**默认不画**。包内已经把它接到 UI 模型上并在布局里门控，宿主只保留
+上面那个 `LocalVideoSurface()` builder，不需要读这个字段、也不需要按 `clientType` 自行判断。
+
+- 判定口径是 `localPreview === true`：键缺省、`null`、`""`、`"false"`、`0` 一律不画。这里和
+  `muteRingtone` 相反——那个字段产品口径是"默认响铃"，所以只能写 `!== false`；本开关默认在
+  "不画"这一侧，写成 `!== false` 会把默认关变成默认开，禁止这样写。
+- 只在 `status === 200` 的注册响应里采信，且每次注册成功都用新值覆盖，不留"曾经为 true 就一直
+  true"的缓存；注册失败不进入已注册态，也不回用旧值。
+- 粒度是**注册**：后台改完要等设备下次重连或重启应用才生效，通话进行中不轮询、不打断当前通话。
+  同科室的设备会一起变，这是科室粒度的固有结果，端上不提供逐台覆盖。
+- 关掉只摘掉"给人看的小窗"，不动采集与上行：相机输出走 `OH_NativeImage`，预览 XComponent 的
+  surface 只进渲染链（`VideoRenderController` 的 `renderer.init(surfaceId)`），两者不同路，所以
+  隐藏预览后对端仍应看到本机画面。
+
 ### 多路远端缩略画面
 
 每个 `sessionKey` 必须使用独立 Surface：

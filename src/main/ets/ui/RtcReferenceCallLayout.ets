@@ -618,7 +618,10 @@ export struct RtcReferenceCallLayout {
         .height('100%')
         .objectFit(ImageFit.Cover)
 
-      if (this.model.localCard.hasVideo && this.model.localCard.videoReady && this.localVideoBuilder) {
+      // 自预览由网关 localPreview 决定，默认不画。这里只摘掉进组件树的那块视频视图：
+      // 本机信息卡（头像 + "-- 自己"）保留，采集与上行不受影响。
+      if (this.model.showLocalPreview && this.model.localCard.hasVideo &&
+        this.model.localCard.videoReady && this.localVideoBuilder) {
         this.localVideoBuilder()
       } else {
         Image($r('app.media.rtc_call_avatar'))
@@ -735,18 +738,22 @@ export struct RtcReferenceCallLayout {
 
             Blank()
 
-            Row() {
-              Text(this.getPeerName(call))
-                .fontSize('28fp')
-                .fontColor('#FFFFFFFF')
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .padding({ left: '25vp', right: '25vp', top: '8vp', bottom: '8vp' })
-                .backgroundColor('#B3333333')
-                .borderRadius({ topRight: '20vp' })
-              Blank()
+            // 这块带底色的名字只给"有画面"的侧卡用：无画面时 AudioPlaceholder 已经在图标下面
+            // 画过一次同一名字，再叠一层就是同一件事说两遍（真机多路第二路实测重复显示）。
+            if (this.showSideVideoPreview(call)) {
+              Row() {
+                Text(this.getPeerName(call))
+                  .fontSize('28fp')
+                  .fontColor('#FFFFFFFF')
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .padding({ left: '25vp', right: '25vp', top: '8vp', bottom: '8vp' })
+                  .backgroundColor('#B3333333')
+                  .borderRadius({ topRight: '20vp' })
+                Blank()
+              }
+              .width('100%')
             }
-            .width('100%')
           }
           .width('100%')
           .height('100%')

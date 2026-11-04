@@ -6,6 +6,7 @@ import {
   RtcHostMultiCallController
 } from '../src/main/ets/core/RtcHostMultiCallController'
 import { RtcCallDeviceRole } from '../src/main/ets/ui/RtcCallUiPresenter'
+import { isLocalPreviewEnabled, RtcServerInfo } from '../src/main/ets/model/RtcSignalTypes'
 
 export default function rtcHostMultiCallControllerTest() {
   describe('RtcHostMultiCallController', () => {
@@ -20,6 +21,32 @@ export default function rtcHostMultiCallControllerTest() {
 
       expect(controller.getUiModel().localCard.videoReady).assertEqual(true)
       expect(controller.getUiModel().videoState.localReady).assertEqual(true)
+      controller.dispose()
+    })
+
+    it('draws the local preview only when the gateway says so explicitly', 0, () => {
+      const service = new RtcDefaultCallService()
+      const controller = new RtcHostMultiCallController({ service })
+
+      // 默认不画：网关没带键、带 null、带 0 都不该让老端行为变成"一直画"。
+      expect(controller.getUiModel().showLocalPreview).assertEqual(false)
+      expect(isLocalPreviewEnabled(undefined)).assertEqual(false)
+      const absent: RtcServerInfo = { serveNumber: '1049', serveIp: '', serveDisplayName: '' }
+      expect(isLocalPreviewEnabled(absent)).assertEqual(false)
+      const falsy: RtcServerInfo = {
+        serveNumber: '1049', serveIp: '', serveDisplayName: '', localPreview: false
+      }
+      expect(isLocalPreviewEnabled(falsy)).assertEqual(false)
+      const truthy: RtcServerInfo = {
+        serveNumber: '1049', serveIp: '', serveDisplayName: '', localPreview: true
+      }
+      expect(isLocalPreviewEnabled(truthy)).assertEqual(true)
+
+      controller.setLocalPreview(true)
+      expect(controller.getUiModel().showLocalPreview).assertEqual(true)
+      // 重连后网关关掉必须覆盖掉上一次的 true，不能"曾经为 true 就一直 true"。
+      controller.setLocalPreview(false)
+      expect(controller.getUiModel().showLocalPreview).assertEqual(false)
       controller.dispose()
     })
 
