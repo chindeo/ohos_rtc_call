@@ -8,7 +8,10 @@
 
 ## 当前边界
 
-- 公共包维护：call-gateway WebSocket 生命周期、WebRTC/SIP 状态模型、通话 UI 投影、铃声、音频路由、SDP/ICE 路由、设备能力 adapter、接口环境配置弹窗。
+- 音视频通话的共性能力分两个公共包：`@chindeo/ohos-gw-client` 维护 call-gateway WebSocket 生命周期、重连、
+  通话记录广播解析、按 `uid` 的通话编排和 `RtcHostCallController` 业务总入口；`@chindeo/ohos-rtc-call`
+  维护协议类型与 SDP/ICE 状态机、WebRTC 媒体层、通话 UI 投影、铃声、音频路由、设备能力 adapter 和接口环境配置弹窗。
+  依赖方向固定为 gw-client → rtc-call。
 - 业务项目维护：业务接口、MQTT 收发、首页入口、硬件事件来源、业务弹窗、具体厂家 SDK 依赖注入。
 - 公共包不内置业务地址、账号、密码、MAC、设备 ID、接口域名、设备 IP 或本机路径。
 

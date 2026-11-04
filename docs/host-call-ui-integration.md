@@ -2,7 +2,8 @@
 
 ## 1. 对接范围
 
-本模块已经包含单路和多路音视频通话 UI、页面状态模型以及 WebRTC 通话运行时。宿主项目只负责：
+本模块已经包含单路和多路音视频通话 UI、页面状态模型以及 WebRTC 媒体运行时。通话编排与网关信令传输在
+`@chindeo/ohos-gw-client`（依赖本包）。宿主项目只负责：
 
 - 提供信令地址、本机身份和设备角色。
 - 在页面生命周期内创建、启动和销毁 `RtcHostCallController`。
@@ -15,11 +16,22 @@
 
 ## 2. 依赖和导出
 
-宿主工程通过本地 `libs` HAR 引用公共包，包内名称仍为 `@chindeo/ohos-rtc-call`，业务 import 不需要改变：
+宿主工程通过本地 `libs` HAR 引用两个包：通话编排与信令客户端是 `@chindeo/ohos-gw-client`，其余类型、媒体
+层与 UI 仍来自 `@chindeo/ohos-rtc-call`。
 
 ```json5
 "dependencies": {
-  "@chindeo/ohos-rtc-call": 'file:./libs/ohos-rtc-call-0.1.4-rc3-<timestamp>.har'
+  "@chindeo/ohos-rtc-call": 'file:./libs/ohos-rtc-call-<timestamp>.har',
+  "@chindeo/ohos-gw-client": 'file:./libs/ohos-gw-client-<timestamp>.har'
+}
+```
+
+gw-client 打包时会把对 rtc-call 的 `file:` 依赖改写成 registry 版本，所以宿主根 `oh-package.json5` 必须用
+`overrides` 把它钉回本地 HAR，否则 `ohpm install` 报 `NOTFOUND package '@chindeo/ohos-rtc-call@<version>'`：
+
+```json5
+"overrides": {
+  "@chindeo/ohos-rtc-call": "file:./libs/ohos-rtc-call-<timestamp>.har"
 }
 ```
 
@@ -28,10 +40,10 @@
 主要导出：
 
 ```ts
+import { RtcHostCallController } from '@chindeo/ohos-gw-client'
 import {
   RtcCallDeviceRole,
   RtcCallMode,
-  RtcHostCallController,
   RtcHostCallUiModel,
   RtcHostMultiCallLayout
 } from '@chindeo/ohos-rtc-call'

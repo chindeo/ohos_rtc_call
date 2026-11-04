@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 信令传输与通话编排出库到 `@chindeo/ohos-gw-client`：`RtcWebRtcSignalSession`、`RtcWebRtcReconnectPolicy`、
+  `RtcBroadcastHistory`、`RtcWebRtcCallController`、`RtcHostCallController` 及各自用例整体迁走，逻辑未改，
+  只是跨包引用改成 `@chindeo/ohos-rtc-call` 导入。协议类型 `RtcSignalTypes` 与
+  `RtcWebRtcSignalStateMachine` 留在本包——`webrtc/RtcWebRtcMediaController.ets` 依赖它们，依赖方向只能是
+  gw-client → rtc-call。宿主改从 gw-client 导入上述入口，并按 gw-client README 加 root `overrides`。
+
 - 多路右侧侧卡不再重复显示同一路名字：无画面时 `AudioPlaceholder` 已经在头像下面画过一次，画面左下角
   那块带底色的名字 chip 只在**有画面**的侧卡上保留（真机多路第二路实测重复显示）。
 

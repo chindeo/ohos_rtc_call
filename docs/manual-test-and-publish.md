@@ -10,6 +10,7 @@
 ## 目标版本
 
 - 公共包：`@chindeo/ohos-rtc-call@0.1.4-rc3`
+- 网关信令与通话编排包：`@chindeo/ohos-gw-client`（与本包一起分发）
 - 床旁验证分支：`5.0.1-SHIMeta`
 - 主机验证分支：`v1.0_nurse_SHIMeta`
 
@@ -74,6 +75,31 @@ dist\ohos-rtc-call-<version>-<timestamp>.har
 
 每次生成新的开发 HAR 后，同步更新业务工程依赖路径并执行 `ohpm install`。公共包后续不使用线上 OHPM 包，也不依赖 `ohos_rtc_call/dist` 的本机绝对路径。如果目标工程仍复用旧产物，再按现有方式定向删除
 RTC junction 和单个 `.ohpm` 缓存目录。
+
+## 两个 HAR 一起分发
+
+信令传输与通话编排在 `@chindeo/ohos-gw-client`（源码在 call-gateway 仓库 `client-ohos/`），它依赖本包，所以
+一次接线要同时替换两个 HAR：
+
+```powershell
+# 先出 rtc-call HAR，再拿它作为 gw-client 的本地依赖出包
+gw-client 侧：pwsh -File tools/publish-ohos-gw-client.ps1 -DevTimestampName -SkipPrepublish
+```
+
+两个包都复制到业务工程 `libs/`，`oh-package.json5`（根、`entry`/`nurse`、`common`）同时钉新版；根
+`oh-package.json5` 必须有 `overrides` 把 gw-client 的 `file:` 依赖改写成的 registry 版本钉回本地 HAR，否则
+`ohpm install` 报 `NOTFOUND package '@chindeo/ohos-rtc-call@<version>'`：
+
+```json5
+"overrides": {
+  "@chindeo/ohos-rtc-call": "file:./libs/ohos-rtc-call-<version>-<timestamp>.har"
+}
+```
+
+宿主的 `RtcHostCallController`、`RtcWebRtcSignalSession`、`RtcWebRtcCallController`、`RtcBroadcastHistory` 和
+`RtcWebRtcReconnectPolicy` 从 `@chindeo/ohos-gw-client` 导入，其余仍从 `@chindeo/ohos-rtc-call` 导入。
+拆包属于纯搬迁，验收点与拆包前完全一致，不新增行为；只要求同一次构建里两个包都是本次新产物，不允许
+一个新一旧。
 
 ## HAR 预检
 

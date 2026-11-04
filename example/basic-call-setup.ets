@@ -4,9 +4,9 @@ import {
   RtcCallRouteResolver,
   RtcRingtoneChannel,
   RtcRingtoneController,
-  RtcWebRtcSignalSession,
   RtcWebRtcSignalStateMachine
 } from '@chindeo/ohos-rtc-call'
+import { RtcWebRtcSignalSession } from '@chindeo/ohos-gw-client'
 
 const registerAddress = 'wss://rtc.example.com/websocket'
 const deviceNumber = '1001'

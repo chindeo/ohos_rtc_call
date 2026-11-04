@@ -1,7 +1,7 @@
 {
   "name": "@chindeo/ohos-rtc-call",
   "version": "0.2.0",
-  "description": "Reusable OpenHarmony ArkTS WebRTC call library: signaling session, call state, host controller, ringtone and audio policies, shared call UI.",
+  "description": "Reusable OpenHarmony ArkTS WebRTC call library: media layer, call state, signaling types and SDP/ICE state machine, ringtone and audio policies, shared call UI.",
   "main": "Index.ets",
   "author": { "name": "Chindeo", "url": "https://gitcode.com/snowlyg", "email": "brendenaudrina6287@gmail.com" },
   "repository": "https://github.com/chindeo/ohos_rtc_call.git",
