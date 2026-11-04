@@ -7,6 +7,8 @@
   只是跨包引用改成 `@chindeo/ohos-rtc-call` 导入。协议类型 `RtcSignalTypes` 与
   `RtcWebRtcSignalStateMachine` 留在本包——`webrtc/RtcWebRtcMediaController.ets` 依赖它们，依赖方向只能是
   gw-client → rtc-call。宿主改从 gw-client 导入上述入口，并按 gw-client README 加 root `overrides`。
+  2026-11-04 床旁与主机各一台真机验收通过：拨打、接听、保持/切换、单路挂断、挂断全部、两路并发、
+  断网重连、字幕出字与样式、自预览开关，两台均见 `rtc_signal_recv event=c__register status=200`。
 
 - 多路右侧侧卡不再重复显示同一路名字：无画面时 `AudioPlaceholder` 已经在头像下面画过一次，画面左下角
   那块带底色的名字 chip 只在**有画面**的侧卡上保留（真机多路第二路实测重复显示）。
