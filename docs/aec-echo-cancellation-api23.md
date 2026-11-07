@@ -406,3 +406,13 @@ sink 恒按 `LS_VERBOSE` 注册，所以按档位传 WARNING 是无效改动，�
 - call-gateway 工程 `docs/analysis/ohos_bedside_aec_echo_analysis_20261022.md` = 同一份当日记录 + 网关侧取证节，
   **只存在于 `v0.0.16` 分支**，当前分支上取不到；其第十节已并入本文。
 - 3A 档位与 native 日志档位的工程规则、手工验收点在 `docs/webrtc-audio-diagnostics.md`。
+
+
+## 十二、2026-11-08：reference trial v2 真机首次跑通
+
+- v2 基于 `2925cb8c889216078816db22fa0680656f0ce49a`，ARM32 so SHA256 `d15eafe04b15dda38943fde40ba3f21a1217fd19f347bd2775b118b643c3a91b`；Mac Docker 构建回包经源码、哈希和 HAP 内库核验后，已安装到原指定 JHC/API23/ARM32 测试机。
+- 无标记模式实际运行 APM：同一 chain/generation 的初始化成功、参考与采集成功计数持续增长，返回码 0，AEC 开启。不能把历史默认模式的低消除量解释为没有运行 APM。
+- 有标记模式约 7.37 秒完成 LOCKED，随后 mapped 模式同链 reference/capture 成功计数同步增长至 5800；未锁定期间正常 APM 兜底，延迟含 20ms 缓存；映射时延迟 0。两轮 70 秒拨测均正常结束。
+- 校准仍有性能不足：队列峰值 100，丢弃 21 个分析副本后锁定；Analyze 最近窗口 p95≈55ms，尚未达到原定 20ms 目标。此次自然积压没有再使 APM 永久旁路。真机没有逐样本边界录制，不能声称已实测上行逐样本连续。
+- 真实上行录音在锁定后明显受抑制，AEC3 辅助探针亦出现消除量；后段采集非零、播放计数前进。仅凭输出减小不能把全部衰减归给 AEC，更不能证明近端保真。用户不在设备旁，近端单讲、双讲和真人听感未验收。此前“本设备所有试验均未真正进入 APM”的现状已被本轮更新，但具体平台根因仍未认定。
+- 原始证据组名 `aec-v2-integration-1108`：包含 A-normal/B-trial 的进程日志、工具日志、上行 Opus/WAV、runtime-summary.json、RESULT.md、构建安装记录与回退包。当前保留 v2 且试验开关开启；无系统配置修改或 namespace 注入。
