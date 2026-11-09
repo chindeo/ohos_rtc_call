@@ -48,7 +48,11 @@
 - 包内不判机型：`RtcHostCallControllerOptions.audioProcessing: RtcAudioProcessingPolicy` 逐档注入，
   留空即既有默认（AEC 开、NS 开、HPF 开、AGC 关、AECM 关）。
 - **两层必须同写**：APM 工厂（`AudioProcessingFactory.create`）和 `createAudioSource` 的约束层。
-  引擎会用约束层的值回写 APM（`webrtc_voice_engine.cc:615`），只改一层等于没改。
+  引擎会用约束层的值回写 APM（`webrtc_voice_engine.cc:615`），只改一层不能保证一致。
+- **两层日志一致仍不足以证明关闭**：旧 native 桥接只要传入 AEC3 参数就安装 custom factory，
+  上游 APM 会因此创建控制器，即使 enabled=false。新桥接仅在 AEC 开且非 mobile 时安装；
+  以工厂 `customAec3` 和 dump CONFIG 的 `aec_enabled`、`EchoController;` 联合验收。
+  此修正须换入新 native 产物后才生效，不能用源码状态代表设备状态。
 - 生效时机：APM 实例随 `PeerConnectionFactory` 只创建一次，所以只能在 controller 构造前注入；
   工厂已存在时只记 `rtc_audio_processing late_configure ignored reason=pcf_exists`，不假装生效。
 - 日志：`rtc_audio_processing aec=.. aec_mobile=.. ns=.. hpf=.. agc=.. external_delay=false`（APM 层）
@@ -63,7 +67,8 @@
 手工验收点：
 
 1. api12 设备起呼后日志出现 `rtc_audio_processing aec=false ns=false hpf=false`，
-   且约束层同样为 false，两层不一致就是没接对。
+   且约束层同样为 false；再确认新 native 日志 customAec3=0，dump 不含 `EchoController;`。
+   两层不一致或关闭组仍有控制器，均不能作为有效对照。
 2. 关掉后 `OS_AudioReadCB`、`OS_AudioWriteCB` 的线程均值与整机 busy 相对 3A 开的同长度通话下降；
    没有下降说明 3A 不是主要开销，回到码率/渲染路径继续找，别继续调 3A。
 3. 回声主观核对：床旁外放、对方讲话时本机不采到自家扬声器回声；主机会话用免提时同样检查一次。
@@ -98,3 +103,9 @@
 - 屏幕接听后再抬起手柄，能切换到听筒路径。
 - 床旁 WebRTC 呼入/外呼都能采集本地音频并播放远端音频。
 - 协议热切换后无重复 websocket、重复 PeerConnection 或重复铃声。
+
+## 当前交付基线
+
+- API12 和 API23 的 ARM32 native 库均来自 WebRTC 提交 dff7ec8b67，按对应 API 集成。
+- 宿主可分别配置 AEC 和 NS。启用 AEC 时，native 在 APM 后对上行应用固定 1.4 倍增益。下行 streamVolume 单独作用于远端音轨，100 为原始音量。
+- API23 床旁在同一进程下连续四通模拟拨测，均于媒体接通后约 4.4 秒进入 mapped。真人跨房间单讲、双讲和连续拨打仍待验收。旧安卓音量配置不作为对照基线。

@@ -58,6 +58,7 @@ export interface RtcWebRtcMediaControllerOptions {
   appVersion: string
   localVideoEnabled?: boolean
   audioController?: RtcAudioController
+  remoteStreamVolumePercent?: number
   peerRegistry?: RtcPeerSessionRegistry
   iceServers?: webrtc.RTCIceServer[]
   videoSource?: RtcWebRtcVideoSourceOptions
@@ -171,6 +172,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
   private sessions: Map<string, RtcWebRtcMediaSession> = new Map()
   private sessionIds: Map<string, string> = new Map()
   private peers: Map<string, RtcWebRtcPeerRecord> = new Map()
+  private remoteStreamVolumePercent: number = 100
   private activeSessionKey: string = ''
   private userMuted: boolean = false
   private heldSessionKeys: Map<string, boolean> = new Map()
@@ -198,6 +200,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     this.appVersion = options.appVersion
     this.localVideoEnabled = options.localVideoEnabled === true
     this.audioController = options.audioController || new RtcAudioController()
+    this.setRemoteStreamVolumePercent(options.remoteStreamVolumePercent ?? 100)
     this.peerRegistry = options.peerRegistry || new RtcPeerSessionRegistry()
     this.pcConfig = { iceServers: options.iceServers || [] }
     const configuredVideoSource = options.videoSource || {
@@ -908,6 +911,28 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     this.recoverLocalVideoTrack(failure)
   }
 
+  setRemoteStreamVolumePercent(percent: number): void {
+    const normalized = Number.isFinite(percent) ? Math.max(0, Math.min(250, percent)) : 100
+    if (this.remoteStreamVolumePercent === normalized) {
+      return
+    }
+    this.remoteStreamVolumePercent = normalized
+    this.sessions.forEach((session: RtcWebRtcMediaSession) => {
+      if (session.remoteAudioTrack) {
+        this.applyRemoteStreamVolume(session.remoteAudioTrack)
+      }
+    })
+  }
+
+  private applyRemoteStreamVolume(track: webrtc.MediaStreamTrack): void {
+    try {
+      track.setVolume(this.remoteStreamVolumePercent / 100)
+      this.log('rtc_remote_stream_volume percent=' + this.remoteStreamVolumePercent)
+    } catch (error) {
+      this.log('rtc_remote_stream_volume failed: ' + (error as Error).message)
+    }
+  }
+
   private async recoverLocalVideoTrack(failure: RtcVideoCapturerFailure): Promise<void> {
     try {
       await this.replaceLocalVideoTrack('capturer_failure_' + failure.stage)
@@ -1175,6 +1200,7 @@ export class RtcWebRtcMediaController implements RtcWebRtcPeerConnectionAdapter 
     }
     if (event.track.kind === 'audio') {
       session.remoteAudioTrack = event.track
+      this.applyRemoteStreamVolume(event.track)
       session.hasRemoteAudio = true
       // 远端音频已经到达就说明这一路真的通了，即使接听信令还没对上；用它兜底解除上行门控，
       // 避免信令缺失时把麦克风一直禁着（禁麦比漏音更难排查，也更早毁掉通话）。
