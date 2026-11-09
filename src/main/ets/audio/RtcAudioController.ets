@@ -125,10 +125,11 @@ export class RtcAudioController {
    * 已建工厂时只记日志，不假装生效。
    */
   configureAudioProcessing(policy: RtcAudioProcessingPolicy): void {
-    this.audioProcessingPolicy = policy
     if (this.pcf) {
       this.log('rtc_audio_processing late_configure ignored reason=pcf_exists')
+      return
     }
+    this.audioProcessingPolicy = policy
   }
 
   private resolveAudioFlag(policyValue: boolean | undefined, optionValue: boolean | undefined,
@@ -714,10 +715,9 @@ export class RtcAudioController {
       // 54.6 dB while external-delay alignment only manages 21.8 dB, so making the reported
       // delay the alignment is not the fix. Keep the internal estimator and feed it a stable clock.
       useExternalDelayEstimator: false
-      // 不要在这里打开 exportLinearAecOutput：12:51 接听瞬间 SIGSEGV 就是它。fork 的
-      // EchoCanceller3 构造里把 linear_output_block_/sub_frame_view_ 硬写成 num_bands=1，
-      // 而本机 APM 跑在 48k（num_bands=3），ProcessCapture 逐 band 写入就越界踩堆。
-      // 要拿 AEC3 线性子块得先在 .so 里按 num_bands_ 分配，再回来开这个开关。
+      // 默认不导出线性 AEC 输出。该输出按设计是 16k 单频带，不能改成三频带。
+      // 启用前须确认 native 同步了 APM 与 AEC3 filter 的 export 配置，并经真机验收；
+      // 历史崩溃没有完整栈，不能仅凭 48k APM 就认定为频带越界。
     })
     this.pcf = new webrtc.PeerConnectionFactory({
       adm: this.adm,
